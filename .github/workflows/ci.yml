@@ -99,6 +99,44 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter desktop tauri build --debug --no-bundle
 
+  checklist:
+    name: checklist
+    # Secrets are not available to pull requests from forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check access to the planning repository
+        id: access
+        env:
+          PLANNING_REPO: ${{ vars.PLANNING_REPO }}
+          PLANNING_REPO_TOKEN: ${{ secrets.PLANNING_REPO_TOKEN }}
+        run: |
+          if [ -z "$PLANNING_REPO" ] || [ -z "$PLANNING_REPO_TOKEN" ]; then
+            echo "Planning repo not configured, skipping"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.access.outputs.configured == 'true'
+      - uses: actions/checkout@v7
+        if: steps.access.outputs.configured == 'true'
+        with:
+          repository: ${{ vars.PLANNING_REPO }}
+          token: ${{ secrets.PLANNING_REPO_TOKEN }}
+          path: docs
+          persist-credentials: false
+      - name: Install Rust toolchain
+        if: steps.access.outputs.configured == 'true'
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        if: steps.access.outputs.configured == 'true'
+      # Progress report only: never blocks a pull request, prints counts only.
+      - name: Report checklist progress
+        if: steps.access.outputs.configured == 'true'
+        run: cargo run --locked -p checklist-gate -- --phase 1 --docs docs --report-only --summary
+
   commits:
     name: commits
     if: github.event_name == 'pull_request'

@@ -1,0 +1,16 @@
+[package]
+name = "checklist-gate"
+version = "0.1.0"
+description = "Blocks a release until every checklist item of its phase is built and tested"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.99"
+publish = false
+
+[dependencies]
+clap.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

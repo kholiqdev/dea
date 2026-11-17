@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    name: checklist gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Read the phase from the release tag
+        id: phase
+        run: |
+          # A tag push can check out an annotated tag as a lightweight one.
+          git fetch --tags --force
+          phase=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" \
+            | sed -n 's/^phase: *\([0-9][0-9]*\) *$/\1/p' | head -n 1)
+          if [ -z "$phase" ]; then
+            echo "::error::Release tags must be annotated with a 'phase: <N>' line, for example: git tag -a v0.1.0 -m 'phase: 1'"
+            exit 1
+          fi
+          echo "phase=$phase" >> "$GITHUB_OUTPUT"
+      - name: Check access to the planning repository
+        env:
+          PLANNING_REPO: ${{ vars.PLANNING_REPO }}
+          PLANNING_REPO_TOKEN: ${{ secrets.PLANNING_REPO_TOKEN }}
+        run: |
+          if [ -z "$PLANNING_REPO" ] || [ -z "$PLANNING_REPO_TOKEN" ]; then
+            echo "::error::Cannot access the planning repository. Set the PLANNING_REPO variable and the PLANNING_REPO_TOKEN secret."
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.PLANNING_REPO }}
+          token: ${{ secrets.PLANNING_REPO_TOKEN }}
+          path: docs
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # Only counts per phase: logs of a public repository are public.
+      - name: Check the release checklist
+        env:
+          PHASE: ${{ steps.phase.outputs.phase }}
+        run: cargo run --locked -p checklist-gate -- --phase "$PHASE" --docs docs --summary
+
+  build:
+    name: build
+    needs: gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - run: echo "Release builds are not set up yet."
