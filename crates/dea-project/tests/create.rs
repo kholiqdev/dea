@@ -45,9 +45,10 @@ fn create_project_returns_what_it_wrote() {
         .iter()
         .map(|e| e.name.as_str())
         .collect();
-    assert_eq!(names, ["local", "staging", "production"]);
+    // Sorted by file name, the same order as any loaded project.
+    assert_eq!(names, ["local", "production", "staging"]);
     let production: Vec<_> = project.environments.iter().map(|e| e.production).collect();
-    assert_eq!(production, [false, false, true]);
+    assert_eq!(production, [false, true, false]);
     assert!(project.vault.secrets.is_empty());
     assert!(!project.read_only);
 }

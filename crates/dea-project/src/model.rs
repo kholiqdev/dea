@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::FileError;
+
 /// Version of the project file format written by this build.
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -81,4 +83,12 @@ pub struct Project {
     pub vault: VaultManifest,
     /// True when the project was written by a newer version of Dea.
     pub read_only: bool,
+}
+
+/// A loaded project plus the files that could not be read. One broken file
+/// never hides the rest of the project.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedProject {
+    pub project: Project,
+    pub errors: Vec<FileError>,
 }
