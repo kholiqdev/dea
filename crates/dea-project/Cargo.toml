@@ -1,0 +1,14 @@
+[package]
+name = "dea-project"
+version = "0.1.0"
+description = "Reads and writes Dea project folders"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.99"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_norway.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true

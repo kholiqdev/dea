@@ -1,0 +1,17 @@
+//! Reads and writes Dea project folders: a manifest, environments and the
+//! list of secrets a project needs, stored as plain YAML files for git.
+
+mod create;
+mod error;
+mod model;
+mod names;
+mod yaml;
+
+pub use create::create_project;
+pub use error::{FileError, ProjectError};
+pub use model::{
+    Environment, MAX_RELATIVE_PATH_LEN, Manifest, Project, SCHEMA_VERSION, SecretKind, SecretSpec,
+    Variable, VaultManifest,
+};
+pub use names::{check_relative_path, is_production_name, safe_file_stem, unique_file_stem};
+pub use yaml::{to_yaml, write_if_changed};
