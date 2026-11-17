@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     Environment, Manifest, Project, ProjectError, SCHEMA_VERSION, VaultManifest,
-    check_relative_path, is_production_name, safe_file_stem, to_yaml, write_if_changed,
+    check_relative_path, is_production_name, load_project, safe_file_stem, to_yaml,
+    write_if_changed,
 };
 
 const DEFAULT_ENVIRONMENTS: [&str; 3] = ["local", "staging", "production"];
@@ -52,13 +53,12 @@ pub fn create_project(root: &Path, name: &str) -> Result<Project, ProjectError> 
     }
     add_backup_ignore(&root.join(".gitignore"))?;
 
-    Ok(Project {
-        root: root.to_path_buf(),
-        manifest,
-        environments,
-        vault,
-        read_only: false,
-    })
+    // Return what is actually on disk, read the same way as any project.
+    let mut loaded = load_project(root)?;
+    if !loaded.errors.is_empty() {
+        return Err(ProjectError::InvalidManifest(loaded.errors.remove(0)));
+    }
+    Ok(loaded.project)
 }
 
 /// Makes sure migration backups never end up in git, keeping any existing

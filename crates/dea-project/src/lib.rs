@@ -3,15 +3,17 @@
 
 mod create;
 mod error;
+mod load;
 mod model;
 mod names;
 mod yaml;
 
 pub use create::create_project;
 pub use error::{FileError, ProjectError};
+pub use load::{has_merge_conflict_markers, load_project};
 pub use model::{
-    Environment, MAX_RELATIVE_PATH_LEN, Manifest, Project, SCHEMA_VERSION, SecretKind, SecretSpec,
-    Variable, VaultManifest,
+    Environment, LoadedProject, MAX_RELATIVE_PATH_LEN, Manifest, Project, SCHEMA_VERSION,
+    SecretKind, SecretSpec, Variable, VaultManifest,
 };
 pub use names::{check_relative_path, is_production_name, safe_file_stem, unique_file_stem};
 pub use yaml::{to_yaml, write_if_changed};
