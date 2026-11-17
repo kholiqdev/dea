@@ -1,0 +1,18 @@
+[package]
+name = "dea-desktop"
+version = "0.1.0"
+description = "Dea desktop app"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.99"
+publish = false
+
+[lib]
+name = "dea_desktop"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = [] }
