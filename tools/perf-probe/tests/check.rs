@@ -29,7 +29,11 @@ fn measurement(
 #[test]
 fn budgets_file_matches_the_phase_1_targets() {
     let b = budgets();
-    assert_eq!(b.start_ms, 1000.0);
+    // CI budgets: macOS runners are virtual machines about twice as slow
+    // to start WebKit; 1.0 s is checked by hand on reference hardware.
+    assert_eq!(b.start_ms["macos"], 2000.0);
+    assert_eq!(b.start_ms["windows"], 1000.0);
+    assert_eq!(b.start_ms["linux"], 1000.0);
     assert_eq!(b.startup_js_gzip_kb, 250.0);
     assert_eq!(b.regression_pct, 10.0);
     assert_eq!(b.idle_mb["macos"], 150.0);
@@ -135,4 +139,19 @@ fn measurement_round_trips_as_json() {
     let json = serde_json::to_string(&m).unwrap();
     assert!(json.contains("\"startup_js_gzip_kb\":120.5"), "{json}");
     assert_eq!(serde_json::from_str::<Measurement>(&json).unwrap(), m);
+}
+
+#[test]
+fn start_budget_depends_on_the_os() {
+    let m = measurement("macos", 1500.0, 100.0, 100.0, &[]);
+    assert!(check(&m, &budgets(), None).is_empty());
+    let m = measurement("windows", 1500.0, 100.0, 100.0, &[]);
+    assert_eq!(
+        check(&m, &budgets(), None),
+        [Violation::OverBudget {
+            metric: "start_ms".into(),
+            value: 1500.0,
+            limit: 1000.0
+        }]
+    );
 }

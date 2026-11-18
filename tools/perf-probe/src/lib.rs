@@ -36,7 +36,8 @@ static ATTR: LazyLock<Regex> =
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Budgets {
-    pub start_ms: f64,
+    /// Key: "macos", "windows" or "linux".
+    pub start_ms: BTreeMap<String, f64>,
     pub startup_js_gzip_kb: f64,
     pub regression_pct: f64,
     /// Key: "macos", "windows" or "linux".
@@ -144,7 +145,7 @@ pub fn check(m: &Measurement, budgets: &Budgets, baseline: Option<&Measurement>)
         (
             "start_ms".into(),
             m.start_ms,
-            Some(budgets.start_ms),
+            budgets.start_ms.get(&m.os).copied(),
             baseline.map(|b| b.start_ms),
         ),
         (
