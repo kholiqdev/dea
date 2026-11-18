@@ -11,7 +11,7 @@ publish = false
 workspace = true
 
 [dependencies]
-notify-debouncer-full.workspace = true
+notify.workspace = true
 rand.workspace = true
 regex.workspace = true
 schemars.workspace = true

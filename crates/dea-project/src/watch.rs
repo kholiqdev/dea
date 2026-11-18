@@ -1,20 +1,19 @@
 //! Reports changes made to project files outside Dea, for example by an
 //! editor or a `git pull`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant, SystemTime};
 
-use notify_debouncer_full::notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
+use notify::event::EventKind;
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::ProjectError;
 
-const DEBOUNCE: Duration = Duration::from_millis(250);
 /// A batch is delivered once the project has been quiet this long...
-const QUIET: Duration = Duration::from_millis(250);
+const QUIET: Duration = Duration::from_millis(300);
 /// ...or at the latest this long after its first change, so a long running
 /// checkout still shows progress.
 const MAX_WAIT: Duration = Duration::from_secs(2);
@@ -55,14 +54,20 @@ type Known = HashMap<PathBuf, Stamp>;
 
 /// Watches a project folder until dropped.
 pub struct ProjectWatcher {
-    _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    _watcher: RecommendedWatcher,
 }
 
 impl ProjectWatcher {
     /// Calls `on_batch` from a background thread with every file change,
     /// grouped into batches. Each path appears once per batch. Changes are
-    /// held until the project is quiet for 250 ms (at most 2 s), so a large
+    /// held until the project is quiet for 300 ms (at most 2 s), so a large
     /// `git checkout` arrives as one batch whatever the disk speed.
+    ///
+    /// OS events only say which paths were touched. Their kinds are not
+    /// trusted: macOS merges the flags of a file's recent history, so a new
+    /// file that is deleted again looks created, and an event deduplicator
+    /// would drop the pair. What changed is decided by comparing the disk
+    /// with the files known before.
     pub fn start(
         root: &Path,
         on_batch: impl Fn(Vec<ProjectChange>) + Send + 'static,
@@ -72,38 +77,33 @@ impl ProjectWatcher {
         let mut known = Known::new();
         list_files(&root, &root, &mut known);
 
-        // Dropping the watcher drops `tx`, which ends the coalescing thread
+        // Dropping the watcher drops `tx`, which ends the batching thread
         // after it delivers anything still pending.
         let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || coalesce(&rx, on_batch));
-
-        let handler_root = root.clone();
-        let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
-            let batch = handle(&handler_root, result, &mut known);
-            if !batch.is_empty() {
-                let _ = tx.send(batch);
-            }
+        let mut watcher = notify::recommended_watcher(move |event| {
+            let _ = tx.send(event);
         })
         .map_err(|e| ProjectError::Io(std::io::Error::other(e)))?;
-        debouncer
+        watcher
             .watch(&root, RecursiveMode::Recursive)
             .map_err(|e| ProjectError::Io(std::io::Error::other(e)))?;
-        Ok(Self {
-            _debouncer: debouncer,
-        })
+        std::thread::spawn(move || batch_events(&root, known, &rx, on_batch));
+        Ok(Self { _watcher: watcher })
     }
 }
 
-/// Merges batches from the debouncer and delivers them once quiet.
-fn coalesce(rx: &Receiver<Vec<ProjectChange>>, on_batch: impl Fn(Vec<ProjectChange>)) {
-    let mut pending: BTreeMap<PathBuf, ChangeKind> = BTreeMap::new();
+/// Collects OS events until the project is quiet, then reports the changes.
+fn batch_events(
+    root: &Path,
+    mut known: Known,
+    rx: &Receiver<notify::Result<Event>>,
+    on_batch: impl Fn(Vec<ProjectChange>),
+) {
+    let mut pending: Vec<notify::Result<Event>> = Vec::new();
     let mut first: Option<Instant> = None;
-    let flush = |pending: &mut BTreeMap<PathBuf, ChangeKind>| {
-        if !pending.is_empty() {
-            let batch = std::mem::take(pending)
-                .into_iter()
-                .map(|(path, kind)| ProjectChange { path, kind })
-                .collect();
+    let flush = |pending: &mut Vec<notify::Result<Event>>, known: &mut Known| {
+        let batch = process(root, std::mem::take(pending), known);
+        if !batch.is_empty() {
             on_batch(batch);
         }
     };
@@ -113,59 +113,46 @@ fn coalesce(rx: &Receiver<Vec<ProjectChange>>, on_batch: impl Fn(Vec<ProjectChan
             Some(since) => rx.recv_timeout(QUIET.min(MAX_WAIT.saturating_sub(since.elapsed()))),
         };
         match received {
-            Ok(batch) => {
-                first.get_or_insert_with(Instant::now);
-                for change in batch {
-                    match merge(pending.get(&change.path).cloned(), change.kind) {
-                        Some(kind) => pending.insert(change.path, kind),
-                        None => pending.remove(&change.path),
-                    };
-                }
-                if pending.is_empty() {
-                    first = None;
-                } else if first.is_some_and(|since| since.elapsed() >= MAX_WAIT) {
-                    flush(&mut pending);
+            Ok(event) => {
+                pending.push(event);
+                let since = *first.get_or_insert_with(Instant::now);
+                if since.elapsed() >= MAX_WAIT {
+                    flush(&mut pending, &mut known);
                     first = None;
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                flush(&mut pending);
+                flush(&mut pending, &mut known);
                 first = None;
             }
             Err(RecvTimeoutError::Disconnected) => {
-                flush(&mut pending);
+                flush(&mut pending, &mut known);
                 return;
             }
         }
     }
 }
 
-/// Combines what happened to one path across batches. A file that was
-/// created and then removed again never existed as far as Dea knows.
-fn merge(before: Option<ChangeKind>, next: ChangeKind) -> Option<ChangeKind> {
-    use ChangeKind::*;
-    match (before, next) {
-        (None, next) => Some(next),
-        (Some(Created), Removed) => None,
-        (Some(Created), _) => Some(Created),
-        (Some(Removed), Removed) => Some(Removed),
-        (Some(Removed), _) => Some(Modified),
-        (Some(Modified), next) => Some(if next == Removed { Removed } else { Modified }),
-    }
-}
-
-/// Turns one result from the debouncer into changes. When the OS lost
-/// events (a full inotify queue, an overflowing Windows buffer, a macOS
-/// "rescan" flag) or the watcher failed, the whole tree is compared with
-/// the known files instead, so no change is missed silently.
-fn handle(root: &Path, result: DebounceEventResult, known: &mut Known) -> Vec<ProjectChange> {
-    match result {
-        Ok(events) if !events.iter().any(|e| e.need_rescan()) => {
-            let touched = events.iter().flat_map(|e| e.paths.iter());
-            changes(root, touched, known)
+/// Turns a batch of OS events into changes. When the OS lost events (a full
+/// inotify queue, an overflowing Windows buffer, a macOS "rescan" flag) or
+/// the watcher failed, the whole tree is compared with the known files
+/// instead, so no change is missed silently. Events that only read a file
+/// are ignored.
+fn process(
+    root: &Path,
+    events: Vec<notify::Result<Event>>,
+    known: &mut Known,
+) -> Vec<ProjectChange> {
+    let mut touched = BTreeSet::new();
+    for event in events {
+        match event {
+            Ok(event) if event.need_rescan() => return rescan(root, known),
+            Ok(event) if matches!(event.kind, EventKind::Access(_)) => {}
+            Ok(event) => touched.extend(event.paths),
+            Err(_) => return rescan(root, known),
         }
-        _ => rescan(root, known),
     }
+    changes(root, touched.iter(), known)
 }
 
 /// Compares every file on disk with the known files: new files are
@@ -308,24 +295,10 @@ fn is_ignored(rel: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
-    use notify_debouncer_full::DebouncedEvent;
-    use notify_debouncer_full::notify::event::{EventKind, Flag};
-    use notify_debouncer_full::notify::{Error, Event};
+    use notify::event::{AccessKind, CreateKind, Flag, RemoveKind};
+    use notify::{Error, Event};
 
     use super::*;
-
-    #[test]
-    fn merging_keeps_what_happened_overall() {
-        use ChangeKind::*;
-        assert_eq!(merge(None, Modified), Some(Modified));
-        assert_eq!(merge(Some(Created), Modified), Some(Created));
-        assert_eq!(merge(Some(Created), Removed), None);
-        assert_eq!(merge(Some(Removed), Created), Some(Modified));
-        assert_eq!(merge(Some(Modified), Removed), Some(Removed));
-        assert_eq!(merge(Some(Modified), Created), Some(Modified));
-    }
 
     fn kinds(changes: Vec<ProjectChange>) -> BTreeMap<String, ChangeKind> {
         changes
@@ -334,19 +307,25 @@ mod tests {
             .collect()
     }
 
-    /// A project with `a.yaml` and `b.yaml`, then: `a.yaml` edited,
-    /// `b.yaml` deleted, `c.yaml` added, with no OS event naming them.
-    fn changed_behind_our_back() -> (tempfile::TempDir, PathBuf, Known) {
+    /// A known project with `a.yaml`, `b.yaml` and `env/x.yaml`.
+    fn project() -> (tempfile::TempDir, PathBuf, Known) {
         let dir = tempfile::tempdir().unwrap();
         let root = fs::canonicalize(dir.path()).unwrap();
         fs::write(root.join("a.yaml"), "a: 1\n").unwrap();
         fs::write(root.join("b.yaml"), "b: 1\n").unwrap();
+        fs::create_dir(root.join("env")).unwrap();
+        fs::write(root.join("env/x.yaml"), "x: 1\n").unwrap();
         let mut known = Known::new();
         list_files(&root, &root, &mut known);
+        (dir, root, known)
+    }
+
+    /// `a.yaml` edited, `b.yaml` deleted, `c.yaml` added, with no OS event
+    /// naming them.
+    fn change_behind_our_back(root: &Path) {
         fs::write(root.join("a.yaml"), "a: 1\nmore: 2\n").unwrap();
         fs::remove_file(root.join("b.yaml")).unwrap();
         fs::write(root.join("c.yaml"), "c: 1\n").unwrap();
-        (dir, root, known)
     }
 
     fn expected() -> BTreeMap<String, ChangeKind> {
@@ -359,19 +338,58 @@ mod tests {
 
     #[test]
     fn watcher_errors_trigger_a_rescan() {
-        let (_dir, root, mut known) = changed_behind_our_back();
-        let result = Err(vec![Error::generic("event queue overflow")]);
-        assert_eq!(kinds(handle(&root, result, &mut known)), expected());
+        let (_dir, root, mut known) = project();
+        change_behind_our_back(&root);
+        let events = vec![Err(Error::generic("event queue overflow"))];
+        assert_eq!(kinds(process(&root, events, &mut known)), expected());
         // The known files now match the disk, so nothing is reported twice.
-        let again = Err(vec![Error::generic("event queue overflow")]);
-        assert!(handle(&root, again, &mut known).is_empty());
+        let again = vec![Err(Error::generic("event queue overflow"))];
+        assert!(process(&root, again, &mut known).is_empty());
     }
 
     #[test]
     fn rescan_events_trigger_a_rescan() {
-        let (_dir, root, mut known) = changed_behind_our_back();
-        let event = Event::new(EventKind::Other).set_flag(Flag::Rescan);
-        let result = Ok(vec![DebouncedEvent::new(event, Instant::now())]);
-        assert_eq!(kinds(handle(&root, result, &mut known)), expected());
+        let (_dir, root, mut known) = project();
+        change_behind_our_back(&root);
+        let events = vec![Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan))];
+        assert_eq!(kinds(process(&root, events, &mut known)), expected());
+    }
+
+    #[test]
+    fn a_file_reported_as_created_but_gone_is_removed() {
+        // macOS reports a recently created file that is deleted with both
+        // the created and removed flags.
+        let (_dir, root, mut known) = project();
+        fs::remove_file(root.join("b.yaml")).unwrap();
+        let events = vec![
+            Ok(Event::new(EventKind::Create(CreateKind::File)).add_path(root.join("b.yaml"))),
+            Ok(Event::new(EventKind::Remove(RemoveKind::File)).add_path(root.join("b.yaml"))),
+        ];
+        assert_eq!(
+            kinds(process(&root, events, &mut known)),
+            BTreeMap::from([("b.yaml".to_string(), ChangeKind::Removed)])
+        );
+    }
+
+    #[test]
+    fn a_removed_folder_reports_each_known_file() {
+        let (_dir, root, mut known) = project();
+        fs::remove_dir_all(root.join("env")).unwrap();
+        let events = vec![Ok(
+            Event::new(EventKind::Remove(RemoveKind::Folder)).add_path(root.join("env"))
+        )];
+        assert_eq!(
+            kinds(process(&root, events, &mut known)),
+            BTreeMap::from([("env/x.yaml".to_string(), ChangeKind::Removed)])
+        );
+    }
+
+    #[test]
+    fn reading_a_file_is_not_a_change() {
+        let (_dir, root, mut known) = project();
+        let events = vec![Ok(
+            Event::new(EventKind::Access(AccessKind::Read)).add_path(root.join("a.yaml"))
+        )];
+        assert!(process(&root, events, &mut known).is_empty());
     }
 }
