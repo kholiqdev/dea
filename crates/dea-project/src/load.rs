@@ -221,8 +221,8 @@ pub(crate) fn parse<T: DeserializeOwned>(rel: &Path, text: &str) -> Result<T, Fi
         let location = e.location();
         error(
             e.to_string(),
-            location.as_ref().map(|l| l.line()),
-            location.as_ref().map(|l| l.column()),
+            location.as_ref().map(serde_norway::Location::line),
+            location.as_ref().map(serde_norway::Location::column),
         )
     })
 }

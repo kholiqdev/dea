@@ -7,6 +7,9 @@ license.workspace = true
 rust-version = "1.99"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 clap.workspace = true
 regex.workspace = true

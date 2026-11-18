@@ -14,9 +14,12 @@ pub fn process_memory_bytes(pid: u32) -> Option<u64> {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)] // FFI to read the physical footprint.
 mod imp {
     pub fn process_memory_bytes(pid: u32) -> Option<u64> {
         let pid = libc::c_int::try_from(pid).ok()?;
+        // SAFETY: rusage_info_v2 is plain integers, for which all zero bits
+        // are a valid value.
         let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
         // SAFETY: `info` is a valid, writable rusage_info_v2, which is what
         // the RUSAGE_INFO_V2 flavor writes.
@@ -43,6 +46,7 @@ mod imp {
 }
 
 #[cfg(windows)]
+#[allow(unsafe_code)] // FFI to read the private working set.
 mod imp {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::ProcessStatus::{
@@ -59,7 +63,7 @@ mod imp {
                 return None;
             }
             let mut counters: PROCESS_MEMORY_COUNTERS_EX2 = std::mem::zeroed();
-            counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
+            counters.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
             let ok = K32GetProcessMemoryInfo(
                 handle,
                 (&mut counters as *mut PROCESS_MEMORY_COUNTERS_EX2)
