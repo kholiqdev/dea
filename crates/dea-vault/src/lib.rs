@@ -12,8 +12,10 @@ mod index;
 mod kdf;
 mod key;
 mod keychain;
+mod lock;
 mod memory;
 mod password;
+mod policy;
 mod store;
 
 pub use backend::Backend;
@@ -24,6 +26,11 @@ pub use file::FileBackend;
 pub use kdf::KdfParams;
 pub use key::SecretKey;
 pub use keychain::KeychainBackend;
+pub use lock::{HOLD, LockState, MAX_FAILURES, RESUME_GAP};
 pub use memory::MemoryBackend;
 pub use password::{MIN_PASSWORD_CHARS, VaultPassword};
+pub use policy::{
+    AUTO_LOCK_MINUTES, AutoLock, DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_PRODUCTION_WINDOW_MINUTES,
+    PRODUCTION_WINDOW_MINUTES, Policy,
+};
 pub use store::{SecretState, SecretStatus, SecretStore};
