@@ -26,17 +26,22 @@ impl Authenticator for MacAuthenticator {
             let code = unsafe { error.as_ref() }.map(NSError::code);
             let _ = tx.send((ok.as_bool(), code));
         });
-        // SAFETY: a new context, a valid policy and string, and a block that
-        // only sends on a channel, so it may run on any queue.
+        // The context must outlive the dialog: a context that is released
+        // is invalidated, which would end the evaluation at once.
+        // SAFETY: creating a context has no preconditions.
+        let context = unsafe { LAContext::new() };
+        // SAFETY: a valid policy and string, and a block that only sends on
+        // a channel, so it may run on any queue.
         unsafe {
-            let context = LAContext::new();
             context.evaluatePolicy_localizedReason_reply(
                 LAPolicy::DeviceOwnerAuthentication,
                 &NSString::from_str(reason),
                 &reply,
             );
         }
-        match rx.recv() {
+        let answer = rx.recv();
+        drop(context);
+        match answer {
             Ok((true, _)) => Ok(()),
             Ok((false, code)) => Err(map_error(code)),
             Err(_) => Err(AuthError::Other(
