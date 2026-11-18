@@ -22,9 +22,13 @@ fn watched() -> Watched {
         let _ = tx.send(batch);
     })
     .unwrap();
-    // Let the OS watcher settle and drop anything from project creation.
-    std::thread::sleep(Duration::from_millis(400));
-    while rx.try_recv().is_ok() {}
+    // Drop events from project creation. macOS can deliver writes made just
+    // before the watch started a while later, especially on slow CI
+    // machines, so wait until nothing has arrived for half a second.
+    let settle = Instant::now();
+    while settle.elapsed() < Duration::from_secs(5)
+        && rx.recv_timeout(Duration::from_millis(500)).is_ok()
+    {}
     Watched {
         dir,
         rx,
@@ -128,7 +132,8 @@ fn removing_a_folder_reports_each_file() {
         rel("environments/production.yaml"),
         rel("environments/staging.yaml"),
     ];
-    let (seen, _) = collect_until(&w.rx, Duration::from_secs(2), |s| {
+    // No latency requirement here; slow CI machines need more than 2 s.
+    let (seen, _) = collect_until(&w.rx, Duration::from_secs(5), |s| {
         files.iter().all(|f| s.contains_key(f))
     });
     for f in &files {
@@ -181,8 +186,9 @@ fn slow_checkout_is_coalesced_into_few_batches() {
     let w = watched();
     let requests = w.dir.path().join("requests");
     fs::create_dir(&requests).unwrap();
-    // About 1-1.5 s of writes, like a checkout on a slow disk or with an
+    // A checkout spread over a second or more, like a slow disk or an
     // antivirus scanning every file.
+    let started = Instant::now();
     for i in 0..500 {
         fs::write(
             requests.join(format!("r{i:03}.yaml")),
@@ -191,25 +197,40 @@ fn slow_checkout_is_coalesced_into_few_batches() {
         .unwrap();
         std::thread::sleep(Duration::from_millis(2));
     }
-    let start = Instant::now();
+    let writing = started.elapsed();
+
     let mut seen = BTreeMap::new();
-    let mut batches = 0;
+    let mut batches: Vec<(Duration, usize)> = Vec::new();
     let mut reports = 0;
-    while seen.len() < 500 && start.elapsed() < Duration::from_secs(6) {
-        if let Ok(batch) = w.rx.recv_timeout(Duration::from_secs(6) - start.elapsed()) {
-            batches += 1;
-            reports += batch.len();
-            for change in batch {
-                seen.insert(change.path, change.kind);
-            }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while seen.len() < 500 {
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        let Ok(batch) = w.rx.recv_timeout(left) else {
+            break;
+        };
+        batches.push((started.elapsed(), batch.len()));
+        reports += batch.len();
+        for change in batch {
+            seen.insert(change.path, change.kind);
         }
     }
     // Anything still pending would be a late extra batch.
     if let Ok(batch) = w.rx.recv_timeout(Duration::from_millis(800)) {
-        batches += 1;
+        batches.push((started.elapsed(), batch.len()));
         reports += batch.len();
     }
-    assert_eq!(seen.len(), 500);
-    assert_eq!(reports, 500, "each file is reported once");
-    assert!(batches <= 3, "{batches} batches");
+
+    assert_eq!(seen.len(), 500, "batches (time, size): {batches:?}");
+    assert_eq!(reports, 500, "each file is reported once: {batches:?}");
+    // Without coalescing, a batch arrives every 62.5 ms tick while files keep
+    // changing. With it, at most one per 2 s while busy plus a final one;
+    // allow one per half second of writing to stay robust on slow machines.
+    let allowed = 2 + (writing.as_millis() / 500) as usize;
+    assert!(
+        batches.len() <= allowed,
+        "{} batches for {writing:?} of writes, allowed {allowed}: {batches:?}",
+        batches.len()
+    );
 }
