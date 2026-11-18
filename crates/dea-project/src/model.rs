@@ -29,8 +29,8 @@ pub struct Manifest {
 pub struct Environment {
     pub name: String,
     /// Marks the environment as production: Dea asks for confirmation
-    /// before sending to it and shows it in red.
-    #[serde(default)]
+    /// before sending to it and shows it in red. Required, so a production
+    /// environment can never lose its marker by omission.
     pub production: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,

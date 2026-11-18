@@ -38,8 +38,7 @@
       "type": "string"
     },
     "production": {
-      "default": false,
-      "description": "Marks the environment as production: Dea asks for confirmation\nbefore sending to it and shows it in red.",
+      "description": "Marks the environment as production: Dea asks for confirmation\nbefore sending to it and shows it in red. Required, so a production\nenvironment can never lose its marker by omission.",
       "type": "boolean"
     },
     "variables": {
@@ -50,7 +49,8 @@
     }
   },
   "required": [
-    "name"
+    "name",
+    "production"
   ],
   "title": "Environment",
   "type": "object"

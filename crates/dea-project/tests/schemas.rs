@@ -84,6 +84,8 @@ fn schemas_follow_the_parser_rules() {
     // Required fields.
     assert!(!is_valid("manifest.schema.json", "name: x\n"));
     assert!(!is_valid("environment.schema.json", "production: true\n"));
+    // The production flag is always explicit.
+    assert!(!is_valid("environment.schema.json", "name: s\n"));
     // Optional fields may be left out.
     assert!(is_valid(
         "manifest.schema.json",
