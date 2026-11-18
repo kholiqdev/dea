@@ -175,3 +175,41 @@ fn ignores_git_backup_and_editor_temp_files() {
         panic!("unexpected batch: {batch:?}");
     }
 }
+
+#[test]
+fn slow_checkout_is_coalesced_into_few_batches() {
+    let w = watched();
+    let requests = w.dir.path().join("requests");
+    fs::create_dir(&requests).unwrap();
+    // About 1-1.5 s of writes, like a checkout on a slow disk or with an
+    // antivirus scanning every file.
+    for i in 0..500 {
+        fs::write(
+            requests.join(format!("r{i:03}.yaml")),
+            format!("name: r{i}\n"),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let start = Instant::now();
+    let mut seen = BTreeMap::new();
+    let mut batches = 0;
+    let mut reports = 0;
+    while seen.len() < 500 && start.elapsed() < Duration::from_secs(6) {
+        if let Ok(batch) = w.rx.recv_timeout(Duration::from_secs(6) - start.elapsed()) {
+            batches += 1;
+            reports += batch.len();
+            for change in batch {
+                seen.insert(change.path, change.kind);
+            }
+        }
+    }
+    // Anything still pending would be a late extra batch.
+    if let Ok(batch) = w.rx.recv_timeout(Duration::from_millis(800)) {
+        batches += 1;
+        reports += batch.len();
+    }
+    assert_eq!(seen.len(), 500);
+    assert_eq!(reports, 500, "each file is reported once");
+    assert!(batches <= 3, "{batches} batches");
+}
