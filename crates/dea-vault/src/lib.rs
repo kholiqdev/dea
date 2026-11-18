@@ -2,6 +2,7 @@
 //! encrypted file where Linux has no Secret Service. Project files only name
 //! the secrets they need (K10).
 
+mod auth;
 mod backend;
 mod chunk;
 mod data;
@@ -18,6 +19,7 @@ mod password;
 mod policy;
 mod store;
 
+pub use auth::{AuthError, AuthMethod, Authenticator, WindowHandle, native_authenticator};
 pub use backend::Backend;
 pub use data::{OAuthToken, SecretData};
 pub use detect::{BackendKind, VAULT_FILE, VaultBackend, open_native};

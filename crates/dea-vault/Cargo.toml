@@ -26,9 +26,23 @@ zeroize.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store.workspace = true
+block2.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-local-authentication.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+windows.workspace = true
+windows-future.workspace = true
 windows-native-keyring-store.workspace = true
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_Security_Credentials",
+  "Win32_System_Com",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store.workspace = true
@@ -37,3 +51,6 @@ zbus-secret-service-keyring-store.workspace = true
 dea-testkit.workspace = true
 uuid.workspace = true
 time = { workspace = true, features = ["macros"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Console"] }
