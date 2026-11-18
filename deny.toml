@@ -12,6 +12,12 @@ all-features = true
 # Every ignored advisory needs a reason next to it.
 ignore = [
   { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is a build-time macro pulled in by the GTK3 bindings Tauri uses on Linux; no upgrade until Tauri moves off gtk-rs 0.18" },
+  # zbus 5 subcrates that were merged into zbus 6. Not vulnerabilities. Pulled
+  # in on Linux by zbus-secret-service-keyring-store; drop these once it moves
+  # to secret-service 6 (zbus 6), which is still a release candidate.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; used through zbus 5 by the Linux Secret Service store" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; used through zbus 5 by the Linux Secret Service store" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; used through zbus 5 by the Linux Secret Service store" },
 ]
 
 [licenses]
