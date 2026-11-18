@@ -1,5 +1,10 @@
 # Dea
 
+[![CI](https://github.com/kholiqdev/dea/actions/workflows/ci.yml/badge.svg)](https://github.com/kholiqdev/dea/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/kholiqdev/dea/badge)](https://scorecard.dev/viewer/?uri=github.com/kholiqdev/dea)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196.svg)](https://www.conventionalcommits.org)
+
 Dea is an open source desktop app that brings the developer tools you open every day into one window: an API client, a database client, a terminal with SSH, and a debugger for React Native apps. A project keeps the environments, hosts, connections and secret names of one system together, so every tool uses the same setup.
 
 > **Status:** early development. Dea is not usable yet.
