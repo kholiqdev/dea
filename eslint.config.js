@@ -4,6 +4,7 @@ import boundaries from "eslint-plugin-boundaries";
 import svelte from "eslint-plugin-svelte";
 import globals from "globals";
 import ts from "typescript-eslint";
+import svelteConfig from "./apps/desktop/svelte.config.js";
 
 const desktopRoot = fileURLToPath(new URL("./apps/desktop", import.meta.url));
 
@@ -17,11 +18,17 @@ export default ts.config(
     ],
   },
   js.configs.recommended,
-  ...ts.configs.recommended,
+  // Type-aware rules catch unhandled promises (for example a failed Tauri
+  // `invoke`) and unsafe `any`.
+  ...ts.configs.recommendedTypeChecked,
   ...svelte.configs.recommended,
   {
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
   },
   {
@@ -29,9 +36,16 @@ export default ts.config(
     languageOptions: {
       parserOptions: {
         parser: ts.parser,
+        projectService: true,
         extraFileExtensions: [".svelte"],
+        svelteConfig,
       },
     },
+  },
+  {
+    // Config files are plain JavaScript outside every TypeScript project.
+    files: ["**/*.js"],
+    ...ts.configs.disableTypeChecked,
   },
   {
     files: ["apps/desktop/src/**/*.{ts,svelte}"],
