@@ -8,6 +8,7 @@ rust-version = "1.99"
 publish = false
 
 [dependencies]
+notify-debouncer-full.workspace = true
 rand.workspace = true
 regex.workspace = true
 serde.workspace = true
