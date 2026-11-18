@@ -143,8 +143,18 @@ fn accounts_never_collide() {
         (k("Produksi 🚀", "token"), k("Produksi", "🚀/token")),
         (k("环境", "x"), k("环", "境/x")),
     ];
-    for (a, b) in pairs {
-        assert_ne!(a.account(), b.account(), "{a:?} vs {b:?}");
+    // Windows Credential Manager compares names without regard to case.
+    let case_pairs = [
+        (k("Staging", "token"), k("staging", "token")),
+        (k("local", "API_KEY"), k("local", "api_key")),
+        (k("Produksi", "É"), k("produksi", "é")),
+    ];
+    for (a, b) in pairs.into_iter().chain(case_pairs) {
+        assert_ne!(
+            a.account().to_lowercase(),
+            b.account().to_lowercase(),
+            "{a:?} vs {b:?}"
+        );
     }
     // Chunk entries of the keychain add "#<n>"; no account ends that way.
     assert!(!k("a", "b#2").account().contains('#'));
