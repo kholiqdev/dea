@@ -8,6 +8,7 @@ mod migrate;
 mod model;
 mod names;
 mod resolve;
+mod schema;
 mod watch;
 mod yaml;
 
@@ -24,5 +25,6 @@ pub use resolve::{
     DynamicSource, Resolution, ResolveContext, ResolveError, Scope, ScopeKind, SecretLookup,
     SecretLookupError, SystemDynamicSource, UsedVariable, ValueSource, resolve,
 };
+pub use schema::json_schemas;
 pub use watch::{ChangeKind, ProjectChange, ProjectWatcher};
 pub use yaml::{to_yaml, write_if_changed};
