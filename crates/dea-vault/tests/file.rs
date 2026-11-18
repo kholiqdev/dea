@@ -136,3 +136,12 @@ fn files_are_readable_by_the_owner_only() {
         0o600
     );
 }
+
+#[test]
+fn a_new_vault_file_creates_its_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app-data").join("vault").join("vault.enc");
+    let file = FileBackend::open(&path, KdfParams::insecure_for_tests());
+    file.create(&password("correct horse")).unwrap();
+    assert!(path.exists());
+}

@@ -103,7 +103,6 @@ impl Index {
     /// Writes the index atomically, readable by the owner only.
     pub fn save(&self) -> Result<(), VaultError> {
         let path = self.dir.join(FILE);
-        fs::create_dir_all(&self.dir).map_err(VaultError::io(&self.dir))?;
         let file = IndexFile {
             version: VERSION,
             entries: self.entries.clone(),
@@ -115,10 +114,23 @@ impl Index {
     }
 }
 
+/// Creates `dir` and its parents if missing; on Unix new folders are 0700.
+fn create_private_dir(dir: &Path) -> Result<(), VaultError> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir).map_err(VaultError::io(dir))
+}
+
 /// Replaces `path` with `bytes` through a temporary file in the same folder,
 /// so a crash never leaves half a file. On Unix the file is mode 0600.
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    create_private_dir(dir)?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(VaultError::io(dir))?;
     #[cfg(unix)]
     {
