@@ -43,6 +43,7 @@ aes-gcm = "0.11.1"
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 argon2 = { version = "0.6.0", features = ["password-hash"] }
 base64 = "0.23.1"
+block2 = "0.6.2"
 cargo_metadata = "0.23.1"
 dea-project = { path = "crates/dea-project" }
 dea-testkit = { path = "crates/dea-testkit" }
@@ -53,6 +54,9 @@ jsonschema = { version = "0.61.2", default-features = false }
 keyring-core = "1.0.1"
 libc = "0.2.191"
 notify = "8.2.2"
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "block2", "LAContext", "LAError"] }
 rand = "0.10.4"
 regex = "1.13.1"
 schemars = "1.2.3"
@@ -67,6 +71,8 @@ thiserror = "2.0.21"
 time = "0.3.55"
 toml = "1.2.1"
 uuid = { version = "1.29.3", features = ["v4"] }
+windows = { version = "0.62.2", features = ["Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT"] }
+windows-future = "0.3.2"
 windows-native-keyring-store = "1.1.0"
 windows-sys = "0.61.2"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-io-crypto-rust"] }
