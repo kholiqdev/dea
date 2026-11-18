@@ -8,7 +8,7 @@ use dea_engine::{CLIPBOARD_CLEAR_AFTER, Clipboard, UseError};
 use dea_project::SecretKind;
 use dea_vault::{SecretData, SecretKey};
 use secrecy::SecretString;
-use support::{FakeAuthenticator, FakeClipboard, FakePrompter, ManualClock, service};
+use support::{FakeAuthenticator, FakeClipboard, FakePrompter, ManualClock, project, service};
 
 const SHORT: Duration = Duration::from_millis(50);
 
@@ -52,7 +52,7 @@ fn copied_secret_is_cleared_after_the_delay() {
     let (_dir, vault) = unlocked_with_secret();
     let clipboard = Arc::new(FakeClipboard::default());
     vault
-        .copy_secret(&key("staging"), false, clipboard.clone(), SHORT)
+        .copy_secret(&project(), "staging", "token", clipboard.clone(), SHORT)
         .unwrap();
     assert_eq!(clipboard.text().as_deref(), Some("abc123"));
     thread::sleep(SHORT * 6);
@@ -64,7 +64,7 @@ fn clipboard_changed_by_the_person_is_left_alone() {
     let (_dir, vault) = unlocked_with_secret();
     let clipboard = Arc::new(FakeClipboard::default());
     vault
-        .copy_secret(&key("staging"), false, clipboard.clone(), SHORT)
+        .copy_secret(&project(), "staging", "token", clipboard.clone(), SHORT)
         .unwrap();
     clipboard
         .set_secret_text("something I copied myself")
@@ -81,12 +81,12 @@ fn copying_needs_an_unlocked_vault_and_production_authentication() {
     let (_dir, vault) = unlocked_with_secret();
     let clipboard = Arc::new(FakeClipboard::default());
     assert!(matches!(
-        vault.copy_secret(&key("production"), true, clipboard.clone(), SHORT),
+        vault.copy_secret(&project(), "production", "token", clipboard.clone(), SHORT),
         Err(UseError::ReauthRequired)
     ));
     vault.lock();
     assert!(matches!(
-        vault.copy_secret(&key("staging"), false, clipboard.clone(), SHORT),
+        vault.copy_secret(&project(), "staging", "token", clipboard.clone(), SHORT),
         Err(UseError::Locked)
     ));
     assert_eq!(clipboard.text(), None);
@@ -96,12 +96,8 @@ fn copying_needs_an_unlocked_vault_and_production_authentication() {
 fn copying_a_missing_secret_is_an_error() {
     let (_dir, vault) = unlocked_with_secret();
     let clipboard = Arc::new(FakeClipboard::default());
-    let missing = SecretKey {
-        name: "nothing".into(),
-        ..key("staging")
-    };
     assert!(matches!(
-        vault.copy_secret(&missing, false, clipboard.clone(), SHORT),
+        vault.copy_secret(&project(), "staging", "nothing", clipboard.clone(), SHORT),
         Err(UseError::Missing)
     ));
     assert_eq!(clipboard.text(), None);
