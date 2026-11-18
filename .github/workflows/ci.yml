@@ -152,7 +152,8 @@ jobs:
 
   commits:
     name: commits
-    if: github.event_name == 'pull_request'
+    # Dependabot writes its own titles, which can be longer than 72 characters.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
