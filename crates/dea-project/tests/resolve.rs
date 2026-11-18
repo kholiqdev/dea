@@ -274,3 +274,46 @@ fn system_dynamic_source_values_have_the_right_shape() {
         assert!(s.random_int() <= 1000);
     }
 }
+
+#[test]
+fn exponential_references_stop_at_a_size_limit() {
+    // Each level refers to the next ten times: 10^9 copies at the bottom.
+    let mut vars: Vec<(String, String)> = (0..9)
+        .map(|i| (format!("v{i}"), format!("{{{{v{}}}}}", i + 1).repeat(10)))
+        .collect();
+    vars.push(("v9".into(), "x".repeat(100)));
+    let refs: Vec<(&str, &str)> = vars.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+    let scopes = [scope(ScopeKind::Environment, "staging", &refs)];
+    let started = std::time::Instant::now();
+    let result = run("{{v0}}", &scopes, &FakeVault::default());
+    assert!(
+        matches!(result, Err(ResolveError::TooLarge(_))),
+        "{result:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+struct CountingVault(std::cell::Cell<usize>);
+
+impl SecretLookup for CountingVault {
+    fn lookup(&self, _environment: &str, _name: &str) -> Result<Option<String>, SecretLookupError> {
+        self.0.set(self.0.get() + 1);
+        Ok(Some("s3cr3t".into()))
+    }
+}
+
+#[test]
+fn each_secret_is_looked_up_once_per_resolution() {
+    let vault = CountingVault(std::cell::Cell::new(0));
+    let scopes = staging();
+    let mut dynamic = FakeDynamic;
+    let mut ctx = ResolveContext {
+        scopes: &scopes,
+        environment: "staging",
+        secrets: &vault,
+        dynamic: &mut dynamic,
+    };
+    let r = resolve("{{token}} {{token}} {{vault:access_token}}", &mut ctx).unwrap();
+    assert_eq!(r.text, "s3cr3t s3cr3t s3cr3t");
+    assert_eq!(vault.0.get(), 1);
+}
