@@ -138,3 +138,68 @@ fn write_if_changed_replaces_different_content_and_creates_folders() {
     // No temporary files are left next to the target.
     assert_eq!(fs::read_dir(dir.path().join("nested")).unwrap().count(), 1);
 }
+
+#[test]
+fn awkward_values_survive_a_round_trip() {
+    for value in [
+        "line1\nline2\n\n",
+        "trailing blank lines\n\n\n",
+        "multi\nline\n",
+        "tab\there",
+        "yes",
+        "no",
+        "null",
+        "~",
+        "123",
+        " leading space",
+        "trailing space ",
+        "#not a comment",
+        "key: value",
+        "{{vault:token}}",
+    ] {
+        let env = Environment {
+            name: "x".into(),
+            production: false,
+            color: None,
+            variables: vec![Variable {
+                name: "v".into(),
+                value: value.into(),
+                description: None,
+            }],
+        };
+        let text = to_yaml(&env).unwrap();
+        assert!(text.ends_with('\n'), "{text:?}");
+        let back: Environment = serde_norway::from_str(&text).unwrap();
+        assert_eq!(back.variables[0].value, value, "written as {text:?}");
+    }
+}
+
+#[test]
+fn conflicted_file_is_never_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.yaml");
+    let conflicted = "<<<<<<< HEAD\na: 1\n=======\na: 2\n>>>>>>> main\n";
+    fs::write(&path, conflicted).unwrap();
+    assert!(matches!(
+        write_if_changed(&path, "a: 3\n"),
+        Err(dea_project::ProjectError::MergeConflict(_))
+    ));
+    assert_eq!(fs::read_to_string(&path).unwrap(), conflicted);
+}
+
+#[cfg(unix)]
+#[test]
+fn written_files_keep_normal_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let dir = tempfile::tempdir().unwrap();
+    // What the user's umask gives an ordinary new file.
+    let probe = dir.path().join("probe");
+    fs::File::create(&probe).unwrap();
+    let path = dir.path().join("a.yaml");
+    write_if_changed(&path, "a: 1\n").unwrap();
+    assert_eq!(mode(&path), mode(&probe), "new file");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    write_if_changed(&path, "a: 2\n").unwrap();
+    assert_eq!(mode(&path), 0o640, "existing file");
+}
