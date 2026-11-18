@@ -8,6 +8,7 @@ mod migrate;
 mod model;
 mod names;
 mod resolve;
+mod watch;
 mod yaml;
 
 pub use create::create_project;
@@ -23,4 +24,5 @@ pub use resolve::{
     DynamicSource, Resolution, ResolveContext, ResolveError, Scope, ScopeKind, SecretLookup,
     SecretLookupError, SystemDynamicSource, UsedVariable, ValueSource, resolve,
 };
+pub use watch::{ChangeKind, ProjectChange, ProjectWatcher};
 pub use yaml::{to_yaml, write_if_changed};
