@@ -99,6 +99,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter desktop tauri build --debug --no-bundle
 
+  arch:
+    name: architecture
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # Reads manifests only, so the Tauri system libraries are not needed.
+      - name: Check crate layers
+        run: cargo run --locked -p arch-check
+
   checklist:
     name: checklist
     # Secrets are not available to pull requests from forks.
