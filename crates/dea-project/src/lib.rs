@@ -7,6 +7,7 @@ mod load;
 mod migrate;
 mod model;
 mod names;
+mod resolve;
 mod yaml;
 
 pub use create::create_project;
@@ -18,4 +19,8 @@ pub use model::{
     SecretKind, SecretSpec, Variable, VaultManifest,
 };
 pub use names::{check_relative_path, is_production_name, safe_file_stem, unique_file_stem};
+pub use resolve::{
+    DynamicSource, Resolution, ResolveContext, ResolveError, Scope, ScopeKind, SecretLookup,
+    SecretLookupError, SystemDynamicSource, UsedVariable, ValueSource, resolve,
+};
 pub use yaml::{to_yaml, write_if_changed};
