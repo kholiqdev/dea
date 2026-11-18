@@ -9,15 +9,19 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
 use windows::core::{HSTRING, factory};
 use windows_future::IAsyncOperation;
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HANDLE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_CANCELLED, ERROR_LOGON_FAILURE, GetLastError, HANDLE,
+};
 use windows_sys::Win32::Security::Credentials::{
-    CREDUI_INFOW, CREDUIWIN_ENUMERATE_CURRENT_USER, CredUIPromptForWindowsCredentialsW,
-    CredUnPackAuthenticationBufferW,
+    CRED_PACK_PROTECTED_CREDENTIALS, CREDUI_INFOW, CREDUIWIN_ENUMERATE_CURRENT_USER,
+    CredUIPromptForWindowsCredentialsW, CredUnPackAuthenticationBufferW,
 };
 use windows_sys::Win32::Security::{
-    LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, LogonUserW,
+    GetLengthSid, GetTokenInformation, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
+    LogonUserW, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use zeroize::Zeroize;
 
@@ -130,7 +134,7 @@ fn password(hwnd: isize, reason: &str) -> Result<(), AuthError> {
     // sized by their length arguments.
     let unpacked = unsafe {
         CredUnPackAuthenticationBufferW(
-            0,
+            CRED_PACK_PROTECTED_CREDENTIALS,
             buffer,
             size,
             user.as_mut_ptr(),
@@ -172,16 +176,104 @@ fn password(hwnd: isize, reason: &str) -> Result<(), AuthError> {
                 &mut token,
             )
         };
-        if ok != 0 {
+        if ok == 0 {
+            // SAFETY: no arguments.
+            Err(map_logon_error(unsafe { GetLastError() }))
+        } else {
+            // The dialog may let someone pick another account: only the
+            // signed-in user's own password proves who is at the computer.
+            let same = token_is_current_user(token);
             // SAFETY: a valid token from LogonUserW.
             unsafe { CloseHandle(token) };
-            Ok(())
-        } else {
-            Err(AuthError::Failed)
+            match same {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(AuthError::Failed),
+                Err(e) => Err(e),
+            }
         }
     };
     pass.zeroize();
     user.zeroize();
     domain.zeroize();
     result
+}
+
+/// Only a wrong user name or password counts as a failed attempt; an
+/// expired password or a missing logon right is not the person's mistake.
+fn map_logon_error(code: u32) -> AuthError {
+    if code == ERROR_LOGON_FAILURE {
+        AuthError::Failed
+    } else {
+        AuthError::Other(format!("Windows sign-in error {code}"))
+    }
+}
+
+/// The user SID of `token`, as bytes.
+fn token_user_sid(token: HANDLE) -> Result<Vec<u8>, AuthError> {
+    let mut needed = 0u32;
+    // SAFETY: a size query with a null buffer.
+    unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed) };
+    let mut buffer = vec![0u8; needed as usize];
+    // SAFETY: the buffer has the size the first call asked for.
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    };
+    if ok == 0 {
+        return Err(AuthError::Other("cannot read the sign-in token".into()));
+    }
+    // SAFETY: GetTokenInformation filled a TOKEN_USER at the start of the
+    // buffer; its SID points inside the same buffer.
+    let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    // SAFETY: a valid SID from the token.
+    let len = unsafe { GetLengthSid(sid) } as usize;
+    // SAFETY: `len` bytes from a valid SID.
+    Ok(unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), len) }.to_vec())
+}
+
+/// Whether `token` belongs to the user running Dea.
+fn token_is_current_user(token: HANDLE) -> Result<bool, AuthError> {
+    let mut own: HANDLE = std::ptr::null_mut();
+    // SAFETY: the current process pseudo-handle; the token is closed below.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut own) } == 0 {
+        return Err(AuthError::Other(
+            "cannot read Dea's own sign-in token".into(),
+        ));
+    }
+    let result = match (token_user_sid(token), token_user_sid(own)) {
+        (Ok(theirs), Ok(ours)) => Ok(theirs == ours),
+        (Err(e), _) | (_, Err(e)) => Err(e),
+    };
+    // SAFETY: the token opened above.
+    unsafe { CloseHandle(own) };
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_wrong_password_counts_as_a_failure() {
+        assert_eq!(map_logon_error(ERROR_LOGON_FAILURE), AuthError::Failed);
+        // ERROR_PASSWORD_EXPIRED, ERROR_ACCOUNT_LOCKED_OUT
+        assert!(matches!(map_logon_error(1330), AuthError::Other(_)));
+        assert!(matches!(map_logon_error(1909), AuthError::Other(_)));
+    }
+
+    #[test]
+    fn dea_s_own_token_is_the_current_user() {
+        let mut own: HANDLE = std::ptr::null_mut();
+        // SAFETY: as in token_is_current_user.
+        let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut own) };
+        assert_ne!(opened, 0);
+        assert_eq!(token_is_current_user(own), Ok(true));
+        // SAFETY: the token opened above.
+        unsafe { CloseHandle(own) };
+    }
 }
