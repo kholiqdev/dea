@@ -1,0 +1,31 @@
+[package]
+name = "perf-probe"
+version = "0.1.0"
+description = "Measures start time, idle memory and download sizes against the performance budgets"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.99"
+publish = false
+
+[dependencies]
+clap.workspace = true
+flate2.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
