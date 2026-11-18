@@ -1049,6 +1049,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dea-engine"
+version = "0.1.0"
+dependencies = [
+ "dea-project",
+ "dea-testkit",
+ "dea-vault",
+ "secrecy",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "dea-project"
 version = "0.1.0"
 dependencies = [
