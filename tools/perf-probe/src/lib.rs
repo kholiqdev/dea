@@ -298,8 +298,7 @@ pub fn measure_launch_with(
 ) -> Result<(f64, f64), ProbeError> {
     let spawned_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let started = Instant::now();
     let mut child = Command::new(app)
         .env("DEA_PERF_PROBE", "1")

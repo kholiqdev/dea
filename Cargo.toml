@@ -12,6 +12,30 @@ members = [
 edition = "2024"
 license = "Apache-2.0"
 
+[workspace.lints.rust]
+# Unsafe code is opted into per module, with a reason (see perf-probe).
+unsafe_code = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+# Left-overs from debugging never reach main.
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+# Every unsafe block says why it is sound.
+undocumented_unsafe_blocks = "deny"
+# Pedantic lints that catch real mistakes without much noise.
+cast_lossless = "warn"
+cloned_instead_of_copied = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+unnested_or_patterns = "warn"
+
 [workspace.dependencies]
 cargo_metadata = "0.23.1"
 clap = { version = "4.6.8", features = ["derive"] }
