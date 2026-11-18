@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use tempfile::TempDir;
@@ -25,9 +25,30 @@ fn setup(body: &str) -> Setup {
     Setup { dir, app }
 }
 
+/// Budgets no test app can miss. These tests are about the command line;
+/// the budget checks themselves are tested in `check.rs`, and the real
+/// budgets would make a slow, busy machine fail them.
+const GENEROUS_BUDGETS: &str = r#"
+startup_js_gzip_kb = 100000
+regression_pct = 1000
+
+[start_ms]
+macos = 600000
+windows = 600000
+linux = 600000
+
+[idle_mb]
+macos = 100000
+windows = 100000
+linux = 100000
+
+[installer_mb]
+"#;
+
 fn probe(s: &Setup, extra: &[&str]) -> Output {
     let root = s.dir.path();
-    let budgets = Path::new(env!("CARGO_MANIFEST_DIR")).join("budgets.toml");
+    let budgets = root.join("budgets.toml");
+    fs::write(&budgets, GENEROUS_BUDGETS).unwrap();
     Command::new(env!("CARGO_BIN_EXE_perf-probe"))
         .env("LAUNCH_LOG", root.join("launches.log"))
         .arg("--app")
