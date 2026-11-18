@@ -1,0 +1,96 @@
+name: Performance
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 02:00 in Jakarta.
+    - cron: "0 19 * * *"
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  NODE_VERSION: 26
+
+jobs:
+  perf:
+    name: perf (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-22.04 is the oldest Linux release we support.
+          - os: ubuntu-22.04
+            name: linux
+            bundles: deb,rpm,appimage
+            app: target/release/dea-desktop
+            launcher: xvfb-run -a
+          - os: macos-15
+            name: macos
+            bundles: dmg
+            app: target/release/dea-desktop
+            launcher: ""
+          - os: windows-2022
+            name: windows
+            bundles: nsis,msi
+            app: target/release/dea-desktop.exe
+            launcher: ""
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the app and unsigned installers
+        run: pnpm --filter desktop tauri build --bundles ${{ matrix.bundles }}
+      - name: Build the probe
+        run: cargo build --locked --release -p perf-probe
+      - name: Measure
+        shell: bash
+        env:
+          BASELINE: tools/perf-probe/baselines/${{ matrix.name }}.json
+          LAUNCHER: ${{ matrix.launcher }}
+        run: |
+          args=()
+          if [ -f "$BASELINE" ]; then
+            args+=(--baseline "$BASELINE")
+          else
+            echo "No baseline for ${{ matrix.name }} yet, checking budgets only"
+          fi
+          $LAUNCHER target/release/perf-probe \
+            --app "${{ matrix.app }}" \
+            --dist apps/desktop/dist \
+            --bundle-dir target/release/bundle \
+            --budgets tools/perf-probe/budgets.toml \
+            --runs 5 \
+            --os "${{ matrix.name }}" \
+            --out "perf-${{ matrix.name }}.json" \
+            "${args[@]}"
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-${{ matrix.name }}
+          path: perf-${{ matrix.name }}.json
+          if-no-files-found: ignore

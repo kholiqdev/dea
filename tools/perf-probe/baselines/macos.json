@@ -1,0 +1,9 @@
+{
+  "os": "macos",
+  "start_ms": 548.437458,
+  "idle_mb": 61.2569580078125,
+  "startup_js_gzip_kb": 9.0859375,
+  "installers_mb": {
+    "dmg": 2.0975170135498047
+  }
+}

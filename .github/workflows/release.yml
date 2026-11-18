@@ -55,9 +55,13 @@ jobs:
           PHASE: ${{ steps.phase.outputs.phase }}
         run: cargo run --locked -p checklist-gate -- --phase "$PHASE" --docs docs --summary
 
+  perf:
+    name: performance
+    uses: ./.github/workflows/perf.yml
+
   build:
     name: build
-    needs: gate
+    needs: [gate, perf]
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:

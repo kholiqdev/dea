@@ -1,0 +1,24 @@
+# Performance budgets for Phase 1 (F1-REL-05). Changing a number needs the
+# project owner's approval, recorded in the checklist history.
+
+start_ms = 1000
+startup_js_gzip_kb = 250
+# A benchmark fails when a number grows more than this against the baseline.
+regression_pct = 10
+
+# Total memory of the app and its webview processes, one project open, as
+# the OS monitor shows it: physical footprint on macOS (Activity Monitor),
+# private working set on Windows (Task Manager), PSS on Linux.
+[idle_mb]
+macos = 150
+windows = 200
+linux = 200
+
+[installer_mb]
+dmg = 30
+exe = 30
+msi = 30
+deb = 30
+rpm = 30
+# AppImage carries its own WebKitGTK.
+appimage = 120
