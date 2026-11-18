@@ -9,6 +9,13 @@
         "null"
       ]
     },
+    "id": {
+      "description": "Stable identity of the project, written when it is created. The\nVault keys secret values by it, so two projects never share a\nsecret and a clone in another folder finds the same ones.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "name": {
       "type": "string"
     },

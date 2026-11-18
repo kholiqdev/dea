@@ -274,3 +274,39 @@ fn missing_production_flag_is_an_error() {
     );
     assert_eq!(l.project.environments.len(), 2);
 }
+
+#[test]
+fn project_without_id_has_a_stable_path_scope() {
+    let dir = project();
+    // dea.yaml written by hand, without an id.
+    write(&dir, "dea.yaml", "name: by-hand\nschemaVersion: 1\n");
+    let scope = load_project(dir.path()).unwrap().project.vault_scope();
+    assert!(
+        scope.starts_with("path-") && scope.len() == "path-".len() + 16,
+        "{scope}"
+    );
+    assert!(
+        scope["path-".len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+    );
+    assert_eq!(
+        load_project(dir.path()).unwrap().project.vault_scope(),
+        scope
+    );
+
+    let other = project();
+    write(&other, "dea.yaml", "name: by-hand\nschemaVersion: 1\n");
+    assert_ne!(
+        load_project(other.path()).unwrap().project.vault_scope(),
+        scope
+    );
+}
+
+#[test]
+fn empty_id_falls_back_to_the_path_scope() {
+    let dir = project();
+    write(&dir, "dea.yaml", "name: x\nid: ''\nschemaVersion: 1\n");
+    let scope = load_project(dir.path()).unwrap().project.vault_scope();
+    assert!(scope.starts_with("path-"), "{scope}");
+}

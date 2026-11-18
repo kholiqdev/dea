@@ -15,6 +15,7 @@ const BACKUP_IGNORE: &str = ".dea-backup/";
 pub fn create_project(root: &Path, name: &str) -> Result<Project, ProjectError> {
     let manifest = Manifest {
         name: name.to_string(),
+        id: Some(uuid::Uuid::new_v4().to_string()),
         schema_version: SCHEMA_VERSION,
         default_environment: Some(DEFAULT_ENVIRONMENTS[0].to_string()),
     };
