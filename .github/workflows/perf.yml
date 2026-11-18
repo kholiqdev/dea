@@ -3,18 +3,25 @@ name: Performance
 on:
   push:
     branches: [main]
+  # Changes to the benchmark itself are measured before they merge.
+  pull_request:
+    paths:
+      - .github/workflows/perf.yml
+      - tools/perf-probe/**
   # Nightly runs are paused while the repository is private, because macOS
   # minutes count ten times against the Actions quota. Restore when public:
   # schedule:
   #   - cron: "0 19 * * *" # 02:00 in Jakarta
   workflow_call:
+  # Run by hand from any branch, for example to try a fix before merging.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: perf-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -84,6 +91,7 @@ jobs:
             --dist apps/desktop/dist \
             --bundle-dir target/release/bundle \
             --budgets tools/perf-probe/budgets.toml \
+            --warmup 2 \
             --runs 5 \
             --os "${{ matrix.name }}" \
             --out "perf-${{ matrix.name }}.json" \
