@@ -1,0 +1,18 @@
+[package]
+name = "dea-testkit"
+version = "0.1.0"
+description = "Test helpers shared by Dea crates"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.99"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
