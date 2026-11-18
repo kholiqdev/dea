@@ -199,31 +199,51 @@ fn slow_checkout_is_coalesced_into_few_batches() {
     }
     let writing = started.elapsed();
 
-    let mut seen = BTreeMap::new();
+    // Every report per path, in order. Batches were sent while writing;
+    // the times below are when this test read them.
+    let mut history: BTreeMap<PathBuf, Vec<ChangeKind>> = BTreeMap::new();
     let mut batches: Vec<(Duration, usize)> = Vec::new();
-    let mut reports = 0;
     let deadline = Instant::now() + Duration::from_secs(10);
-    while seen.len() < 500 {
+    fn take(
+        batch: Vec<ProjectChange>,
+        at: Duration,
+        history: &mut BTreeMap<PathBuf, Vec<ChangeKind>>,
+        batches: &mut Vec<(Duration, usize)>,
+    ) {
+        batches.push((at, batch.len()));
+        for change in batch {
+            history.entry(change.path).or_default().push(change.kind);
+        }
+    }
+    while history.len() < 500 {
         let Some(left) = deadline.checked_duration_since(Instant::now()) else {
             break;
         };
         let Ok(batch) = w.rx.recv_timeout(left) else {
             break;
         };
-        batches.push((started.elapsed(), batch.len()));
-        reports += batch.len();
-        for change in batch {
-            seen.insert(change.path, change.kind);
-        }
+        take(batch, started.elapsed(), &mut history, &mut batches);
     }
     // Anything still pending would be a late extra batch.
     if let Ok(batch) = w.rx.recv_timeout(Duration::from_millis(800)) {
-        batches.push((started.elapsed(), batch.len()));
-        reports += batch.len();
+        take(batch, started.elapsed(), &mut history, &mut batches);
     }
 
-    assert_eq!(seen.len(), 500, "batches (time, size): {batches:?}");
-    assert_eq!(reports, 500, "each file is reported once: {batches:?}");
+    assert_eq!(history.len(), 500, "batches (time, size): {batches:?}");
+    // A file whose content lands just after a batch was sent is reported
+    // again as modified in the next one; nothing else may repeat.
+    for (path, kinds) in &history {
+        assert_eq!(kinds[0], ChangeKind::Created, "{path:?}: {kinds:?}");
+        assert!(
+            kinds[1..].iter().all(|k| *k == ChangeKind::Modified),
+            "{path:?}: {kinds:?}"
+        );
+    }
+    let repeats: usize = history.values().map(|k| k.len() - 1).sum();
+    assert!(
+        repeats < 25,
+        "{repeats} repeated reports for 500 files: {batches:?}"
+    );
     // Without coalescing, a batch arrives every 62.5 ms tick while files keep
     // changing. With it, at most one per 2 s while busy plus a final one;
     // allow one per half second of writing to stay robust on slow machines.
