@@ -80,6 +80,8 @@ pub fn load_project(root: &Path) -> Result<LoadedProject, ProjectError> {
 #[serde(rename_all = "camelCase")]
 struct ManifestAnyVersion {
     name: String,
+    #[serde(default)]
+    id: Option<String>,
     schema_version: u32,
     #[serde(default)]
     default_environment: Option<String>,
@@ -189,6 +191,7 @@ fn parse_manifest(text: &str) -> Result<Manifest, FileError> {
     if any.schema_version > SCHEMA_VERSION {
         return Ok(Manifest {
             name: any.name,
+            id: any.id,
             schema_version: any.schema_version,
             default_environment: any.default_environment,
         });

@@ -17,9 +17,14 @@ fn create_project_writes_expected_tree() {
         assert!(dir.path().join(f).is_file(), "{f}");
     }
     let manifest = fs::read_to_string(dir.path().join("dea.yaml")).unwrap();
+    let lines: Vec<_> = manifest.lines().collect();
+    assert_eq!(lines.len(), 4, "{manifest}");
+    assert_eq!(lines[0], "name: harbor-api");
+    let id = lines[1].strip_prefix("id: ").expect("id after the name");
+    assert!(uuid::Uuid::parse_str(id).is_ok(), "{id}");
     assert_eq!(
-        manifest,
-        "name: harbor-api\nschemaVersion: 1\ndefaultEnvironment: local\n"
+        lines[2..],
+        ["schemaVersion: 1", "defaultEnvironment: local"]
     );
     let prod = fs::read_to_string(dir.path().join("environments/production.yaml")).unwrap();
     assert_eq!(prod, "name: production\nproduction: true\n");
@@ -94,4 +99,22 @@ fn create_project_makes_the_folder() {
     let root = dir.path().join("new/harbor-api");
     create_project(&root, "harbor-api").unwrap();
     assert!(root.join("dea.yaml").is_file());
+}
+
+#[test]
+fn new_project_has_an_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = create_project(dir.path(), "harbor-api").unwrap();
+    let id = project.manifest.id.clone().expect("id is written");
+    assert!(uuid::Uuid::parse_str(&id).is_ok(), "{id}");
+    assert_eq!(project.vault_scope(), id);
+}
+
+#[test]
+fn two_new_projects_get_different_ids() {
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let a = create_project(a.path(), "a").unwrap();
+    let b = create_project(b.path(), "b").unwrap();
+    assert_ne!(a.manifest.id, b.manifest.id);
 }

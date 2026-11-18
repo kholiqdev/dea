@@ -54,11 +54,20 @@ fn yaml_output_is_lf_with_single_trailing_newline() {
 fn yaml_field_names_and_order_are_stable() {
     let manifest = Manifest {
         name: "harbor-api".into(),
+        id: Some("0b6f3c1e-2f43-4c43-9a49-5d0e2d2c8a11".into()),
         schema_version: 1,
         default_environment: Some("local".into()),
     };
     assert_eq!(
         to_yaml(&manifest).unwrap(),
+        "name: harbor-api\nid: 0b6f3c1e-2f43-4c43-9a49-5d0e2d2c8a11\nschemaVersion: 1\ndefaultEnvironment: local\n"
+    );
+    let without_id = Manifest {
+        id: None,
+        ..manifest
+    };
+    assert_eq!(
+        to_yaml(&without_id).unwrap(),
         "name: harbor-api\nschemaVersion: 1\ndefaultEnvironment: local\n"
     );
     let vault = to_yaml(&sample_vault()).unwrap();
@@ -87,6 +96,7 @@ fn round_trip_is_byte_identical() {
     }
     check(&Manifest {
         name: "harbor-api".into(),
+        id: None,
         schema_version: 1,
         default_environment: Some("local".into()),
     });

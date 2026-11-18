@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::FileError;
 
@@ -18,6 +19,11 @@ pub const MAX_RELATIVE_PATH_LEN: usize = 200;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
     pub name: String,
+    /// Stable identity of the project, written when it is created. The
+    /// Vault keys secret values by it, so two projects never share a
+    /// secret and a clone in another folder finds the same ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_environment: Option<String>,
@@ -86,6 +92,21 @@ pub struct Project {
     pub vault: VaultManifest,
     /// True when the project was written by a newer version of Dea.
     pub read_only: bool,
+}
+
+impl Project {
+    /// The key under which the Vault stores this project's secrets: the
+    /// project id, or for a project without one (written by hand) a hash
+    /// of its folder, so it still gets secrets of its own.
+    pub fn vault_scope(&self) -> String {
+        if let Some(id) = self.manifest.id.as_deref().filter(|id| !id.is_empty()) {
+            return id.to_string();
+        }
+        let root = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let digest = Sha256::digest(root.as_os_str().as_encoded_bytes());
+        let hex: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+        format!("path-{hex}")
+    }
 }
 
 /// A loaded project plus the files that could not be read. One broken file
