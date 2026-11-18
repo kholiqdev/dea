@@ -14,6 +14,7 @@ workspace = true
 aes-gcm.workspace = true
 argon2.workspace = true
 dea-project.workspace = true
+keyring-core.workspace = true
 rand.workspace = true
 secrecy.workspace = true
 serde.workspace = true
@@ -23,6 +24,16 @@ thiserror.workspace = true
 time = { workspace = true, features = ["serde", "formatting", "parsing"] }
 zeroize.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store.workspace = true
+
 [dev-dependencies]
 dea-testkit.workspace = true
+uuid.workspace = true
 time = { workspace = true, features = ["macros"] }
