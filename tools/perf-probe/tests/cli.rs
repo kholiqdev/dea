@@ -111,3 +111,41 @@ exec sleep 30"#,
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("hello from the toolkit"), "{stderr}");
 }
+
+#[test]
+fn a_slow_first_launch_gets_the_longer_warmup_wait() {
+    let s = setup(
+        r#"if [ ! -f "$LAUNCH_LOG" ]; then sleep 2; fi
+echo launch >> "$LAUNCH_LOG"
+echo DEA_READY
+exec sleep 30"#,
+    );
+    let out = probe(
+        &s,
+        &[
+            "--runs",
+            "1",
+            "--warmup",
+            "1",
+            "--ready-timeout-secs",
+            "1",
+            "--warmup-timeout-secs",
+            "10",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_measured_launch_over_the_ready_wait_fails() {
+    let s = setup("sleep 3\necho DEA_READY\nexec sleep 30");
+    let out = probe(&s, &["--runs", "1", "--ready-timeout-secs", "1"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("within 1s"), "{stderr}");
+}
