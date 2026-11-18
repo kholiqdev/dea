@@ -77,3 +77,21 @@ fn hash_file_does_not_contain_the_password() {
         .unwrap();
     assert!(find_canary(&[dir.path()], &secret).is_empty());
 }
+
+#[test]
+fn the_vault_folder_is_created_on_first_use() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_dir = dir.path().join("app-data").join("vault");
+    VaultPassword::open(&vault_dir.join("password.phc"))
+        .set(
+            &SecretString::from("correct horse"),
+            KdfParams::insecure_for_tests(),
+        )
+        .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&vault_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{mode:o}");
+    }
+}
