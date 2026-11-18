@@ -100,7 +100,7 @@ fn parse_manifest(text: &str) -> Result<Manifest, FileError> {
 
 /// Reads one project file: a byte order mark and CRLF line endings are
 /// accepted, conflict markers and empty files are reported clearly.
-fn parse<T: DeserializeOwned>(rel: &Path, text: &str) -> Result<T, FileError> {
+pub(crate) fn parse<T: DeserializeOwned>(rel: &Path, text: &str) -> Result<T, FileError> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let text = text.replace("\r\n", "\n");
     let error = |message: String, line, column| FileError {
