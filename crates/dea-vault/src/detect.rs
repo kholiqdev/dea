@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::index::Index;
 use crate::{Backend, FileBackend, KdfParams, KeychainBackend, MemoryBackend, VaultError};
 
 /// File name of the encrypted fallback inside the Vault folder.
@@ -39,33 +40,56 @@ impl VaultBackend {
     }
 }
 
-/// The OS keychain, or on Linux without a working Secret Service the
-/// encrypted file `<vault_dir>/vault.enc` (F1-FON-08 #3, #4). On macOS and
-/// Windows a keychain failure is an error.
+/// The OS keychain, or on Linux the encrypted file `<vault_dir>/vault.enc`
+/// (F1-FON-08 #3, #4). On Linux the file is used once it exists, and is
+/// chosen only on a device that never stored a value in the keychain, so a
+/// Secret Service that is slow to start never hides stored secrets. On
+/// macOS and Windows a keychain failure is an error.
 pub fn open_native(
     service: &str,
     vault_dir: &Path,
     kdf: KdfParams,
 ) -> Result<VaultBackend, VaultError> {
+    let file_path = vault_dir.join(VAULT_FILE);
+    let linux = cfg!(target_os = "linux");
+    if linux && file_path.exists() {
+        return Ok(VaultBackend::File(Arc::new(FileBackend::open(
+            &file_path, kdf,
+        ))));
+    }
     let keychain = KeychainBackend::new(service).and_then(|k| k.probe().map(|()| k));
     let probe = match &keychain {
         Ok(_) => Ok(()),
         Err(e) => Err(VaultError::Backend(e.to_string())),
     };
-    match choose(cfg!(target_os = "linux"), probe) {
+    // A damaged index counts as holding entries: never switch on doubt.
+    let has_entries = Index::load(vault_dir).map_or(true, |i| !i.entries.is_empty());
+    match choose(linux, false, has_entries, probe)? {
         BackendKind::EncryptedFile => Ok(VaultBackend::File(Arc::new(FileBackend::open(
-            &vault_dir.join(VAULT_FILE),
-            kdf,
+            &file_path, kdf,
         )))),
         _ => keychain.map(|k| VaultBackend::Keychain(Arc::new(k))),
     }
 }
 
-fn choose(os_is_linux: bool, probe: Result<(), VaultError>) -> BackendKind {
-    if os_is_linux && probe.is_err() {
-        BackendKind::EncryptedFile
-    } else {
-        BackendKind::Keychain
+fn choose(
+    os_is_linux: bool,
+    file_exists: bool,
+    has_index_entries: bool,
+    probe: Result<(), VaultError>,
+) -> Result<BackendKind, VaultError> {
+    if !os_is_linux {
+        return probe.map(|()| BackendKind::Keychain);
+    }
+    if file_exists {
+        return Ok(BackendKind::EncryptedFile);
+    }
+    match probe {
+        Ok(()) => Ok(BackendKind::Keychain),
+        Err(_) if !has_index_entries => Ok(BackendKind::EncryptedFile),
+        Err(e) => Err(VaultError::Backend(format!(
+            "the Secret Service is not answering, and secrets are stored there: {e}"
+        ))),
     }
 }
 
@@ -73,16 +97,50 @@ fn choose(os_is_linux: bool, probe: Result<(), VaultError>) -> BackendKind {
 mod tests {
     use super::*;
 
+    fn down() -> Result<(), VaultError> {
+        Err(VaultError::Backend("no bus".into()))
+    }
+
     #[test]
-    fn linux_without_secret_service_uses_the_encrypted_file() {
+    fn linux_without_secret_service_uses_the_encrypted_file_on_a_new_device() {
         assert_eq!(
-            choose(true, Err(VaultError::Backend("no bus".into()))),
+            choose(true, false, false, down()).unwrap(),
             BackendKind::EncryptedFile
         );
-        assert_eq!(choose(true, Ok(())), BackendKind::Keychain);
         assert_eq!(
-            choose(false, Err(VaultError::Backend("x".into()))),
+            choose(true, false, false, Ok(())).unwrap(),
             BackendKind::Keychain
         );
+    }
+
+    #[test]
+    fn an_existing_vault_file_is_always_used() {
+        assert_eq!(
+            choose(true, true, true, Ok(())).unwrap(),
+            BackendKind::EncryptedFile
+        );
+        assert_eq!(
+            choose(true, true, false, down()).unwrap(),
+            BackendKind::EncryptedFile
+        );
+    }
+
+    #[test]
+    fn a_keychain_that_stops_answering_is_an_error_not_a_switch() {
+        // Values were stored in the keychain: switching would hide them and
+        // drop their entries from the index.
+        assert!(matches!(
+            choose(true, false, true, down()),
+            Err(VaultError::Backend(_))
+        ));
+    }
+
+    #[test]
+    fn macos_and_windows_always_use_the_keychain() {
+        assert_eq!(
+            choose(false, false, false, Ok(())).unwrap(),
+            BackendKind::Keychain
+        );
+        assert!(choose(false, false, false, down()).is_err());
     }
 }
