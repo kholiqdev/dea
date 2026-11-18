@@ -63,7 +63,7 @@ pub fn create_project(root: &Path, name: &str) -> Result<Project, ProjectError> 
 
 /// Makes sure migration backups never end up in git, keeping any existing
 /// `.gitignore` lines.
-fn add_backup_ignore(path: &Path) -> Result<(), ProjectError> {
+pub(crate) fn add_backup_ignore(path: &Path) -> Result<(), ProjectError> {
     let existing = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),

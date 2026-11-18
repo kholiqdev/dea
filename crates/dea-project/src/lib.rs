@@ -4,6 +4,7 @@
 mod create;
 mod error;
 mod load;
+mod migrate;
 mod model;
 mod names;
 mod yaml;
@@ -11,6 +12,7 @@ mod yaml;
 pub use create::create_project;
 pub use error::{FileError, ProjectError};
 pub use load::{has_merge_conflict_markers, load_project};
+pub use migrate::{Migration, MigrationOutcome, migrate, migrate_with};
 pub use model::{
     Environment, LoadedProject, MAX_RELATIVE_PATH_LEN, Manifest, Project, SCHEMA_VERSION,
     SecretKind, SecretSpec, Variable, VaultManifest,
