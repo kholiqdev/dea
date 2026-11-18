@@ -1,0 +1,391 @@
+//! The one way to read a secret: checks the lock, asks for production
+//! authentication, and reports status changes (F1-FON-08, 09, 10).
+
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Duration;
+
+use dea_project::{Project, SecretKind, SecretLookup, SecretLookupError};
+use dea_vault::{
+    AuthError, AuthMethod, Authenticator, KdfParams, LockState, OsEvent, OsEventsWatch, Policy,
+    SecretData, SecretKey, SecretStatus, SecretStore, VaultBackend, VaultError, VaultPassword,
+    watch_os_events,
+};
+use secrecy::SecretString;
+
+use crate::{Clock, PasswordPrompt, PromptProblem, Prompter, UseError};
+
+/// How often the idle timer is checked. Below one second, so the status
+/// changes within a second of the Vault locking (F1-FON-09 #6).
+pub const TICK: Duration = Duration::from_millis(500);
+
+/// File name of the Linux Vault password hash inside the Vault folder.
+pub const PASSWORD_FILE: &str = "password.phc";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaultStatus {
+    pub locked: bool,
+}
+
+/// The production dialog text: `<action> using `a`, `b``.
+pub fn production_reason(action: &str, secrets: &[&str]) -> String {
+    let names: Vec<String> = secrets.iter().map(|s| format!("`{s}`")).collect();
+    format!("{action} using {}", names.join(", "))
+}
+
+pub struct VaultService {
+    backend: VaultBackend,
+    store: SecretStore,
+    password: VaultPassword,
+    authenticator: Box<dyn Authenticator>,
+    prompter: Arc<dyn Prompter>,
+    policy: Mutex<Policy>,
+    kdf: KdfParams,
+    clock: Arc<dyn Clock>,
+    state: Mutex<LockState>,
+    /// Held while a dialog is open, so only one shows at a time.
+    auth_gate: Mutex<()>,
+    on_status: Box<dyn Fn(VaultStatus) + Send + Sync>,
+}
+
+fn guard<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl VaultService {
+    /// `dir` is the Vault folder in the app data: it holds `index.json`,
+    /// `password.phc` and, for the file backend, `vault.enc`. The Vault
+    /// starts locked.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        dir: &Path,
+        backend: VaultBackend,
+        authenticator: Box<dyn Authenticator>,
+        prompter: Arc<dyn Prompter>,
+        policy: Policy,
+        kdf: KdfParams,
+        clock: Arc<dyn Clock>,
+        on_status: Box<dyn Fn(VaultStatus) + Send + Sync>,
+    ) -> Result<Arc<Self>, VaultError> {
+        Ok(Arc::new(VaultService {
+            store: SecretStore::open(dir, backend.as_backend())?,
+            password: VaultPassword::open(&dir.join(PASSWORD_FILE)),
+            backend,
+            authenticator,
+            prompter,
+            policy: Mutex::new(policy),
+            kdf,
+            clock,
+            state: Mutex::new(LockState::new()),
+            auth_gate: Mutex::new(()),
+            on_status,
+        }))
+    }
+
+    pub fn status(&self) -> VaultStatus {
+        VaultStatus {
+            locked: !guard(&self.state).is_unlocked(),
+        }
+    }
+
+    fn report(&self, locked: bool) {
+        (self.on_status)(VaultStatus { locked });
+    }
+
+    pub fn set_policy(&self, policy: Policy) {
+        *guard(&self.policy) = policy;
+    }
+
+    pub fn record_activity(&self) {
+        guard(&self.state).record_activity(self.clock.now());
+    }
+
+    /// Locks now: by hand, on idle, or on an OS event. Forgets the file
+    /// backend's key and closes the production window.
+    pub fn lock(&self) {
+        let was_unlocked = {
+            let mut state = guard(&self.state);
+            let was = state.is_unlocked();
+            state.lock();
+            was
+        };
+        if let VaultBackend::File(file) = &self.backend {
+            file.lock();
+        }
+        if was_unlocked {
+            self.report(true);
+        }
+    }
+
+    /// Locks after the idle time or a resume from sleep. Called every
+    /// [`TICK`] by [`VaultService::start_background`].
+    pub fn tick(&self) {
+        let policy = *guard(&self.policy);
+        let locked = guard(&self.state).tick(self.clock.now(), self.clock.wall(), &policy);
+        if locked {
+            if let VaultBackend::File(file) = &self.backend {
+                file.lock();
+            }
+            self.report(true);
+        }
+    }
+
+    pub fn handle_os_event(&self, _event: OsEvent) {
+        self.lock();
+    }
+
+    /// Ticks and watches for screen lock and sleep until the returned value
+    /// is dropped.
+    pub fn start_background(self: &Arc<Self>) -> Result<VaultBackground, VaultError> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let weak: Weak<Self> = Arc::downgrade(self);
+        let ticker_stop = Arc::clone(&stop);
+        let ticker_weak = weak.clone();
+        std::thread::Builder::new()
+            .name("dea-vault-ticker".into())
+            .spawn(move || {
+                while !ticker_stop.load(Ordering::SeqCst) {
+                    std::thread::sleep(TICK);
+                    match ticker_weak.upgrade() {
+                        Some(vault) => vault.tick(),
+                        None => break,
+                    }
+                }
+            })
+            .map_err(|e| VaultError::Backend(format!("cannot start the Vault timer: {e}")))?;
+        let watch = watch_os_events(move |event| {
+            if let Some(vault) = weak.upgrade() {
+                vault.handle_os_event(event);
+            }
+        })?;
+        Ok(VaultBackground {
+            stop,
+            _watch: watch,
+        })
+    }
+
+    /// Unlocks with the OS dialog, or on Linux the Vault password.
+    pub fn unlock(&self, reason: &str) -> Result<(), UseError> {
+        let _gate = guard(&self.auth_gate);
+        if guard(&self.state).is_unlocked() {
+            return Ok(());
+        }
+        self.authenticate(reason)?;
+        guard(&self.state).unlock(self.clock.now(), self.clock.wall());
+        self.report(false);
+        Ok(())
+    }
+
+    /// Makes production secrets usable for the production window, asking
+    /// for authentication if the window is closed. Unlocks too, with the
+    /// same single dialog. Call only for production environments.
+    pub fn authorize_production(&self, action: &str, secrets: &[&str]) -> Result<(), UseError> {
+        if guard(&self.state).production_open(self.clock.now()) {
+            return Ok(());
+        }
+        let _gate = guard(&self.auth_gate);
+        // Another caller may have authenticated while this one waited.
+        if guard(&self.state).production_open(self.clock.now()) {
+            return Ok(());
+        }
+        self.authenticate(&production_reason(action, secrets))?;
+        let policy = *guard(&self.policy);
+        let unlocked_now = {
+            let mut state = guard(&self.state);
+            let was_locked = !state.is_unlocked();
+            if was_locked {
+                state.unlock(self.clock.now(), self.clock.wall());
+            }
+            state.open_production(self.clock.now(), &policy);
+            was_locked
+        };
+        if unlocked_now {
+            self.report(false);
+        }
+        Ok(())
+    }
+
+    /// One authentication, native or by Vault password. The caller holds
+    /// `auth_gate`.
+    fn authenticate(&self, reason: &str) -> Result<(), UseError> {
+        if let Err(wait) = guard(&self.state).attempt_allowed(self.clock.now()) {
+            return Err(UseError::RetryAfter(wait));
+        }
+        if self.authenticator.method() == AuthMethod::VaultPassword {
+            return self.vault_password(reason);
+        }
+        match self.authenticator.authenticate(reason) {
+            Ok(()) => {
+                guard(&self.state).record_success();
+                Ok(())
+            }
+            Err(AuthError::Cancelled) => Err(UseError::Cancelled),
+            Err(AuthError::Failed) => {
+                guard(&self.state).record_failure(self.clock.now());
+                Err(UseError::AuthFailed)
+            }
+            Err(AuthError::Unavailable) => Err(UseError::Vault(VaultError::Backend(
+                "this device cannot authenticate".into(),
+            ))),
+            Err(AuthError::Other(e)) => Err(UseError::Vault(VaultError::Backend(e))),
+        }
+    }
+
+    /// The Linux flow: create the Vault password the first time (K19),
+    /// otherwise ask until it is right, cancelled, or held back.
+    fn vault_password(&self, reason: &str) -> Result<(), UseError> {
+        let mut problem = None;
+        loop {
+            let prompt = |problem| PasswordPrompt {
+                reason: reason.to_string(),
+                problem,
+            };
+            if let Err(wait) = guard(&self.state).attempt_allowed(self.clock.now()) {
+                let _ = self
+                    .prompter
+                    .vault_password(&prompt(Some(PromptProblem::RetryAfter(wait))));
+                return Err(UseError::RetryAfter(wait));
+            }
+            if !self.password.is_set() {
+                let answer = self
+                    .prompter
+                    .new_vault_password(&prompt(problem.take()))
+                    .ok_or(UseError::Cancelled)?;
+                match self.password.set(&answer, self.kdf) {
+                    Err(VaultError::PasswordTooShort { min }) => {
+                        problem = Some(PromptProblem::TooShort { min });
+                        continue;
+                    }
+                    other => other?,
+                }
+                self.open_file(&answer)?;
+                guard(&self.state).record_success();
+                return Ok(());
+            }
+            let answer = self
+                .prompter
+                .vault_password(&prompt(problem.take()))
+                .ok_or(UseError::Cancelled)?;
+            if self.password.verify(&answer)? {
+                self.open_file(&answer)?;
+                guard(&self.state).record_success();
+                return Ok(());
+            }
+            guard(&self.state).record_failure(self.clock.now());
+            problem = Some(PromptProblem::WrongPassword);
+        }
+    }
+
+    /// For the encrypted file backend: unlocks it, or creates it the first
+    /// time, with the Vault password.
+    fn open_file(&self, password: &SecretString) -> Result<(), VaultError> {
+        match &self.backend {
+            VaultBackend::File(file) if file.exists() => file.unlock(password),
+            VaultBackend::File(file) => file.create(password),
+            _ => Ok(()),
+        }
+    }
+
+    fn require_unlocked(&self) -> Result<(), UseError> {
+        if guard(&self.state).is_unlocked() {
+            Ok(())
+        } else {
+            Err(UseError::Locked)
+        }
+    }
+
+    pub fn set_secret(
+        &self,
+        key: &SecretKey,
+        kind: SecretKind,
+        data: &SecretData,
+    ) -> Result<(), UseError> {
+        self.require_unlocked()?;
+        self.store.set(key, kind, data)?;
+        self.record_activity();
+        Ok(())
+    }
+
+    pub fn delete_secret(&self, key: &SecretKey) -> Result<(), UseError> {
+        self.require_unlocked()?;
+        self.store.delete(key)?;
+        self.record_activity();
+        Ok(())
+    }
+
+    /// Every secret the project needs, per environment. Works while locked.
+    pub fn statuses(&self, project: &Project) -> Vec<SecretStatus> {
+        let environments: Vec<String> = project
+            .environments
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        self.store
+            .statuses(&project.vault_scope(), &project.vault, &environments)
+    }
+
+    /// The value of `key`, or `None` if this device has none. `production`
+    /// is whether the key's environment is a production one.
+    pub fn secret(
+        &self,
+        key: &SecretKey,
+        production: bool,
+    ) -> Result<Option<SecretData>, UseError> {
+        {
+            let state = guard(&self.state);
+            if !state.is_unlocked() {
+                return Err(UseError::Locked);
+            }
+            if production && !state.production_open(self.clock.now()) {
+                return Err(UseError::ReauthRequired);
+            }
+        }
+        let value = self.store.get(key)?;
+        self.record_activity();
+        Ok(value)
+    }
+
+    /// Secret values for variable resolution in one project.
+    pub fn lookup<'a>(&'a self, scope: &'a str, production: bool) -> VaultLookup<'a> {
+        VaultLookup {
+            vault: self,
+            scope,
+            production,
+        }
+    }
+}
+
+/// Stops the timer and the OS event watcher when dropped.
+pub struct VaultBackground {
+    stop: Arc<AtomicBool>,
+    _watch: OsEventsWatch,
+}
+
+impl Drop for VaultBackground {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+pub struct VaultLookup<'a> {
+    vault: &'a VaultService,
+    scope: &'a str,
+    production: bool,
+}
+
+impl SecretLookup for VaultLookup<'_> {
+    fn lookup(&self, environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
+        let key = SecretKey {
+            scope: self.scope.to_string(),
+            environment: environment.to_string(),
+            name: name.to_string(),
+        };
+        match self.vault.secret(&key, self.production) {
+            Ok(value) => Ok(value.map(|v| v.value_for_use().to_string())),
+            Err(UseError::Locked) => Err(SecretLookupError::Locked),
+            Err(UseError::ReauthRequired) => Err(SecretLookupError::ReauthRequired),
+            Err(other) => Err(SecretLookupError::Other(other.to_string())),
+        }
+    }
+}

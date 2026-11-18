@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "apps/desktop/src-tauri",
+  "crates/dea-engine",
   "crates/dea-project",
   "crates/dea-testkit",
   "crates/dea-vault",
@@ -45,6 +46,7 @@ argon2 = { version = "0.6.0", features = ["password-hash"] }
 base64 = "0.23.1"
 block2 = "0.6.2"
 cargo_metadata = "0.23.1"
+dea-engine = { path = "crates/dea-engine" }
 dea-project = { path = "crates/dea-project" }
 dea-testkit = { path = "crates/dea-testkit" }
 dea-vault = { path = "crates/dea-vault" }
