@@ -7,11 +7,12 @@
     "node": ">=26"
   },
   "scripts": {
+    "prepare": "lefthook install",
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "format": "prettier --write --no-error-on-unmatched-pattern .github apps crates packages sdks testing tools website \"*.{js,json,md,yaml}\"",
-    "format:check": "prettier --check --no-error-on-unmatched-pattern .github apps crates packages sdks testing tools website \"*.{js,json,md,yaml}\""
+    "format": "prettier --write --no-error-on-unmatched-pattern .github apps crates packages sdks testing tools website \"*.{js,json,md,yaml,yml}\"",
+    "format:check": "prettier --check --no-error-on-unmatched-pattern .github apps crates packages sdks testing tools website \"*.{js,json,md,yaml,yml}\""
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
@@ -22,6 +23,7 @@
     "eslint-plugin-boundaries": "^7.4.4",
     "eslint-plugin-svelte": "^3.24.1",
     "globals": "^17.14.0",
+    "lefthook": "^2.2.2",
     "prettier": "^3.10.1",
     "prettier-plugin-svelte": "^4.1.1",
     "svelte": "^5.57.3",

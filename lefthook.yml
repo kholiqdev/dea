@@ -1,0 +1,19 @@
+# Quick checks before each commit. CI runs the full set on every pull request.
+pre-commit:
+  parallel: true
+  commands:
+    prettier:
+      glob: "*.{js,ts,svelte,json,md,yaml,yml,css,html}"
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+    eslint:
+      glob: "apps/desktop/**/*.{js,ts,svelte}"
+      run: pnpm exec eslint {staged_files}
+    rustfmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}
