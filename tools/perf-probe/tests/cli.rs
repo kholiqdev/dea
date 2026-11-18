@@ -79,3 +79,22 @@ fn app_errors_reach_the_probe_output() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("boom from the webview"), "{stderr}");
 }
+
+#[test]
+fn app_marks_are_shown_with_their_time() {
+    let s = setup(
+        r#"sleep 0.1
+echo "DEA_MARK mounted"
+sleep 0.1
+echo DEA_READY
+exec sleep 30"#,
+    );
+    let out = probe(&s, &["--runs", "1"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("mounted"))
+        .unwrap_or_else(|| panic!("no mounted mark in {stdout}"));
+    assert!(line.contains(" ms"), "{line}");
+}

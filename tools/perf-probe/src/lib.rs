@@ -22,6 +22,8 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// Line the app prints once its first frame is drawn, when `DEA_PERF_PROBE=1`.
 pub const READY_LINE: &str = "DEA_READY";
+/// Prefix of lines marking earlier steps of start-up, printed with their time.
+pub const MARK_PREFIX: &str = "DEA_MARK ";
 
 const MIB: f64 = 1024.0 * 1024.0;
 const INSTALLER_KINDS: [&str; 6] = ["dmg", "exe", "msi", "deb", "rpm", "appimage"];
@@ -322,6 +324,10 @@ pub fn measure_launch_with(
         let mut ready = false;
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
+            if let Some(mark) = line.trim().strip_prefix(MARK_PREFIX) {
+                let ms = started.elapsed().as_secs_f64() * 1000.0;
+                println!("  {ms:.0} ms: {mark}");
+            }
             if !ready && line.trim() == READY_LINE {
                 ready = true;
                 let _ = tx.send(true);
