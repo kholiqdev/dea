@@ -14,7 +14,8 @@ use dea_vault::{
 };
 use secrecy::SecretString;
 
-use crate::{Clock, PasswordPrompt, PromptProblem, Prompter, UseError};
+use crate::clipboard::copy_and_clear_later;
+use crate::{Clipboard, Clock, PasswordPrompt, PromptProblem, Prompter, UseError};
 
 /// How often the idle timer is checked. Below one second, so the status
 /// changes within a second of the Vault locking (F1-FON-09 #6).
@@ -344,6 +345,25 @@ impl VaultService {
         let value = self.store.get(key)?;
         self.record_activity();
         Ok(value)
+    }
+
+    /// Copies the value of `key` and clears the clipboard after
+    /// `clear_after` ([`crate::CLIPBOARD_CLEAR_AFTER`] in the app) unless
+    /// the person copied something else. Same checks as
+    /// [`VaultService::secret`].
+    pub fn copy_secret(
+        &self,
+        key: &SecretKey,
+        production: bool,
+        clipboard: Arc<dyn Clipboard>,
+        clear_after: Duration,
+    ) -> Result<(), UseError> {
+        let value = self.secret(key, production)?.ok_or(UseError::Missing)?;
+        copy_and_clear_later(clipboard, value.value_for_use(), clear_after).map_err(|e| {
+            UseError::Vault(VaultError::Backend(format!(
+                "cannot use the clipboard: {e}"
+            )))
+        })
     }
 
     /// Secret values for variable resolution in one project.
