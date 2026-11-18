@@ -1,5 +1,6 @@
 //! Resolves `{{name}}`, `{{vault:name}}` and `{{$dynamic}}` placeholders.
 
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -12,6 +13,10 @@ static PLACEHOLDER: LazyLock<Regex> =
 
 /// How many variables may refer to each other in a chain.
 const MAX_DEPTH: usize = 10;
+
+/// Largest resolved text. A few kilobytes of crafted variables that refer
+/// to each other many times per level would otherwise expand without bound.
+pub const MAX_RESOLVED_BYTES: usize = 16 * 1024 * 1024;
 
 /// Where a variable is defined, most specific first. A variable in a more
 /// specific scope hides one with the same name in a less specific scope.
@@ -124,6 +129,8 @@ pub enum ResolveError {
     Cycle(String),
     #[error("variable {0} is nested more than 10 levels deep")]
     TooDeep(String),
+    #[error("the resolved text is larger than {0} bytes")]
+    TooLarge(usize),
     #[error("cannot read secret {name}: {error}")]
     Secret {
         name: String,
@@ -144,6 +151,8 @@ pub fn resolve(template: &str, ctx: &mut ResolveContext) -> Result<Resolution, R
         unresolved: Vec::new(),
         used: Vec::new(),
         stack: Vec::new(),
+        variables: HashMap::new(),
+        secrets: HashMap::new(),
     };
     let expanded = resolver.expand(template)?;
     Ok(Resolution {
@@ -154,6 +163,7 @@ pub fn resolve(template: &str, ctx: &mut ResolveContext) -> Result<Resolution, R
     })
 }
 
+#[derive(Clone)]
 struct Expanded {
     text: String,
     redacted: String,
@@ -167,6 +177,10 @@ struct Resolver<'c, 'a> {
     used: Vec<UsedVariable>,
     /// Variables being resolved, to detect cycles.
     stack: Vec<String>,
+    /// Each variable is expanded and each secret read once per call, so
+    /// repeated references cost nothing and never ask the Vault twice.
+    variables: HashMap<String, Expanded>,
+    secrets: HashMap<String, Option<Expanded>>,
 }
 
 impl Resolver<'_, '_> {
@@ -185,6 +199,9 @@ impl Resolver<'_, '_> {
             let name = caps[1].trim();
             match self.placeholder(name)? {
                 Some(value) => {
+                    if out.text.len() + value.text.len() > MAX_RESOLVED_BYTES {
+                        return Err(ResolveError::TooLarge(MAX_RESOLVED_BYTES));
+                    }
                     out.text.push_str(&value.text);
                     out.redacted.push_str(&value.redacted);
                     out.secret |= value.secret;
@@ -218,6 +235,15 @@ impl Resolver<'_, '_> {
         if name.is_empty() {
             return Ok(None);
         }
+        if let Some(cached) = self.secrets.get(name) {
+            return Ok(cached.clone());
+        }
+        let value = self.read_secret(name)?;
+        self.secrets.insert(name.to_string(), value.clone());
+        Ok(value)
+    }
+
+    fn read_secret(&mut self, name: &str) -> Result<Option<Expanded>, ResolveError> {
         let environment = self.ctx.environment;
         match self.ctx.secrets.lookup(environment, name) {
             // Secret values are used as they are, never expanded.
@@ -282,6 +308,9 @@ impl Resolver<'_, '_> {
         let Some((scope, variable)) = found else {
             return Ok(None);
         };
+        if let Some(cached) = self.variables.get(name) {
+            return Ok(Some(cached.clone()));
+        }
         if self.stack.iter().any(|n| n == name) {
             return Err(ResolveError::Cycle(name.to_string()));
         }
@@ -294,6 +323,7 @@ impl Resolver<'_, '_> {
         self.stack.push(name.to_string());
         let value = self.expand(&variable.value)?;
         self.stack.pop();
+        self.variables.insert(name.to_string(), value.clone());
         self.record(
             Some(position),
             UsedVariable {
