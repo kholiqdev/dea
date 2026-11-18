@@ -3,18 +3,23 @@ name: Performance
 on:
   push:
     branches: [main]
-  # Nightly runs are paused while the repository is private, because macOS
-  # minutes count ten times against the Actions quota. Restore when public:
-  # schedule:
-  #   - cron: "0 19 * * *" # 02:00 in Jakarta
+  # Changes to the benchmark itself are measured before they merge.
+  pull_request:
+    paths:
+      - .github/workflows/perf.yml
+      - tools/perf-probe/**
+  schedule:
+    - cron: "0 19 * * *" # 02:00 in Jakarta
   workflow_call:
+  # Run by hand from any branch, for example to try a fix before merging.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: perf-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,17 +39,14 @@ jobs:
             name: linux
             bundles: deb,rpm,appimage
             app: target/release/dea-desktop
-            launcher: xvfb-run -a
           - os: macos-15
             name: macos
             bundles: dmg
             app: target/release/dea-desktop
-            launcher: ""
           - os: windows-2022
             name: windows
             bundles: nsis,msi
             app: target/release/dea-desktop.exe
-            launcher: ""
     steps:
       - uses: actions/checkout@v7
       - name: Install Linux dependencies
@@ -53,7 +55,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
-            libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb dbus
       - name: Install Rust toolchain
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -67,11 +69,21 @@ jobs:
         run: pnpm --filter desktop tauri build --bundles ${{ matrix.bundles }}
       - name: Build the probe
         run: cargo build --locked --release -p perf-probe
+      # xvfb-run defaults to an 8-bit screen, on which WebKitGTK draws nothing.
+      - name: Start a virtual display
+        if: runner.os == 'Linux'
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
       - name: Measure
         shell: bash
         env:
           BASELINE: tools/perf-probe/baselines/${{ matrix.name }}.json
-          LAUNCHER: ${{ matrix.launcher }}
+          # WebKitGTK's GPU paths are not available on a virtual display.
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+          # GTK's accessibility bridge waits for a bus CI does not have.
+          NO_AT_BRIDGE: "1"
         run: |
           args=()
           if [ -f "$BASELINE" ]; then
@@ -79,11 +91,17 @@ jobs:
           else
             echo "No baseline for ${{ matrix.name }} yet, checking budgets only"
           fi
-          $LAUNCHER target/release/perf-probe \
+          # WebKitGTK expects a D-Bus session, which CI runners lack.
+          wrap=()
+          if [ "$RUNNER_OS" = Linux ]; then
+            wrap=(dbus-run-session --)
+          fi
+          "${wrap[@]}" target/release/perf-probe \
             --app "${{ matrix.app }}" \
             --dist apps/desktop/dist \
             --bundle-dir target/release/bundle \
             --budgets tools/perf-probe/budgets.toml \
+            --warmup 2 \
             --runs 5 \
             --os "${{ matrix.name }}" \
             --out "perf-${{ matrix.name }}.json" \

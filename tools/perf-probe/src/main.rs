@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use perf_probe::{
-    Measurement, check, installer_sizes_mb, load_budgets, load_measurement, measure_launch, median,
-    startup_js_gzip_kb,
+    Measurement, check, installer_sizes_mb, load_budgets, load_measurement, measure_launch_with,
+    median, startup_js_gzip_kb,
 };
 
 /// Measures start time, idle memory, startup JavaScript and installer sizes,
@@ -31,6 +31,18 @@ struct Args {
     /// Launches to take the median of.
     #[arg(long, default_value_t = 5)]
     runs: usize,
+    /// Launches before the measured ones, not counted. The first launches
+    /// of a freshly built app include one-time work such as the OS checking
+    /// a new binary; cold start is measured separately on reference hardware.
+    #[arg(long, default_value_t = 0)]
+    warmup: usize,
+    /// Seconds a measured launch may take to draw its first frame.
+    #[arg(long, default_value_t = 30)]
+    ready_timeout_secs: u64,
+    /// Seconds a warm-up launch may take. The very first launch on a fresh
+    /// machine can be slow: WebView2 on Windows sets up its profile then.
+    #[arg(long, default_value_t = 120)]
+    warmup_timeout_secs: u64,
     /// Seconds to wait after the first frame before reading memory.
     #[arg(long, default_value_t = 5)]
     idle_wait_secs: u64,
@@ -65,11 +77,20 @@ fn run(args: Args) -> Result<bool, Box<dyn std::error::Error>> {
     let budgets = load_budgets(&args.budgets)?;
     let baseline = args.baseline.as_deref().map(load_measurement).transpose()?;
 
+    let warmup_timeout = Duration::from_secs(args.warmup_timeout_secs);
+    for warmup in 1..=args.warmup {
+        let (start_ms, _) = measure_launch_with(&args.app, warmup_timeout, Duration::ZERO)?;
+        println!("warm-up {warmup}: start {start_ms:.0} ms (not counted)");
+    }
+
     let mut starts = Vec::new();
     let mut idles = Vec::new();
     for run in 1..=args.runs.max(1) {
-        let (start_ms, idle_mb) =
-            measure_launch(&args.app, Duration::from_secs(args.idle_wait_secs))?;
+        let (start_ms, idle_mb) = measure_launch_with(
+            &args.app,
+            Duration::from_secs(args.ready_timeout_secs),
+            Duration::from_secs(args.idle_wait_secs),
+        )?;
         println!("run {run}: start {start_ms:.0} ms, idle {idle_mb:.1} MiB");
         starts.push(start_ms);
         idles.push(idle_mb);

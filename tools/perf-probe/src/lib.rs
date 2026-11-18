@@ -22,6 +22,8 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// Line the app prints once its first frame is drawn, when `DEA_PERF_PROBE=1`.
 pub const READY_LINE: &str = "DEA_READY";
+/// Prefix of lines marking earlier steps of start-up, printed with their time.
+pub const MARK_PREFIX: &str = "DEA_MARK ";
 
 const MIB: f64 = 1024.0 * 1024.0;
 const INSTALLER_KINDS: [&str; 6] = ["dmg", "exe", "msi", "deb", "rpm", "appimage"];
@@ -34,7 +36,8 @@ static ATTR: LazyLock<Regex> =
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Budgets {
-    pub start_ms: f64,
+    /// Key: "macos", "windows" or "linux".
+    pub start_ms: BTreeMap<String, f64>,
     pub startup_js_gzip_kb: f64,
     pub regression_pct: f64,
     /// Key: "macos", "windows" or "linux".
@@ -142,7 +145,7 @@ pub fn check(m: &Measurement, budgets: &Budgets, baseline: Option<&Measurement>)
         (
             "start_ms".into(),
             m.start_ms,
-            Some(budgets.start_ms),
+            budgets.start_ms.get(&m.os).copied(),
             baseline.map(|b| b.start_ms),
         ),
         (
@@ -304,7 +307,9 @@ pub fn measure_launch_with(
         .env("DEA_PERF_PROBE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        // The app's own errors (for example a webview that cannot start)
+        // go to our stderr, so a failed CI run says why.
+        .stderr(Stdio::inherit())
         .spawn()
         .map_err(|source| ProbeError::Spawn {
             path: app.to_path_buf(),
@@ -320,7 +325,18 @@ pub fn measure_launch_with(
         let mut ready = false;
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
-            if !ready && line.trim() == READY_LINE {
+            if let Some(mark) = line.trim().strip_prefix(MARK_PREFIX) {
+                let ms = started.elapsed().as_secs_f64() * 1000.0;
+                println!("  {ms:.0} ms: {mark}");
+                continue;
+            }
+            if line.trim() != READY_LINE {
+                // Anything else the app prints, such as toolkit messages,
+                // helps explain a run that never gets ready.
+                eprintln!("app: {line}");
+                continue;
+            }
+            if !ready {
                 ready = true;
                 let _ = tx.send(true);
             }
@@ -361,7 +377,9 @@ fn app_processes(root: Pid, spawned_at: u64) -> Result<(Vec<Pid>, u64), ProbeErr
     let mut members: HashSet<Pid> = HashSet::from([root]);
     loop {
         let before = members.len();
-        for (pid, p) in processes {
+        // Linux also lists each thread, as a child of its process, and every
+        // thread reports the memory of the whole process.
+        for (pid, p) in processes.iter().filter(|(_, p)| p.thread_kind().is_none()) {
             if p.parent().is_some_and(|parent| members.contains(&parent)) {
                 members.insert(*pid);
             }
@@ -402,4 +420,42 @@ fn stop(child: &mut std::process::Child, root: Pid, spawned_at: u64) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use super::*;
+
+    #[test]
+    fn threads_are_not_counted_as_processes() {
+        // Linux lists every thread as a process of its own, and each one
+        // reports the memory of the whole process again.
+        let barrier = Arc::new(Barrier::new(9));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                })
+            })
+            .collect();
+
+        let me = Pid::from_u32(std::process::id());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let result = app_processes(me, now);
+        barrier.wait();
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let (pids, bytes) = result.unwrap();
+        assert_eq!(pids, vec![me]);
+        let own = process_memory_bytes(me.as_u32()).unwrap();
+        assert!(bytes < own * 2, "{bytes} counted, process uses {own}");
+    }
 }
