@@ -15,6 +15,8 @@ pub enum UseError {
     RetryAfter(Duration),
     #[error("authentication failed")]
     AuthFailed,
+    #[error("this secret has no value on this device")]
+    Missing,
     #[error(transparent)]
     Vault(#[from] VaultError),
 }

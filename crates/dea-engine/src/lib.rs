@@ -2,11 +2,13 @@
 //! CLI. Owns the gates that ask the person something: Vault unlock and
 //! production authentication.
 
+mod clipboard;
 mod clock;
 mod error;
 mod prompt;
 mod vault;
 
+pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
 pub use clock::{Clock, SystemClock};
 pub use error::UseError;
 pub use prompt::{PasswordPrompt, PromptProblem, Prompter};

@@ -201,3 +201,24 @@ fn service_with(
     .unwrap();
     (service, statuses)
 }
+
+/// An in-memory clipboard.
+#[derive(Default)]
+pub struct FakeClipboard {
+    pub content: Mutex<Option<String>>,
+}
+
+impl dea_engine::Clipboard for FakeClipboard {
+    fn text(&self) -> Option<String> {
+        self.content.lock().unwrap().clone()
+    }
+
+    fn set_secret_text(&self, text: &str) -> Result<(), String> {
+        *self.content.lock().unwrap() = Some(text.to_string());
+        Ok(())
+    }
+
+    fn clear(&self) {
+        *self.content.lock().unwrap() = None;
+    }
+}
