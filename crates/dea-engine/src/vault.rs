@@ -242,7 +242,11 @@ impl VaultService {
                 reason: reason.to_string(),
                 problem,
             };
-            if let Err(wait) = guard(&self.state).attempt_allowed(self.clock.now()) {
+            // Read first: a guard in the `if let` would stay locked for the
+            // whole block, and with it every status check while the prompt
+            // is open.
+            let allowed = guard(&self.state).attempt_allowed(self.clock.now());
+            if let Err(wait) = allowed {
                 let _ = self
                     .prompter
                     .vault_password(&prompt(Some(PromptProblem::RetryAfter(wait))));
@@ -326,11 +330,29 @@ impl VaultService {
             .statuses(&project.vault_scope(), &project.vault, &environments)
     }
 
-    /// The value of `key`, or `None` if this device has none. `production`
-    /// is whether the key's environment is a production one.
+    /// The value of secret `name` in `environment` of `project`, or `None`
+    /// if this device has none. Whether the environment is production comes
+    /// from the project itself; an environment the project does not have is
+    /// treated as production.
     pub fn secret(
         &self,
-        key: &SecretKey,
+        project: &Project,
+        environment: &str,
+        name: &str,
+    ) -> Result<Option<SecretData>, UseError> {
+        self.read(
+            &project.vault_scope(),
+            environment,
+            name,
+            is_production(project, environment),
+        )
+    }
+
+    fn read(
+        &self,
+        scope: &str,
+        environment: &str,
+        name: &str,
         production: bool,
     ) -> Result<Option<SecretData>, UseError> {
         {
@@ -342,23 +364,30 @@ impl VaultService {
                 return Err(UseError::ReauthRequired);
             }
         }
-        let value = self.store.get(key)?;
+        let key = SecretKey {
+            scope: scope.to_string(),
+            environment: environment.to_string(),
+            name: name.to_string(),
+        };
+        let value = self.store.get(&key)?;
         self.record_activity();
         Ok(value)
     }
 
-    /// Copies the value of `key` and clears the clipboard after
-    /// `clear_after` ([`crate::CLIPBOARD_CLEAR_AFTER`] in the app) unless
-    /// the person copied something else. Same checks as
-    /// [`VaultService::secret`].
+    /// Copies the value and clears the clipboard after `clear_after`
+    /// ([`crate::CLIPBOARD_CLEAR_AFTER`] in the app) unless the person
+    /// copied something else. Same checks as [`VaultService::secret`].
     pub fn copy_secret(
         &self,
-        key: &SecretKey,
-        production: bool,
+        project: &Project,
+        environment: &str,
+        name: &str,
         clipboard: Arc<dyn Clipboard>,
         clear_after: Duration,
     ) -> Result<(), UseError> {
-        let value = self.secret(key, production)?.ok_or(UseError::Missing)?;
+        let value = self
+            .secret(project, environment, name)?
+            .ok_or(UseError::Missing)?;
         copy_and_clear_later(clipboard, value.value_for_use(), clear_after).map_err(|e| {
             UseError::Vault(VaultError::Backend(format!(
                 "cannot use the clipboard: {e}"
@@ -366,14 +395,26 @@ impl VaultService {
         })
     }
 
-    /// Secret values for variable resolution in one project.
-    pub fn lookup<'a>(&'a self, scope: &'a str, production: bool) -> VaultLookup<'a> {
+    /// Secret values for variable resolution in `project`. Each lookup
+    /// checks whether its environment is production.
+    pub fn lookup<'a>(&'a self, project: &'a Project) -> VaultLookup<'a> {
         VaultLookup {
             vault: self,
-            scope,
-            production,
+            project,
+            scope: project.vault_scope(),
         }
     }
+}
+
+/// Whether `environment` of `project` holds production secrets. Unknown
+/// environments count as production, so a mistake asks once too often
+/// rather than never.
+fn is_production(project: &Project, environment: &str) -> bool {
+    project
+        .environments
+        .iter()
+        .find(|e| e.name == environment)
+        .is_none_or(|e| e.production)
 }
 
 /// Stops the timer and the OS event watcher when dropped.
@@ -390,18 +431,14 @@ impl Drop for VaultBackground {
 
 pub struct VaultLookup<'a> {
     vault: &'a VaultService,
-    scope: &'a str,
-    production: bool,
+    project: &'a Project,
+    scope: String,
 }
 
 impl SecretLookup for VaultLookup<'_> {
     fn lookup(&self, environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
-        let key = SecretKey {
-            scope: self.scope.to_string(),
-            environment: environment.to_string(),
-            name: name.to_string(),
-        };
-        match self.vault.secret(&key, self.production) {
+        let production = is_production(self.project, environment);
+        match self.vault.read(&self.scope, environment, name, production) {
             Ok(value) => Ok(value.map(|v| v.value_for_use().to_string())),
             Err(UseError::Locked) => Err(SecretLookupError::Locked),
             Err(UseError::ReauthRequired) => Err(SecretLookupError::ReauthRequired),

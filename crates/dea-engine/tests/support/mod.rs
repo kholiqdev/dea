@@ -84,12 +84,16 @@ impl Gate {
     }
 }
 
+pub type WhileOpen = Box<dyn Fn(&PasswordPrompt) + Send>;
+
 /// Answers password prompts from a script (`None` = the person cancels)
 /// and records every prompt.
 #[derive(Default)]
 pub struct FakePrompter {
     pub answers: Mutex<VecDeque<Option<&'static str>>>,
     pub prompts: Mutex<Vec<(&'static str, PasswordPrompt)>>,
+    /// Runs while each prompt is open, as the rest of the app would.
+    pub while_open: Mutex<Option<WhileOpen>>,
 }
 
 impl FakePrompter {
@@ -97,11 +101,15 @@ impl FakePrompter {
         Arc::new(FakePrompter {
             answers: Mutex::new(answers.iter().copied().collect()),
             prompts: Mutex::new(Vec::new()),
+            while_open: Mutex::new(None),
         })
     }
 
     fn answer(&self, kind: &'static str, prompt: &PasswordPrompt) -> Option<SecretString> {
         self.prompts.lock().unwrap().push((kind, prompt.clone()));
+        if let Some(hook) = self.while_open.lock().unwrap().as_ref() {
+            hook(prompt);
+        }
         self.answers
             .lock()
             .unwrap()
@@ -220,5 +228,33 @@ impl dea_engine::Clipboard for FakeClipboard {
 
     fn clear(&self) {
         *self.content.lock().unwrap() = None;
+    }
+}
+
+/// A project with `local`, `staging` and a production environment called
+/// `production`, whose Vault scope is `project-1`.
+pub fn project() -> dea_project::Project {
+    use dea_project::{Environment, Manifest, Project, VaultManifest};
+    let env = |name: &str, production: bool| Environment {
+        name: name.into(),
+        production,
+        color: None,
+        variables: Vec::new(),
+    };
+    Project {
+        root: std::path::PathBuf::from("/nowhere"),
+        manifest: Manifest {
+            name: "harbor-api".into(),
+            id: Some("project-1".into()),
+            schema_version: 1,
+            default_environment: None,
+        },
+        environments: vec![
+            env("local", false),
+            env("staging", false),
+            env("production", true),
+        ],
+        vault: VaultManifest::default(),
+        read_only: false,
     }
 }

@@ -10,7 +10,7 @@ use dea_project::{
 };
 use dea_vault::{AuthError, OsEvent, SecretData, SecretKey};
 use secrecy::SecretString;
-use support::{FakeAuthenticator, FakePrompter, Gate, ManualClock, file_service, service};
+use support::{FakeAuthenticator, FakePrompter, Gate, ManualClock, file_service, project, service};
 
 const MIN: Duration = Duration::from_secs(60);
 
@@ -38,7 +38,7 @@ fn starts_locked_and_refuses_secrets() {
     );
     assert_eq!(vault.status(), VaultStatus { locked: true });
     assert!(matches!(
-        vault.secret(&key("staging", "t"), false),
+        vault.secret(&project(), "staging", "t"),
         Err(UseError::Locked)
     ));
     assert!(matches!(
@@ -65,7 +65,7 @@ fn unlock_with_native_authentication_reports_status() {
     vault
         .set_secret(&key("staging", "t"), SecretKind::Token, &text("abc"))
         .unwrap();
-    let got = vault.secret(&key("staging", "t"), false).unwrap().unwrap();
+    let got = vault.secret(&project(), "staging", "t").unwrap().unwrap();
     assert_eq!(got.value_for_use(), "abc");
     // Already unlocked: no second dialog.
     vault.unlock("Unlock the Vault").unwrap();
@@ -104,9 +104,8 @@ fn production_asks_once_per_window_with_the_action_in_the_reason() {
         )
         .unwrap();
 
-    let prod = key("production", "prod_access_token");
     assert!(matches!(
-        vault.secret(&prod, true),
+        vault.secret(&project(), "production", "prod_access_token"),
         Err(UseError::ReauthRequired)
     ));
     let action = "Send POST /v1/shipments to production";
@@ -117,7 +116,12 @@ fn production_asks_once_per_window_with_the_action_in_the_reason() {
         reasons.lock().unwrap()[1],
         "Send POST /v1/shipments to production using `prod_access_token`"
     );
-    assert!(vault.secret(&prod, true).unwrap().is_some());
+    assert!(
+        vault
+            .secret(&project(), "production", "prod_access_token")
+            .unwrap()
+            .is_some()
+    );
 
     clock.advance(9 * MIN);
     vault
@@ -127,7 +131,7 @@ fn production_asks_once_per_window_with_the_action_in_the_reason() {
 
     clock.advance(MIN);
     assert!(matches!(
-        vault.secret(&prod, true),
+        vault.secret(&project(), "production", "prod_access_token"),
         Err(UseError::ReauthRequired)
     ));
     vault
@@ -152,7 +156,7 @@ fn cancelling_production_returns_cancelled_and_keeps_the_window_closed() {
         Err(UseError::Cancelled)
     ));
     assert!(matches!(
-        vault.secret(&key("production", "token"), true),
+        vault.secret(&project(), "production", "token"),
         Err(UseError::ReauthRequired)
     ));
     // Still unlocked for everything else.
@@ -177,7 +181,7 @@ fn production_while_locked_unlocks_with_one_prompt() {
     assert_eq!(*statuses.lock().unwrap(), [VaultStatus { locked: false }]);
     assert!(
         vault
-            .secret(&key("production", "token"), true)
+            .secret(&project(), "production", "token")
             .unwrap()
             .is_none()
     );
@@ -211,7 +215,7 @@ fn idle_lock_and_os_events_close_the_window_and_report_status() {
     vault.handle_os_event(OsEvent::Sleeping);
     assert!(vault.status().locked);
     assert!(matches!(
-        vault.secret(&key("production", "token"), true),
+        vault.secret(&project(), "production", "token"),
         Err(UseError::Locked)
     ));
     // A second event while locked reports nothing new.
@@ -253,7 +257,7 @@ fn linux_creates_the_vault_password_on_first_unlock() {
     assert_eq!(again.prompts.lock().unwrap()[0].0, "vault_password");
     assert_eq!(
         reopened
-            .secret(&key("staging", "t"), false)
+            .secret(&project(), "staging", "t")
             .unwrap()
             .unwrap()
             .value_for_use(),
@@ -299,6 +303,50 @@ fn wrong_vault_password_asks_again_then_holds() {
 }
 
 #[test]
+fn the_rest_of_the_app_keeps_working_while_a_prompt_is_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = FakePrompter::answering(&[Some("correct horse")]);
+    let (vault, _) = file_service(dir.path(), setup, ManualClock::new());
+    vault.unlock("Unlock the Vault").unwrap();
+    vault.lock();
+
+    let wrong = FakePrompter::answering(&[
+        Some("w1"),
+        Some("w2"),
+        Some("w3"),
+        Some("w4"),
+        Some("w5"),
+        None,
+    ]);
+    let (vault, _) = file_service(dir.path(), wrong.clone(), ManualClock::new());
+    // While any prompt is open, another thread asks for the status, as the
+    // status bar would. It must answer at once, not wait for the dialog.
+    let blocked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let weak = Arc::downgrade(&vault);
+    let seen = Arc::clone(&blocked);
+    *wrong.while_open.lock().unwrap() = Some(Box::new(move |_| {
+        let vault = weak.upgrade().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(vault.status());
+        });
+        seen.lock()
+            .unwrap()
+            .push(rx.recv_timeout(Duration::from_secs(1)).is_err());
+    }));
+    assert!(matches!(
+        vault.unlock("Unlock the Vault"),
+        Err(UseError::RetryAfter(_))
+    ));
+    let blocked = blocked.lock().unwrap().clone();
+    assert_eq!(blocked.len(), 6);
+    assert!(
+        blocked.iter().all(|b| !b),
+        "status() waited for a prompt: {blocked:?}"
+    );
+}
+
+#[test]
 fn cancelling_the_vault_password_keeps_the_vault_locked() {
     let dir = tempfile::tempdir().unwrap();
     let (vault, _) = file_service(
@@ -323,19 +371,20 @@ fn lookup_maps_locked_and_reauth_errors() {
         FakePrompter::answering(&[]),
         ManualClock::new(),
     );
-    let run = |production: bool| {
-        let lookup = vault.lookup("project-1", production);
+    let run = |environment: &str| {
+        let project = project();
+        let lookup = vault.lookup(&project);
         let mut dynamic = SystemDynamicSource;
         let mut ctx = ResolveContext {
             scopes: &[],
-            environment: "production",
+            environment,
             secrets: &lookup,
             dynamic: &mut dynamic,
         };
         resolve("Bearer {{vault:token}}", &mut ctx)
     };
     assert!(matches!(
-        run(true),
+        run("production"),
         Err(ResolveError::Secret {
             error: SecretLookupError::Locked,
             ..
@@ -350,7 +399,7 @@ fn lookup_maps_locked_and_reauth_errors() {
         )
         .unwrap();
     assert!(matches!(
-        run(true),
+        run("production"),
         Err(ResolveError::Secret {
             error: SecretLookupError::ReauthRequired,
             ..
@@ -359,7 +408,11 @@ fn lookup_maps_locked_and_reauth_errors() {
     vault
         .authorize_production("Send GET /v1/me to production", &["token"])
         .unwrap();
-    assert_eq!(run(true).unwrap().text, "Bearer t0k3n");
+    assert_eq!(run("production").unwrap().text, "Bearer t0k3n");
+    vault
+        .set_secret(&key("staging", "token"), SecretKind::Token, &text("stg"))
+        .unwrap();
+    assert_eq!(run("staging").unwrap().text, "Bearer stg");
 }
 
 #[test]
@@ -390,4 +443,29 @@ fn concurrent_production_uses_prompt_once() {
         t.join().unwrap().unwrap();
     }
     assert_eq!(reasons.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn production_is_read_from_the_project_not_the_caller() {
+    let dir = tempfile::tempdir().unwrap();
+    let (auth, _) = FakeAuthenticator::native(vec![]);
+    let (vault, _) = service(
+        dir.path(),
+        auth,
+        FakePrompter::answering(&[]),
+        ManualClock::new(),
+    );
+    vault.unlock("Unlock the Vault").unwrap();
+    let mut project = project();
+    project.environments[1].production = true; // staging marked production
+    assert!(matches!(
+        vault.secret(&project, "staging", "t"),
+        Err(UseError::ReauthRequired)
+    ));
+    // An environment the project does not have is treated as production.
+    assert!(matches!(
+        vault.secret(&project, "nowhere", "t"),
+        Err(UseError::ReauthRequired)
+    ));
+    assert!(vault.secret(&project, "local", "t").unwrap().is_none());
 }

@@ -41,7 +41,6 @@ fn canary_never_leaves_the_vault() {
     ];
     let mut debug_text = String::new();
     for environment in ["staging", "production"] {
-        let production = environment == "production";
         for (name, kind) in kinds {
             let key = SecretKey {
                 scope: scope.clone(),
@@ -58,22 +57,23 @@ fn canary_never_leaves_the_vault() {
                 SecretData::Text(SecretString::from(secret.clone()))
             };
             vault.set_secret(&key, kind, &data).unwrap();
-            let read = vault.secret(&key, production).unwrap();
+            let read = vault.secret(&project, environment, name).unwrap();
             assert_eq!(read.as_ref().unwrap().value_for_use(), secret);
             debug_text += &format!("{read:?} {data:?}");
 
             let clipboard = Arc::new(FakeClipboard::default());
             vault
                 .copy_secret(
-                    &key,
-                    production,
+                    &project,
+                    environment,
+                    name,
                     clipboard,
                     std::time::Duration::from_millis(1),
                 )
                 .unwrap();
         }
 
-        let lookup = vault.lookup(&scope, production);
+        let lookup = vault.lookup(&project);
         let mut dynamic = SystemDynamicSource;
         let mut ctx = ResolveContext {
             scopes: &[],
@@ -92,12 +92,7 @@ fn canary_never_leaves_the_vault() {
         statuses.lock().unwrap()
     );
     vault.lock();
-    let key = SecretKey {
-        scope: scope.clone(),
-        environment: "staging".into(),
-        name: "token".into(),
-    };
-    let locked: Result<_, UseError> = vault.secret(&key, false);
+    let locked: Result<_, UseError> = vault.secret(&project, "staging", "token");
     debug_text += &format!("{locked:?}");
     if let Err(e) = locked {
         debug_text += &e.to_string();
