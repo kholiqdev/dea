@@ -15,6 +15,7 @@ mod key;
 mod keychain;
 mod lock;
 mod memory;
+mod os_events;
 mod password;
 mod policy;
 mod store;
@@ -30,6 +31,9 @@ pub use key::SecretKey;
 pub use keychain::KeychainBackend;
 pub use lock::{HOLD, LockState, MAX_FAILURES, RESUME_GAP};
 pub use memory::MemoryBackend;
+#[cfg(windows)]
+pub use os_events::WINDOW_CLASS;
+pub use os_events::{OsEvent, OsEventsWatch, watch_os_events};
 pub use password::{MIN_PASSWORD_CHARS, VaultPassword};
 pub use policy::{
     AUTO_LOCK_MINUTES, AutoLock, DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_PRODUCTION_WINDOW_MINUTES,

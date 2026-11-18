@@ -28,6 +28,7 @@ zeroize.workspace = true
 apple-native-keyring-store.workspace = true
 block2.workspace = true
 objc2.workspace = true
+objc2-app-kit.workspace = true
 objc2-foundation.workspace = true
 objc2-local-authentication.workspace = true
 
@@ -41,10 +42,14 @@ windows-sys = { workspace = true, features = [
   "Win32_Security",
   "Win32_Security_Credentials",
   "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Power",
+  "Win32_System_RemoteDesktop",
   "Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
 zbus-secret-service-keyring-store.workspace = true
 
 [dev-dependencies]
@@ -54,3 +59,7 @@ time = { workspace = true, features = ["macros"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { workspace = true, features = ["Win32_System_Console"] }
+
+[[test]]
+name = "os_events"
+harness = false

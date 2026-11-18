@@ -55,7 +55,20 @@ keyring-core = "1.0.1"
 libc = "0.2.191"
 notify = "8.2.2"
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "NSDate",
+  "NSDictionary",
+  "NSDistributedNotificationCenter",
+  "NSError",
+  "NSNotification",
+  "NSObjCRuntime",
+  "NSOperation",
+  "NSRunLoop",
+  "NSString",
+] }
 objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "block2", "LAContext", "LAError"] }
 rand = "0.10.4"
 regex = "1.13.1"
@@ -75,6 +88,7 @@ windows = { version = "0.62.2", features = ["Security_Credentials_UI", "Win32_Fo
 windows-future = "0.3.2"
 windows-native-keyring-store = "1.1.0"
 windows-sys = "0.61.2"
+zbus = "5.19.0"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-io-crypto-rust"] }
 zeroize = "1.9.2"
 
