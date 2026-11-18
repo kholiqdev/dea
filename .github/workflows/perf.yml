@@ -3,9 +3,10 @@ name: Performance
 on:
   push:
     branches: [main]
-  schedule:
-    # 02:00 in Jakarta.
-    - cron: "0 19 * * *"
+  # Nightly runs are paused while the repository is private, because macOS
+  # minutes count ten times against the Actions quota. Restore when public:
+  # schedule:
+  #   - cron: "0 19 * * *" # 02:00 in Jakarta
   workflow_call:
 
 permissions:
