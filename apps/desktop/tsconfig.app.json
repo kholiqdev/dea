@@ -11,6 +11,12 @@
     "checkJs": true,
     "moduleDetection": "force",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "paths": {
       "$app/*": ["./src/app/*"],
       "$lib/*": ["./src/lib/*"]
