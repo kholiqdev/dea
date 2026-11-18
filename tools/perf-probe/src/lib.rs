@@ -377,7 +377,9 @@ fn app_processes(root: Pid, spawned_at: u64) -> Result<(Vec<Pid>, u64), ProbeErr
     let mut members: HashSet<Pid> = HashSet::from([root]);
     loop {
         let before = members.len();
-        for (pid, p) in processes {
+        // Linux also lists each thread, as a child of its process, and every
+        // thread reports the memory of the whole process.
+        for (pid, p) in processes.iter().filter(|(_, p)| p.thread_kind().is_none()) {
             if p.parent().is_some_and(|parent| members.contains(&parent)) {
                 members.insert(*pid);
             }
@@ -418,4 +420,42 @@ fn stop(child: &mut std::process::Child, root: Pid, spawned_at: u64) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use super::*;
+
+    #[test]
+    fn threads_are_not_counted_as_processes() {
+        // Linux lists every thread as a process of its own, and each one
+        // reports the memory of the whole process again.
+        let barrier = Arc::new(Barrier::new(9));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                })
+            })
+            .collect();
+
+        let me = Pid::from_u32(std::process::id());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let result = app_processes(me, now);
+        barrier.wait();
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let (pids, bytes) = result.unwrap();
+        assert_eq!(pids, vec![me]);
+        let own = process_memory_bytes(me.as_u32()).unwrap();
+        assert!(bytes < own * 2, "{bytes} counted, process uses {own}");
+    }
 }
