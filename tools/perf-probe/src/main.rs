@@ -31,6 +31,11 @@ struct Args {
     /// Launches to take the median of.
     #[arg(long, default_value_t = 5)]
     runs: usize,
+    /// Launches before the measured ones, not counted. The first launches
+    /// of a freshly built app include one-time work such as the OS checking
+    /// a new binary; cold start is measured separately on reference hardware.
+    #[arg(long, default_value_t = 0)]
+    warmup: usize,
     /// Seconds to wait after the first frame before reading memory.
     #[arg(long, default_value_t = 5)]
     idle_wait_secs: u64,
@@ -64,6 +69,11 @@ fn main() -> ExitCode {
 fn run(args: Args) -> Result<bool, Box<dyn std::error::Error>> {
     let budgets = load_budgets(&args.budgets)?;
     let baseline = args.baseline.as_deref().map(load_measurement).transpose()?;
+
+    for warmup in 1..=args.warmup {
+        let (start_ms, _) = measure_launch(&args.app, Duration::ZERO)?;
+        println!("warm-up {warmup}: start {start_ms:.0} ms (not counted)");
+    }
 
     let mut starts = Vec::new();
     let mut idles = Vec::new();

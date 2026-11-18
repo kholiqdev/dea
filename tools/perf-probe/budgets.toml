@@ -1,6 +1,8 @@
 # Performance budgets for Phase 1 (F1-REL-05). Changing a number needs the
 # project owner's approval, recorded in the checklist history.
 
+# CI measures start after two warm-up launches; the cold start target is
+# checked by hand on the reference machines before each release.
 start_ms = 1000
 startup_js_gzip_kb = 250
 # A benchmark fails when a number grows more than this against the baseline.

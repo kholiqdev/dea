@@ -304,7 +304,9 @@ pub fn measure_launch_with(
         .env("DEA_PERF_PROBE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        // The app's own errors (for example a webview that cannot start)
+        // go to our stderr, so a failed CI run says why.
+        .stderr(Stdio::inherit())
         .spawn()
         .map_err(|source| ProbeError::Spawn {
             path: app.to_path_buf(),
