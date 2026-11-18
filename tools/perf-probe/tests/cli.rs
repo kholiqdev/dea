@@ -98,3 +98,16 @@ exec sleep 30"#,
         .unwrap_or_else(|| panic!("no mounted mark in {stdout}"));
     assert!(line.contains(" ms"), "{line}");
 }
+
+#[test]
+fn other_app_output_is_shown() {
+    let s = setup(
+        r#"echo "Gtk-Message: hello from the toolkit"
+echo DEA_READY
+exec sleep 30"#,
+    );
+    let out = probe(&s, &["--runs", "1"]);
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("hello from the toolkit"), "{stderr}");
+}

@@ -328,8 +328,15 @@ pub fn measure_launch_with(
             if let Some(mark) = line.trim().strip_prefix(MARK_PREFIX) {
                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                 println!("  {ms:.0} ms: {mark}");
+                continue;
             }
-            if !ready && line.trim() == READY_LINE {
+            if line.trim() != READY_LINE {
+                // Anything else the app prints, such as toolkit messages,
+                // helps explain a run that never gets ready.
+                eprintln!("app: {line}");
+                continue;
+            }
+            if !ready {
                 ready = true;
                 let _ = tx.send(true);
             }
