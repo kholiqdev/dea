@@ -40,4 +40,6 @@ pub enum ProjectError {
     Io(#[from] std::io::Error),
     #[error("cannot migrate the project: {0}")]
     Migration(String),
+    #[error("{0} has unresolved merge conflict markers; resolve them before saving")]
+    MergeConflict(PathBuf),
 }
