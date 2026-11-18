@@ -41,17 +41,14 @@ jobs:
             name: linux
             bundles: deb,rpm,appimage
             app: target/release/dea-desktop
-            launcher: xvfb-run -a
           - os: macos-15
             name: macos
             bundles: dmg
             app: target/release/dea-desktop
-            launcher: ""
           - os: windows-2022
             name: windows
             bundles: nsis,msi
             app: target/release/dea-desktop.exe
-            launcher: ""
     steps:
       - uses: actions/checkout@v7
       - name: Install Linux dependencies
@@ -74,13 +71,19 @@ jobs:
         run: pnpm --filter desktop tauri build --bundles ${{ matrix.bundles }}
       - name: Build the probe
         run: cargo build --locked --release -p perf-probe
+      # xvfb-run defaults to an 8-bit screen, on which WebKitGTK draws nothing.
+      - name: Start a virtual display
+        if: runner.os == 'Linux'
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
       - name: Measure
         shell: bash
         env:
           BASELINE: tools/perf-probe/baselines/${{ matrix.name }}.json
-          LAUNCHER: ${{ matrix.launcher }}
-          # WebKitGTK's DMA-BUF renderer needs a GPU; Xvfb has none.
+          # WebKitGTK's GPU paths are not available on a virtual display.
           WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
         run: |
           args=()
           if [ -f "$BASELINE" ]; then
@@ -88,7 +91,7 @@ jobs:
           else
             echo "No baseline for ${{ matrix.name }} yet, checking budgets only"
           fi
-          $LAUNCHER target/release/perf-probe \
+          target/release/perf-probe \
             --app "${{ matrix.app }}" \
             --dist apps/desktop/dist \
             --bundle-dir target/release/bundle \
