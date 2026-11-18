@@ -42,7 +42,7 @@ clap = { version = "4.6.8", features = ["derive"] }
 flate2 = "1.1.11"
 jsonschema = { version = "0.61.2", default-features = false }
 libc = "0.2.191"
-notify-debouncer-full = "0.7.0"
+notify = "8.2.2"
 rand = "0.10.4"
 regex = "1.13.1"
 schemars = "1.2.3"
