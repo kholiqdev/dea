@@ -40,7 +40,7 @@ pub fn load_project(root: &Path) -> Result<LoadedProject, ProjectError> {
     let mut errors = Vec::new();
 
     let vault = match fs::read_to_string(root.join(VAULT)) {
-        Ok(text) => parse::<VaultManifest>(Path::new(VAULT), &text).unwrap_or_else(|e| {
+        Ok(text) => parse_vault(&text, read_only).unwrap_or_else(|e| {
             errors.push(e);
             VaultManifest::default()
         }),
@@ -54,7 +54,7 @@ pub fn load_project(root: &Path) -> Result<LoadedProject, ProjectError> {
     let mut environments = Vec::new();
     for rel in yaml_files(root, Path::new(ENVIRONMENTS))? {
         match fs::read_to_string(root.join(&rel)) {
-            Ok(text) => match parse::<Environment>(&rel, &text) {
+            Ok(text) => match parse_environment(&rel, &text, read_only) {
                 Ok(env) => environments.push(env),
                 Err(e) => errors.push(e),
             },
@@ -83,6 +83,104 @@ struct ManifestAnyVersion {
     schema_version: u32,
     #[serde(default)]
     default_environment: Option<String>,
+}
+
+/// Environment and vault files as any schema version may write them: the
+/// same fields, but unknown ones are ignored. Used only for read-only
+/// projects from a newer Dea, which adds fields when it bumps the version.
+mod any_version {
+    use serde::Deserialize;
+
+    use crate::{Environment, SecretKind, SecretSpec, Variable, VaultManifest};
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct EnvironmentFile {
+        name: String,
+        production: bool,
+        #[serde(default)]
+        color: Option<String>,
+        #[serde(default)]
+        variables: Vec<VariableEntry>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct VariableEntry {
+        name: String,
+        value: String,
+        #[serde(default)]
+        description: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct VaultFile {
+        #[serde(default)]
+        secrets: Vec<SecretEntry>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SecretEntry {
+        name: String,
+        #[serde(rename = "type")]
+        kind: SecretKind,
+        #[serde(default)]
+        description: Option<String>,
+    }
+
+    impl From<EnvironmentFile> for Environment {
+        fn from(e: EnvironmentFile) -> Self {
+            Environment {
+                name: e.name,
+                production: e.production,
+                color: e.color,
+                variables: e
+                    .variables
+                    .into_iter()
+                    .map(|v| Variable {
+                        name: v.name,
+                        value: v.value,
+                        description: v.description,
+                    })
+                    .collect(),
+            }
+        }
+    }
+
+    impl From<VaultFile> for VaultManifest {
+        fn from(v: VaultFile) -> Self {
+            VaultManifest {
+                secrets: v
+                    .secrets
+                    .into_iter()
+                    .map(|s| SecretSpec {
+                        name: s.name,
+                        kind: s.kind,
+                        description: s.description,
+                    })
+                    .collect(),
+            }
+        }
+    }
+}
+
+fn parse_environment(rel: &Path, text: &str, read_only: bool) -> Result<Environment, FileError> {
+    if read_only {
+        parse::<any_version::EnvironmentFile>(rel, text).map(Environment::from)
+    } else {
+        parse(rel, text)
+    }
+}
+
+fn parse_vault(text: &str, read_only: bool) -> Result<VaultManifest, FileError> {
+    let rel = Path::new(VAULT);
+    if read_only {
+        parse::<any_version::VaultFile>(rel, text).map(VaultManifest::from)
+    } else {
+        parse(rel, text)
+    }
 }
 
 fn parse_manifest(text: &str) -> Result<Manifest, FileError> {

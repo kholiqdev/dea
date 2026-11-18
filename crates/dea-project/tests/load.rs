@@ -233,3 +233,44 @@ fn create_then_load_round_trip() {
     );
     assert_eq!(load_project(dir.path()).unwrap().project, p);
 }
+
+#[test]
+fn newer_project_tolerates_new_fields_in_every_file() {
+    let dir = project();
+    write(&dir, "dea.yaml", "name: harbor-api\nschemaVersion: 2\n");
+    write(
+        &dir,
+        "environments/local.yaml",
+        "name: local\nproduction: false\nicon: rocket\nvariables:\n- name: a\n  value: b\n  pinned: true\n",
+    );
+    write(
+        &dir,
+        "vault.yaml",
+        "secrets:\n- name: token\n  type: token\n  rotation: 30d\n",
+    );
+    let l = load_project(dir.path()).unwrap();
+    assert!(l.project.read_only);
+    assert!(l.errors.is_empty(), "{:?}", l.errors);
+    let local = l
+        .project
+        .environments
+        .iter()
+        .find(|e| e.name == "local")
+        .unwrap();
+    assert_eq!(local.variables[0].value, "b");
+    assert_eq!(l.project.vault.secrets[0].name, "token");
+}
+
+#[test]
+fn missing_production_flag_is_an_error() {
+    let dir = project();
+    write(&dir, "environments/staging.yaml", "name: staging\n");
+    let l = load_project(dir.path()).unwrap();
+    assert_eq!(l.errors.len(), 1);
+    assert!(
+        l.errors[0].message.contains("production"),
+        "{}",
+        l.errors[0]
+    );
+    assert_eq!(l.project.environments.len(), 2);
+}
