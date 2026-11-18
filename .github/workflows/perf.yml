@@ -8,10 +8,8 @@ on:
     paths:
       - .github/workflows/perf.yml
       - tools/perf-probe/**
-  # Nightly runs are paused while the repository is private, because macOS
-  # minutes count ten times against the Actions quota. Restore when public:
-  # schedule:
-  #   - cron: "0 19 * * *" # 02:00 in Jakarta
+  schedule:
+    - cron: "0 19 * * *" # 02:00 in Jakarta
   workflow_call:
   # Run by hand from any branch, for example to try a fix before merging.
   workflow_dispatch:
@@ -86,8 +84,6 @@ jobs:
           WEBKIT_DISABLE_COMPOSITING_MODE: "1"
           # GTK's accessibility bridge waits for a bus CI does not have.
           NO_AT_BRIDGE: "1"
-          # Temporary: GTK and WebKitGTK messages while the Linux run is fixed.
-          G_MESSAGES_DEBUG: ${{ runner.os == 'Linux' && 'all' || '' }}
         run: |
           args=()
           if [ -f "$BASELINE" ]; then
