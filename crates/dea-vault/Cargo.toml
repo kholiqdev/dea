@@ -1,0 +1,25 @@
+[package]
+name = "dea-vault"
+version = "0.1.0"
+description = "Stores Dea secrets in the operating system keychain"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.99"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+dea-project.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["serde", "formatting", "parsing"] }
+zeroize.workspace = true
+
+[dev-dependencies]
+dea-testkit.workspace = true
+time = { workspace = true, features = ["macros"] }

@@ -4,6 +4,7 @@ members = [
   "apps/desktop/src-tauri",
   "crates/dea-project",
   "crates/dea-testkit",
+  "crates/dea-vault",
   "tools/arch-check",
   "tools/checklist-gate",
   "tools/perf-probe",
@@ -40,6 +41,9 @@ unnested_or_patterns = "warn"
 [workspace.dependencies]
 base64 = "0.23.1"
 cargo_metadata = "0.23.1"
+dea-project = { path = "crates/dea-project" }
+dea-testkit = { path = "crates/dea-testkit" }
+dea-vault = { path = "crates/dea-vault" }
 clap = { version = "4.6.8", features = ["derive"] }
 flate2 = "1.1.11"
 jsonschema = { version = "0.61.2", default-features = false }
@@ -48,6 +52,7 @@ notify = "8.2.2"
 rand = "0.10.4"
 regex = "1.13.1"
 schemars = "1.2.3"
+secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_norway = "0.9.42"
@@ -59,6 +64,7 @@ time = "0.3.55"
 toml = "1.2.1"
 uuid = { version = "1.29.3", features = ["v4"] }
 windows-sys = "0.61.2"
+zeroize = "1.9.2"
 
 [profile.release]
 opt-level = 3
