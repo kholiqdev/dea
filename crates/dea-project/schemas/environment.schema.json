@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "Variable": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "description": "Plain text, or a reference to a secret such as `{{vault:access_token}}`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An environment, stored in `environments/<name>.yaml`.",
+  "properties": {
+    "color": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "type": "string"
+    },
+    "production": {
+      "default": false,
+      "description": "Marks the environment as production: Dea asks for confirmation\nbefore sending to it and shows it in red.",
+      "type": "boolean"
+    },
+    "variables": {
+      "items": {
+        "$ref": "#/$defs/Variable"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "Environment",
+  "type": "object"
+}

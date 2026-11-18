@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::FileError;
@@ -12,8 +13,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Longest allowed path of a project file, relative to the project root.
 pub const MAX_RELATIVE_PATH_LEN: usize = 200;
 
-/// `dea.yaml`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Project manifest, stored in `dea.yaml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
     pub name: String,
@@ -22,12 +23,13 @@ pub struct Manifest {
     pub default_environment: Option<String>,
 }
 
-/// `environments/<name>.yaml`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// An environment, stored in `environments/<name>.yaml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Environment {
     pub name: String,
-    /// Always written, so a production environment is visible in diffs.
+    /// Marks the environment as production: Dea asks for confirmation
+    /// before sending to it and shows it in red.
     #[serde(default)]
     pub production: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,25 +38,26 @@ pub struct Environment {
     pub variables: Vec<Variable>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Variable {
     pub name: String,
-    /// Plain text, or a reference such as `{{vault:access_token}}`.
+    /// Plain text, or a reference to a secret such as `{{vault:access_token}}`.
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 
-/// `vault.yaml`: the secrets a project needs, never their values.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The secrets a project needs, stored in `vault.yaml`. Values are kept in
+/// the operating system keychain and never written here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VaultManifest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secrets: Vec<SecretSpec>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SecretSpec {
     pub name: String,
@@ -64,7 +67,7 @@ pub struct SecretSpec {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SecretKind {
     Token,

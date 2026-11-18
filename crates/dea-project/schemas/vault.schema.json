@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "SecretKind": {
+      "enum": [
+        "token",
+        "password",
+        "sshKey",
+        "apiKey",
+        "oauthToken"
+      ],
+      "type": "string"
+    },
+    "SecretSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/SecretKind"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The secrets a project needs, stored in `vault.yaml`. Values are kept in\nthe operating system keychain and never written here.",
+  "properties": {
+    "secrets": {
+      "items": {
+        "$ref": "#/$defs/SecretSpec"
+      },
+      "type": "array"
+    }
+  },
+  "title": "VaultManifest",
+  "type": "object"
+}
