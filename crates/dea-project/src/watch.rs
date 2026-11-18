@@ -188,7 +188,9 @@ fn rescan(root: &Path, known: &mut Known) -> Vec<ProjectChange> {
 /// comes from the file's state now, compared with the files known before,
 /// because OS events do not reliably say whether a file is new (macOS
 /// reports edits of recent files as creations, and an atomic save is a
-/// rename). Files created and removed within one batch are not reported.
+/// rename). A known file is modified only when its size or modification
+/// time differs. Files created and removed within one batch are not
+/// reported.
 fn changes<'p>(
     root: &Path,
     touched: impl Iterator<Item = &'p PathBuf>,
@@ -213,14 +215,17 @@ fn changes<'p>(
                     }
                 }
             }
-            Ok(_) => {
-                let kind = if known.contains_key(rel) {
-                    ChangeKind::Modified
-                } else {
-                    ChangeKind::Created
-                };
-                out.insert(rel.to_path_buf(), kind);
-            }
+            Ok(meta) => match known.get(rel) {
+                None => {
+                    out.insert(rel.to_path_buf(), ChangeKind::Created);
+                }
+                Some(old) if *old != Stamp::of(&meta) => {
+                    out.insert(rel.to_path_buf(), ChangeKind::Modified);
+                }
+                // An event for a file that did not change, such as one macOS
+                // delivers late for a write made before the watch started.
+                Some(_) => {}
+            },
             Err(_) => {
                 // Gone. It may be a file, or a folder holding known files.
                 for file in known.keys().filter(|f| f.starts_with(rel)) {
@@ -382,6 +387,17 @@ mod tests {
             kinds(process(&root, events, &mut known)),
             BTreeMap::from([("env/x.yaml".to_string(), ChangeKind::Removed)])
         );
+    }
+
+    #[test]
+    fn an_event_for_an_unchanged_file_is_not_a_change() {
+        // macOS can deliver events late, for example for files written just
+        // before the watch started, while the machine is busy.
+        let (_dir, root, mut known) = project();
+        let events = vec![Ok(
+            Event::new(EventKind::Create(CreateKind::File)).add_path(root.join("a.yaml"))
+        )];
+        assert!(process(&root, events, &mut known).is_empty());
     }
 
     #[test]
