@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use tauri::webview::PageLoadEvent;
+
 fn probe_enabled() -> bool {
     std::env::var_os("DEA_PERF_PROBE").is_some_and(|v| v == "1")
 }
@@ -29,8 +31,17 @@ fn perf_mark(name: &str) {
 }
 
 pub fn run() {
+    let probe = probe_enabled();
+    if probe {
+        probe_print("DEA_MARK process started");
+    }
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![perf_ready, perf_mark])
+        .on_page_load(move |_webview, payload| {
+            if probe && payload.event() == PageLoadEvent::Finished {
+                probe_print("DEA_MARK page loaded");
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running Dea");
 }
