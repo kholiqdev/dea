@@ -79,6 +79,8 @@ jobs:
         env:
           BASELINE: tools/perf-probe/baselines/${{ matrix.name }}.json
           LAUNCHER: ${{ matrix.launcher }}
+          # WebKitGTK's DMA-BUF renderer needs a GPU; Xvfb has none.
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
         run: |
           args=()
           if [ -f "$BASELINE" ]; then
