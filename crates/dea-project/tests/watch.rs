@@ -229,6 +229,14 @@ fn slow_checkout_is_coalesced_into_few_batches() {
         take(batch, started.elapsed(), &mut history, &mut batches);
     }
 
+    let others: Vec<_> = history
+        .keys()
+        .filter(|p| !p.starts_with("requests"))
+        .collect();
+    assert!(
+        others.is_empty(),
+        "files the test did not write: {others:?}"
+    );
     assert_eq!(history.len(), 500, "batches (time, size): {batches:?}");
     // A file whose content lands just after a batch was sent is reported
     // again as modified in the next one; nothing else may repeat.
