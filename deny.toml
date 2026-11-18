@@ -36,6 +36,9 @@ unused-allowed-license = "allow"
 [bans]
 multiple-versions = "allow"
 wildcards = "deny"
+# Path dependencies between workspace crates have no version; allowed
+# because every crate here is `publish = false`.
+allow-wildcard-paths = true
 deny = [
   { crate = "serde_yaml", reason = "unmaintained, use serde_norway" },
   { crate = "serde_yaml_ng", reason = "use serde_norway" },
