@@ -1,0 +1,22 @@
+# Crate layers and the layers each may depend on. Mirrors the layer table in
+# the folder structure decision (K26). Every workspace crate must be listed.
+
+[layers]
+app = ["dea-desktop"]
+composition = ["dea-engine"]
+feature = ["dea-vault", "dea-http", "dea-script", "dea-import", "dea-db", "dea-ssh", "dea-pty", "dea-mobile"]
+core = ["dea-project", "dea-protocol"]
+test = ["dea-testkit"]
+tool = ["checklist-gate", "perf-probe", "arch-check"]
+
+[allow]
+app = ["composition", "core"]
+composition = ["feature", "core"]
+feature = ["core"]
+core = []
+test = ["app", "composition", "feature", "core"]
+tool = ["app", "composition", "feature", "core"]
+
+# External crates, and the layers that may not depend on them.
+[forbidden_external]
+tauri = ["composition", "feature", "core", "test"]

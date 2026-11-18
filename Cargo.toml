@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "apps/desktop/src-tauri",
   "crates/dea-project",
+  "tools/arch-check",
   "tools/checklist-gate",
   "tools/perf-probe",
 ]
@@ -12,6 +13,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+cargo_metadata = "0.23.1"
 clap = { version = "4.6.8", features = ["derive"] }
 flate2 = "1.1.11"
 jsonschema = { version = "0.61.2", default-features = false }
