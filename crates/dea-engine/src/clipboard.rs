@@ -1,7 +1,7 @@
 //! Copying a secret value, and clearing it again after 30 s if the person
 //! has not copied something else meanwhile (F1-FON-08 #9).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
@@ -17,30 +17,48 @@ pub trait Clipboard: Send + Sync {
     fn clear(&self);
 }
 
-/// The OS clipboard.
-pub struct SystemClipboard;
+/// The OS clipboard. One instance lives as long as this value: on Linux
+/// the copied text is served by that instance, and would be gone once it
+/// was dropped where no clipboard manager takes it over.
+#[derive(Default)]
+pub struct SystemClipboard {
+    inner: Mutex<Option<arboard::Clipboard>>,
+}
+
+impl SystemClipboard {
+    fn with<T>(
+        &self,
+        f: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
+    ) -> Result<T, String> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if inner.is_none() {
+            *inner = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+        }
+        let clipboard = inner.as_mut().ok_or("no clipboard")?;
+        f(clipboard).map_err(|e| e.to_string())
+    }
+}
 
 impl Clipboard for SystemClipboard {
     fn text(&self) -> Option<String> {
-        arboard::Clipboard::new().ok()?.get_text().ok()
+        self.with(arboard::Clipboard::get_text).ok()
     }
 
     fn set_secret_text(&self, text: &str) -> Result<(), String> {
-        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-        let set = clipboard.set();
-        #[cfg(target_os = "macos")]
-        let set = arboard::SetExtApple::exclude_from_history(set);
-        #[cfg(windows)]
-        let set = arboard::SetExtWindows::exclude_from_history(set);
-        #[cfg(target_os = "linux")]
-        let set = arboard::SetExtLinux::exclude_from_history(set);
-        set.text(text).map_err(|e| e.to_string())
+        self.with(|clipboard| {
+            let set = clipboard.set();
+            #[cfg(target_os = "macos")]
+            let set = arboard::SetExtApple::exclude_from_history(set);
+            #[cfg(windows)]
+            let set = arboard::SetExtWindows::exclude_from_history(set);
+            #[cfg(target_os = "linux")]
+            let set = arboard::SetExtLinux::exclude_from_history(set);
+            set.text(text)
+        })
     }
 
     fn clear(&self) {
-        if let Ok(mut clipboard) = arboard::Clipboard::new() {
-            let _ = clipboard.clear();
-        }
+        let _ = self.with(arboard::Clipboard::clear);
     }
 }
 
