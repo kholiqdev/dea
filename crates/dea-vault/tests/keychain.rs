@@ -119,3 +119,29 @@ fn unicode_environment_names_work() {
         "nilai rahasia ✓"
     );
 }
+
+#[test]
+fn names_that_differ_only_by_case_stay_apart() {
+    if !enabled() {
+        return;
+    }
+    let mut s = Scratch::new();
+    let upper = dea_vault::SecretKey {
+        scope: "p".into(),
+        environment: "Staging".into(),
+        name: "API_KEY".into(),
+    }
+    .account();
+    let lower = dea_vault::SecretKey {
+        scope: "p".into(),
+        environment: "staging".into(),
+        name: "api_key".into(),
+    }
+    .account();
+    let upper = s.account(&upper);
+    let lower = s.account(&lower);
+    s.backend.set(&upper, "upper").unwrap();
+    s.backend.set(&lower, "lower").unwrap();
+    assert_eq!(s.backend.get(&upper).unwrap().unwrap().as_str(), "upper");
+    assert_eq!(s.backend.get(&lower).unwrap().unwrap().as_str(), "lower");
+}

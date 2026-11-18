@@ -10,8 +10,10 @@ pub struct SecretKey {
 
 impl SecretKey {
     /// The account name in the secret store: `<scope>/<environment>/<name>`.
-    /// `%`, `/` and `#` are percent-encoded inside each part, so no two keys
-    /// share an account, and `#` stays free for the keychain's chunk entries.
+    /// Inside each part, every byte other than `a-z`, `0-9`, `.`, `_` and
+    /// `-` is percent-encoded with upper-case hex. So no two keys share an
+    /// account, not even on Windows, which compares names without regard to
+    /// case, and `#` stays free for the keychain's chunk entries.
     pub fn account(&self) -> String {
         format!(
             "{}/{}/{}",
@@ -24,12 +26,10 @@ impl SecretKey {
 
 fn encode(part: &str) -> String {
     let mut out = String::with_capacity(part.len());
-    for c in part.chars() {
-        match c {
-            '%' => out.push_str("%25"),
-            '/' => out.push_str("%2F"),
-            '#' => out.push_str("%23"),
-            _ => out.push(c),
+    for byte in part.bytes() {
+        match byte {
+            b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => out.push(char::from(byte)),
+            _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
     out
