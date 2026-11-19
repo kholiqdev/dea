@@ -9,11 +9,11 @@
   import { toasts } from "../prompts/toasts.svelte";
   import { blockedByUnsaved } from "../prompts/unsaved";
   import { shellContext } from "./context";
+  import { menus } from "./menus.svelte";
   import { windowReload } from "./window-reload";
 
   const ctx = shellContext();
   const info = $derived(ctx.project.info);
-  let clearing = $state(false);
 
   function attempt(action: () => Promise<unknown>): void {
     action().catch((e: unknown) => toasts.show(errorMessage(e)));
@@ -42,7 +42,7 @@
     {
       id: "clear",
       label: "Clear local data…",
-      onselect: () => (clearing = true),
+      onselect: () => (menus.clearLocalData = true),
     },
     {
       id: "close",
@@ -65,12 +65,12 @@
       <ChevronDown size={14} strokeWidth={1.5} />
     {/snippet}
   </Menu>
-  {#if clearing}
+  {#if menus.clearLocalData}
     <ClearLocalData
       name={info.name}
-      oncancel={() => (clearing = false)}
+      oncancel={() => (menus.clearLocalData = false)}
       onclear={() => {
-        clearing = false;
+        menus.clearLocalData = false;
         attempt(() => clearLocalData(ctx.shell, ctx.tabs));
       }}
     />

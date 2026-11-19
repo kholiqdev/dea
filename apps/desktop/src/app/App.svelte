@@ -3,6 +3,7 @@
   import { settings } from "$lib/settings/settings.svelte";
   import { registry } from "./contributions/registry.svelte";
   import { setShellApi } from "./contributions/shell-api";
+  import { runAction } from "./shell/hotkeys.svelte";
   import { applyAppearance } from "./shell/appearance";
   import Shell from "./shell/Shell.svelte";
   import { persistUiState, shell } from "./shell/shell-state.svelte";
@@ -26,6 +27,10 @@
     setTabDirty: (id, dirty) => tabs.setDirty(id, dirty),
     setSaveHandler: (tabType, save) => tabs.setSaveHandler(tabType, save),
     openModule: (id) => shell.openModule(id),
+    runCommand: async (id) => {
+      const command = registry.commands.find((c) => c.id === id);
+      if (command) await runAction(command.action, { registry, shell });
+    },
     toast: (text) => void toasts.show(text),
   });
 

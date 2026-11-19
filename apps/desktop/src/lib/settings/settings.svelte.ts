@@ -24,6 +24,7 @@ export interface SettingsPatch {
   appearance?: Partial<Appearance>;
   /** Replaces every shortcut override. */
   shortcuts?: Settings["shortcuts"];
+  security?: Partial<Settings["security"]>;
 }
 
 export class SettingsState {
@@ -44,6 +45,10 @@ export class SettingsState {
     return this.#value.shortcuts;
   }
 
+  get security(): Settings["security"] {
+    return this.#value.security;
+  }
+
   /** Reads the saved settings. Outside the app the defaults stay. */
   async load(): Promise<void> {
     try {
@@ -60,6 +65,7 @@ export class SettingsState {
         ...this.#value,
         appearance: { ...this.#value.appearance, ...patch.appearance },
         shortcuts: patch.shortcuts ?? this.#value.shortcuts,
+        security: { ...this.#value.security, ...patch.security },
       };
       await saveSettings(next);
       this.#value = next;

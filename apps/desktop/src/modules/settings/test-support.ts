@@ -26,6 +26,7 @@ export async function resetSettings(): Promise<void> {
   await settings.update({
     appearance: DEFAULT_SETTINGS.appearance,
     shortcuts: {},
+    security: DEFAULT_SETTINGS.security,
   });
 }
 

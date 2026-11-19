@@ -30,6 +30,8 @@ export interface ShellApi {
    */
   setSaveHandler(tabType: string, save: (tabId: string) => Promise<void>): void;
   openModule(id: string): Promise<void>;
+  /** Runs a registered command, as its shortcut would. */
+  runCommand(id: string): Promise<void>;
   /** Shows a short notice at the bottom of the window. */
   toast(text: string): void;
 }

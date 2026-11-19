@@ -28,5 +28,11 @@ export const manifest: ModuleManifest = {
       order: 2,
       view: () => import("./components/ShortcutsSection.svelte"),
     },
+    {
+      id: "settings.security",
+      title: "Security and privacy",
+      order: 3,
+      view: () => import("./components/SecuritySection.svelte"),
+    },
   ],
 };
