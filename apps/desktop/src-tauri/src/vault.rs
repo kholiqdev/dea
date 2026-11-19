@@ -16,6 +16,7 @@ use dea_engine::vault::{
     open_app_vault,
 };
 use serde::Serialize;
+use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::error::IpcError;
@@ -238,6 +239,15 @@ impl UiPrompter {
         guard(&self.waiting).retain(|_, waiting| waiting.window != window);
     }
 
+    /// A page of `window` is loading. A reload drops the dialog and its
+    /// listener without closing the window, so its prompts are cancelled
+    /// when the new page starts.
+    pub fn page_load(&self, window: &str, event: PageLoadEvent) {
+        if event == PageLoadEvent::Started {
+            self.cancel_window(window);
+        }
+    }
+
     fn ask(&self, kind: VaultPromptKind, prompt: &PasswordPrompt) -> Option<SecretString> {
         let requester = guard(&self.requesters)
             .get(&thread::current().id())
@@ -435,6 +445,25 @@ mod tests {
 
         // A window that is already gone cannot answer, so nothing waits.
         assert!(!ask_from(&prompter, "project-9", None).got_password());
+    }
+
+    #[test]
+    fn a_reloaded_window_cancels_its_prompt() {
+        let (prompter, shown) = windows_with(&["project-1"], None);
+
+        // A page that finished loading keeps its dialog.
+        let first = ask_from(&prompter, "project-1", None);
+        let (_, event) = shown.recv_timeout(WAIT).unwrap();
+        prompter.page_load("project-1", PageLoadEvent::Finished);
+        prompter.answer(event.id, Some("correct horse".into()));
+        assert!(first.got_password());
+
+        // A reload drops the dialog and its listener without closing the
+        // window, so the prompt is cancelled when the new page starts.
+        let second = ask_from(&prompter, "project-1", None);
+        shown.recv_timeout(WAIT).unwrap();
+        prompter.page_load("project-1", PageLoadEvent::Started);
+        assert!(!second.got_password());
     }
 
     #[test]

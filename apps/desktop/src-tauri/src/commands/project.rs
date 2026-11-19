@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use dea_engine::projects::{
     self, OpenedProject, ProjectChanged, ProjectInfo, RecentEntry, portable_path, recent_entries,
 };
+use dea_engine::vault::VaultService;
 use dea_project::{
     EnvReference, Environment, Project, ProjectChange, ProjectError, ProjectWatcher, load_project,
 };
@@ -242,13 +243,11 @@ pub async fn save_environment(
     let vault = app.state::<AppState>().vault.existing();
     spawn_blocking(move || {
         let project = load_project(&session.root)?.project;
-        if production_turned_off(&project, previous.as_deref(), &environment)
-            && !vault.is_some_and(|v| v.production_open())
-        {
-            return Err(IpcError {
-                kind: IpcErrorKind::ReauthRequired,
-                message: "turning production off needs authentication first".into(),
-            });
+        if production_turned_off(&project, previous.as_deref(), &environment) {
+            require_production_open(
+                vault.as_deref(),
+                "turning production off needs authentication first",
+            )?;
         }
         dea_project::save_environment(&project, previous.as_deref(), &environment)?;
         info_of(&session)
@@ -272,6 +271,28 @@ fn production_turned_off(
         })
 }
 
+/// Whether deleting `name` removes a production environment. Only allowed
+/// while the production window is open: an environment created again under
+/// the same name, not marked production, would reach its Vault values.
+fn deletes_production(project: &Project, name: &str) -> bool {
+    project
+        .environments
+        .iter()
+        .any(|e| e.name == name && e.production)
+}
+
+/// Refuses with `reauthRequired` and `message` unless the production window
+/// is open.
+fn require_production_open(vault: Option<&VaultService>, message: &str) -> Result<(), IpcError> {
+    if vault.is_some_and(VaultService::production_open) {
+        return Ok(());
+    }
+    Err(IpcError {
+        kind: IpcErrorKind::ReauthRequired,
+        message: message.into(),
+    })
+}
+
 #[tauri::command]
 pub async fn delete_environment(
     app: AppHandle,
@@ -279,8 +300,15 @@ pub async fn delete_environment(
     name: String,
 ) -> Result<ProjectInfo, IpcError> {
     let session = writable(&app, window.label())?;
+    let vault = app.state::<AppState>().vault.existing();
     spawn_blocking(move || {
         let project = load_project(&session.root)?.project;
+        if deletes_production(&project, &name) {
+            require_production_open(
+                vault.as_deref(),
+                "deleting a production environment needs authentication first",
+            )?;
+        }
         dea_project::delete_environment(&project, &name)?;
         info_of(&session)
     })
@@ -431,5 +459,15 @@ mod tests {
             None,
             &env("production", false)
         ));
+    }
+
+    #[test]
+    fn deleting_production_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dea_project::create_project(&dir.path().join("p"), "p").unwrap();
+        assert!(deletes_production(&project, "production"));
+        assert!(!deletes_production(&project, "staging"));
+        // dea-project refuses to delete what is not there.
+        assert!(!deletes_production(&project, "gone"));
     }
 }
