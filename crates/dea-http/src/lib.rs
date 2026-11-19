@@ -8,6 +8,7 @@ mod connect;
 mod cookies;
 mod error;
 mod pool;
+mod proxy;
 mod reader;
 mod redirect;
 mod request;
@@ -16,9 +17,10 @@ mod sse;
 mod timing;
 mod tls;
 
-pub use client::{Client, ClientConfig, Event, ProxyConfig, SendContext};
+pub use client::{Client, ClientConfig, Event, SendContext};
 pub use cookies::{CookieJar, CookieJarError, StoredCookie};
 pub use error::HttpError;
+pub use proxy::{NoProxy, ProxyConfig, ProxySettings, proxy_from_env, system_proxy};
 pub use request::{Body, ClientIdentity, Options, Part, PartValue, Request, TlsConfig};
 pub use response::{
     DEFAULT_MAX_BODY_BYTES, HttpVersion, Redirect, Response, ResponseBody, SPILL_THRESHOLD,

@@ -12,13 +12,14 @@ use std::time::{Duration, Instant};
 use hyper::body::Incoming;
 use hyper::client::conn::{http1, http2};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::task::AbortHandle;
 use url::{Host, Url};
 
 use crate::body::WireBody;
 use crate::error::{HttpError, describe};
+use crate::proxy;
 use crate::request::TlsConfig;
 use crate::response::HttpVersion;
 use crate::timing::Marks;
@@ -111,11 +112,17 @@ impl Connection {
     }
 }
 
-/// Opens a new connection to the origin of `url`. Speaks HTTP/2 only when
-/// the server picks it with ALPN. It has no time limit of its own: the
-/// caller runs it as a task it can abandon.
+/// Opens a new connection to the origin of `url`, through `proxy` when
+/// there is one. Speaks HTTP/2 only when the server picks it with ALPN. It
+/// has no time limit of its own: the caller runs it as a task it can
+/// abandon.
+///
+/// Through a proxy, DNS and connect are the proxy's, and the connect phase
+/// also holds the `CONNECT` exchange of an `https` target. TLS is the
+/// origin's, inside the tunnel.
 pub(crate) async fn open(
     url: &Url,
+    proxy: Option<&Url>,
     tls: &TlsConfig,
     verify: bool,
 ) -> Result<(Connection, Marks), HttpError> {
@@ -128,14 +135,31 @@ pub(crate) async fn open(
         .port_or_known_default()
         .ok_or_else(|| HttpError::InvalidRequest("the URL has no port".into()))?;
 
-    let addrs = resolve(&host, port).await?;
+    let (dialed, dialed_port) = match proxy {
+        Some(proxy) => (
+            proxy
+                .host()
+                .ok_or_else(|| HttpError::Proxy("the proxy URL has no host".into()))?
+                .to_owned(),
+            proxy.port_or_known_default().unwrap_or(80),
+        ),
+        None => (host.clone(), port),
+    };
+    let reach = |e: HttpError| match proxy {
+        Some(proxy) => HttpError::Proxy(format!("could not reach {}: {e}", proxy::shown(proxy))),
+        None => e,
+    };
+    let addrs = resolve(&dialed, dialed_port).await.map_err(reach)?;
     // An IP literal skips DNS, so its DNS phase is zero, not the time
     // taken to wrap the address.
-    let resolved = match host {
+    let resolved = match dialed {
         Host::Domain(_) => Instant::now(),
         Host::Ipv4(_) | Host::Ipv6(_) => start,
     };
-    let stream = connect(&addrs).await?;
+    let mut stream = connect(&addrs).await.map_err(reach)?;
+    if let (Some(proxy), "https") = (proxy, url.scheme()) {
+        tunnel(&mut stream, proxy, &host, port).await?;
+    }
     let connected = Instant::now();
     let (connection, secured) = if url.scheme() == "https" {
         let (stream, h2) = tls::handshake(stream, &host, tls, verify).await?;
@@ -152,6 +176,67 @@ pub(crate) async fn open(
         reused: false,
     };
     Ok((connection, marks))
+}
+
+/// The longest answer to `CONNECT` read before giving up.
+const MAX_CONNECT_ANSWER: usize = 16 * 1024;
+
+/// Asks `proxy` over `stream` for a tunnel to `host:port`. Reads the answer
+/// byte by byte so nothing sent through the tunnel is consumed.
+async fn tunnel(
+    stream: &mut TcpStream,
+    proxy: &Url,
+    host: &Host<String>,
+    port: u16,
+) -> Result<(), HttpError> {
+    let target = match host {
+        Host::Ipv6(ip) => format!("[{ip}]:{port}"),
+        _ => format!("{host}:{port}"),
+    };
+    let mut request = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n");
+    if let Some(value) = proxy::authorization(proxy) {
+        request.push_str("Proxy-Authorization: ");
+        request.push_str(&value);
+        request.push_str("\r\n");
+    }
+    request.push_str("\r\n");
+    let proxy_error = |what: &str| HttpError::Proxy(format!("{} {what}", proxy::shown(proxy)));
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|e| proxy_error(&format!("did not take the CONNECT request: {e}")))?;
+
+    let mut answer = Vec::new();
+    let mut byte = [0u8; 1];
+    while !answer.ends_with(b"\r\n\r\n") {
+        if answer.len() >= MAX_CONNECT_ANSWER {
+            return Err(proxy_error("sent an oversized answer to CONNECT"));
+        }
+        match stream.read(&mut byte).await {
+            Ok(0) => {
+                return Err(proxy_error(
+                    "closed the connection before answering CONNECT",
+                ));
+            }
+            Ok(_) => answer.push(byte[0]),
+            Err(e) => return Err(proxy_error(&format!("failed while answering CONNECT: {e}"))),
+        }
+    }
+    let status = std::str::from_utf8(&answer)
+        .ok()
+        .and_then(|text| text.lines().next())
+        .filter(|line| line.starts_with("HTTP/1."))
+        .and_then(|line| line.split(' ').nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .ok_or_else(|| proxy_error("did not answer CONNECT with an HTTP status"))?;
+    if (200..300).contains(&status) {
+        Ok(())
+    } else {
+        Err(HttpError::Proxy(format!(
+            "{} refused CONNECT to {target} with status {status}",
+            proxy::shown(proxy)
+        )))
+    }
 }
 
 /// The addresses of `host`. An IP literal skips DNS.

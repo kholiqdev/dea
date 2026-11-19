@@ -37,7 +37,7 @@ hyper-util = { workspace = true, optional = true, features = ["tokio"] }
 rcgen = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 time = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, optional = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 uuid.workspace = true
