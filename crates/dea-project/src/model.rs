@@ -32,6 +32,11 @@ pub struct Manifest {
 /// An environment, stored in `environments/<name>.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct Environment {
     pub name: String,
     /// Marks the environment as production: Dea asks for confirmation
@@ -39,18 +44,26 @@ pub struct Environment {
     /// environment can never lose its marker by omission.
     pub production: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<Variable>>", optional))]
     pub variables: Vec<Variable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct Variable {
     pub name: String,
     /// Plain text, or a reference to a secret such as `{{vault:access_token}}`.
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub description: Option<String>,
 }
 

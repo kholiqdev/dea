@@ -25,7 +25,7 @@ export async function start(
 
   const [, saved] = await Promise.all([
     settings.load(),
-    getUiState(NO_PROJECT).catch(() => null),
+    getUiState(NO_PROJECT, 0).catch(() => null),
   ]);
   if (saved) {
     shell.restore(saved);

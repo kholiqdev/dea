@@ -9,7 +9,7 @@ publish = false
 
 [features]
 # Writes the TypeScript bindings of the IPC types (test `export_bindings`).
-ts = ["dep:ts-rs"]
+ts = ["dep:ts-rs", "dea-project/ts"]
 
 [lints]
 workspace = true

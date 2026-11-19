@@ -77,6 +77,7 @@ test("restore takes the saved state", () => {
   shell.restore({
     version: 1,
     activeModule: "terminal",
+    activeEnvironment: null,
     railExpanded: true,
     sidebars: { requests: { visible: false, width: 300 } },
     tabs: [],
@@ -90,7 +91,7 @@ test("restore takes the saved state", () => {
 test("sidebar width and visibility are saved after a pause", async () => {
   vi.useFakeTimers();
   const shell = new Shell(registryWith());
-  const stop = persistUiState("no-project", () => shell.snapshot());
+  const stop = persistUiState("no-project", 0, () => shell.snapshot());
   flushSync();
   shell.setSidebarWidth("requests", 320);
   flushSync();
@@ -99,7 +100,8 @@ test("sidebar width and visibility are saved after a pause", async () => {
   expect(ipc.savedUiStates).toEqual([]);
   await vi.advanceTimersByTimeAsync(300);
   expect(ipc.savedUiStates).toHaveLength(1);
-  expect(ipc.savedUiStates[0]?.key).toBe("no-project");
+  expect(ipc.savedUiStates[0]?.scope).toBe("no-project");
+  expect(ipc.savedUiStates[0]?.slot).toBe(0);
   expect(ipc.savedUiStates[0]?.state.sidebars).toEqual({
     requests: { visible: false, width: 320 },
   });

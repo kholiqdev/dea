@@ -26,7 +26,7 @@ fn missing_files_give_defaults() {
     assert_eq!(s.appearance.mono_font, "IBM Plex Mono");
     assert_eq!(s.appearance.font_size, 13);
     assert!(s.shortcuts.is_empty());
-    assert_eq!(store.load_ui_state("no-project"), UiState::default());
+    assert_eq!(store.load_ui_state("no-project", 0), UiState::default());
     // Reading creates nothing.
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
@@ -64,11 +64,11 @@ fn settings_and_ui_state_round_trip() {
         closed_tabs: vec![tab(0)],
         ..UiState::default()
     };
-    store.save_ui_state("no-project", ui.clone()).unwrap();
+    store.save_ui_state("no-project", 0, ui.clone()).unwrap();
 
     let again = Store::new(dir.path());
     assert_eq!(again.load_settings(), settings);
-    assert_eq!(again.load_ui_state("no-project"), ui);
+    assert_eq!(again.load_ui_state("no-project", 0), ui);
 }
 
 #[test]
@@ -144,17 +144,18 @@ fn damaged_ui_state_falls_back_to_defaults_and_is_kept() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::new(dir.path());
     store
-        .save_ui_state("no-project", UiState::default())
+        .save_ui_state("no-project", 0, UiState::default())
         .unwrap();
-    let file = fs::read_dir(dir.path().join("ui"))
+    let scope_dir = fs::read_dir(dir.path().join("ui"))
         .unwrap()
         .next()
         .unwrap()
         .unwrap()
         .path();
+    let file = scope_dir.join("0.json");
     fs::write(&file, r#"{"tabs": 5}"#).unwrap();
 
-    assert_eq!(store.load_ui_state("no-project"), UiState::default());
+    assert_eq!(store.load_ui_state("no-project", 0), UiState::default());
     let mut damaged = file.clone().into_os_string();
     damaged.push(".damaged");
     assert_eq!(fs::read_to_string(damaged).unwrap(), r#"{"tabs": 5}"#);
@@ -172,11 +173,11 @@ fn ui_state_is_kept_per_key() {
         active_module: Some("database".into()),
         ..UiState::default()
     };
-    store.save_ui_state("no-project", a.clone()).unwrap();
-    store.save_ui_state("p-1", b.clone()).unwrap();
-    assert_eq!(store.load_ui_state("no-project"), a);
-    assert_eq!(store.load_ui_state("p-1"), b);
-    // The key never appears in a file name.
+    store.save_ui_state("no-project", 0, a.clone()).unwrap();
+    store.save_ui_state("p-1", 0, b.clone()).unwrap();
+    assert_eq!(store.load_ui_state("no-project", 0), a);
+    assert_eq!(store.load_ui_state("p-1", 0), b);
+    // The scope never appears in a file or folder name.
     for entry in fs::read_dir(dir.path().join("ui")).unwrap() {
         let name = entry.unwrap().file_name().into_string().unwrap();
         assert!(!name.contains("project") && !name.contains("p-1"), "{name}");
@@ -191,8 +192,8 @@ fn closed_tabs_keep_the_newest_twenty() {
         closed_tabs: (0..25).map(tab).collect(),
         ..UiState::default()
     };
-    store.save_ui_state("no-project", ui.clone()).unwrap();
-    let closed = store.load_ui_state("no-project").closed_tabs;
+    store.save_ui_state("no-project", 0, ui.clone()).unwrap();
+    let closed = store.load_ui_state("no-project", 0).closed_tabs;
     assert_eq!(closed.len(), MAX_CLOSED_TABS);
     assert_eq!(closed.first().unwrap().id, "t5");
     assert_eq!(closed.last().unwrap().id, "t24");
@@ -238,4 +239,47 @@ fn a_write_error_names_the_path_and_keeps_the_cause_separate() {
         !err.to_string().contains(&cause),
         "{err} repeats its cause {cause}"
     );
+}
+
+#[test]
+fn ui_state_is_kept_per_project_and_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    let state = |m: &str| UiState {
+        active_module: Some(m.into()),
+        ..UiState::default()
+    };
+    store.save_ui_state("p", 0, state("a")).unwrap();
+    store.save_ui_state("p", 1, state("b")).unwrap();
+    store.save_ui_state("q", 0, state("c")).unwrap();
+    assert_eq!(store.load_ui_state("p", 0), state("a"));
+    assert_eq!(store.load_ui_state("p", 1), state("b"));
+    assert_eq!(store.load_ui_state("q", 0), state("c"));
+}
+
+#[test]
+fn ui_state_from_plan_3a_still_loads() {
+    let state: UiState =
+        serde_json::from_str(r#"{"version":1,"activeModule":"requests"}"#).unwrap();
+    assert_eq!(state.active_environment, None);
+    assert_eq!(state.active_module.as_deref(), Some("requests"));
+}
+
+#[test]
+fn clearing_a_project_removes_every_slot_and_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    let state = UiState {
+        active_environment: Some("staging".into()),
+        ..UiState::default()
+    };
+    store.save_ui_state("p", 0, state.clone()).unwrap();
+    store.save_ui_state("p", 1, state.clone()).unwrap();
+    store.save_ui_state("q", 0, state.clone()).unwrap();
+    store.clear_ui_state("p").unwrap();
+    assert_eq!(store.load_ui_state("p", 0), UiState::default());
+    assert_eq!(store.load_ui_state("p", 1), UiState::default());
+    assert_eq!(store.load_ui_state("q", 0), state);
+    // Clearing a project with nothing saved is fine.
+    store.clear_ui_state("never-saved").unwrap();
 }

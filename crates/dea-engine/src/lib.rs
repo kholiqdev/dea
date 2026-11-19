@@ -5,6 +5,7 @@
 mod clipboard;
 mod clock;
 mod error;
+pub mod projects;
 mod prompt;
 pub mod store;
 mod vault;

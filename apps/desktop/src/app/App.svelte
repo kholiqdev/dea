@@ -34,7 +34,7 @@
     ),
   );
   $effect(() =>
-    persistUiState(NO_PROJECT, () => ({
+    persistUiState(NO_PROJECT, 0, () => ({
       ...shell.snapshot(),
       ...tabs.snapshot(),
     })),
