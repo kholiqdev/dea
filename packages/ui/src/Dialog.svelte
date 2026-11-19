@@ -1,18 +1,23 @@
 <!--
   A modal dialog. Focus moves into it and stays there, Escape cancels, and
   focus goes back to whatever had it before. Mark the control that should
-  get focus first with `data-autofocus`.
+  get focus first with `data-autofocus`. Size and place it with the CSS
+  variables `--dialog-width`, `--dialog-top`, `--dialog-padding` and
+  `--dialog-gap`.
 -->
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
 
   let {
     title,
+    hideTitle = false,
     oncancel,
     children,
     actions,
   }: {
     title: string;
+    /** Keeps the title for screen readers only, as the palette does. */
+    hideTitle?: boolean;
     oncancel: () => void;
     children?: Snippet;
     actions?: Snippet;
@@ -96,7 +101,7 @@
   tabindex="-1"
   {onkeydown}
 >
-  <h2 {id}>{title}</h2>
+  <h2 {id} class={{ "visually-hidden": hideTitle }}>{title}</h2>
   {@render children?.()}
   {#if actions}
     <div class="actions">{@render actions()}</div>
@@ -114,14 +119,14 @@
   .dialog {
     position: fixed;
     z-index: 60;
-    top: 20vh;
+    top: var(--dialog-top, 20vh);
     left: 50%;
     transform: translateX(-50%);
-    width: min(440px, calc(100vw - 2 * var(--s-6)));
+    width: min(var(--dialog-width, 440px), calc(100vw - 2 * var(--s-6)));
     display: flex;
     flex-direction: column;
-    gap: var(--s-4);
-    padding: var(--s-5);
+    gap: var(--dialog-gap, var(--s-4));
+    padding: var(--dialog-padding, var(--s-5));
     border-radius: var(--r-panel);
     background: var(--bg-2);
     box-shadow:
@@ -145,5 +150,14 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--s-2);
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 </style>
