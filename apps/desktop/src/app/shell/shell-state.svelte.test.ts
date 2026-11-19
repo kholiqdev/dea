@@ -24,15 +24,33 @@ test("sidebar_width_is_clamped_to_the_window", () => {
 });
 
 test("the_last_requested_module_wins", async () => {
+  const terminalView = view("terminal view");
   const r = registryWith(
     railModule("database", 2, { view: view("database view", 200) }),
-    railModule("terminal", 3),
+    railModule("terminal", 3, { view: terminalView }),
   );
   const shell = new Shell(r);
   const slow = shell.openModule("database");
   const fast = shell.openModule("terminal");
   await Promise.all([slow, fast]);
   expect(shell.activeModule).toBe("terminal");
+  // The late Database view must not replace Terminal's.
+  expect(shell.activeView).toBe((await terminalView()).default);
+});
+
+test("a module with only tab types can be active, with no main view", async () => {
+  const r = registryWith(railModule("database", 2), {
+    id: "tool",
+    title: "Tool",
+    tabTypes: [
+      { id: "tool.page", title: "Page", icon: "x", view: view("page") },
+    ],
+  });
+  const shell = new Shell(r);
+  await shell.openModule("database");
+  await shell.openModule("tool");
+  expect(shell.activeModule).toBe("tool");
+  expect(shell.activeView).toBeNull();
 });
 
 test("opening an unknown or disabled module changes nothing", async () => {

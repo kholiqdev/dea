@@ -1,10 +1,6 @@
 <script lang="ts">
   import PanelLeft from "@lucide/svelte/icons/panel-left";
-  import {
-    currentPlatform,
-    formatChord,
-    parseChord,
-  } from "$lib/keyboard/chord";
+  import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
   import { settings } from "$lib/settings/settings.svelte";
   import { shellContext } from "./context";
   import { effectiveShortcuts } from "../contributions/shortcuts";
@@ -22,7 +18,7 @@
     const b = effectiveShortcuts(ctx.registry, settings.shortcuts).find(
       (s) => s.command === "shell.toggleSidebar",
     );
-    return b ? formatChord(parseChord(b.chord), currentPlatform()) : null;
+    return b ? formatChordText(b.chord, currentPlatform()) : null;
   });
   const toggleLabel = $derived(
     sidebarVisible ? "Hide sidebar" : "Show sidebar",

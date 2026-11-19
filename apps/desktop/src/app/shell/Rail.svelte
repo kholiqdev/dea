@@ -1,10 +1,6 @@
 <script lang="ts">
   import ChevronsLeft from "@lucide/svelte/icons/chevrons-left";
-  import {
-    currentPlatform,
-    formatChord,
-    parseChord,
-  } from "$lib/keyboard/chord";
+  import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
   import { settings } from "$lib/settings/settings.svelte";
   import type { ModuleManifest } from "../contributions/types";
   import { railIcon } from "../modules";
@@ -26,12 +22,7 @@
 
   function chordOf(m: ModuleManifest): string | null {
     const b = bindings.find((s) => s.command === `${m.id}.open`);
-    if (!b) return null;
-    try {
-      return formatChord(parseChord(b.chord), platform);
-    } catch {
-      return null;
-    }
+    return b ? formatChordText(b.chord, platform) : null;
   }
 </script>
 

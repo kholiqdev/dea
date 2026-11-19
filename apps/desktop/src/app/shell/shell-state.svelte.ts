@@ -93,17 +93,19 @@ export class Shell {
    * shown.
    */
   async openModule(id: string): Promise<void> {
-    const loader = this.registry.module(id)?.view;
-    if (!loader) return;
+    const module = this.registry.module(id);
+    if (!module) return;
     const request = ++this.#request;
     const start = `module-open-start:${id}`;
     mark(start);
     const previous = this.activeModule;
     this.activeModule = id;
+    // A module may only contribute tab types; its tabs still need it active.
+    if (!module.view) return;
     let view = this.#views[id];
     if (!view) {
       try {
-        view = (await loader()).default;
+        view = (await module.view()).default;
       } catch (e) {
         console.error(`Cannot load the ${id} view`, e);
         if (request === this.#request) this.activeModule = previous;
