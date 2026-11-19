@@ -7,11 +7,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use hyper::body::Incoming;
 use hyper::client::conn::{http1, http2};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::task::AbortHandle;
@@ -22,6 +22,13 @@ use crate::request::{TlsConfig, WireBody};
 use crate::response::HttpVersion;
 use crate::timing::Marks;
 use crate::tls;
+
+/// How often an HTTP/2 connection is pinged, and how long the answer may
+/// take, so a connection that died silently (sleep, VPN switch) is closed
+/// within about 40 s instead of hanging every request. Pings also run
+/// while no request is in flight.
+const H2_PING_INTERVAL: Duration = Duration::from_secs(30);
+const H2_PING_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// An HTTP connection whose I/O runs in its own task.
 pub(crate) struct Connection {
@@ -73,6 +80,11 @@ impl Connection {
                 task: None,
             }),
         }
+    }
+
+    /// Whether both handles belong to the same underlying connection.
+    pub(crate) fn same_connection(&self, other: &Connection) -> bool {
+        Arc::ptr_eq(&self.received, &other.received)
     }
 
     pub(crate) fn bytes_received(&self) -> u64 {
@@ -200,7 +212,12 @@ where
     });
     let protocol = |e: hyper::Error| HttpError::Protocol(describe(&e));
     let (sender, task) = if h2 {
-        let (sender, conn) = http2::handshake(TokioExecutor::new(), io)
+        let (sender, conn) = http2::Builder::new(TokioExecutor::new())
+            .timer(TokioTimer::new())
+            .keep_alive_interval(H2_PING_INTERVAL)
+            .keep_alive_timeout(H2_PING_TIMEOUT)
+            .keep_alive_while_idle(true)
+            .handshake(io)
             .await
             .map_err(protocol)?;
         tokio::spawn(conn);

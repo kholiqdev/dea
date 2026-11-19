@@ -254,6 +254,11 @@ impl Client {
         let sent = tokio::time::timeout_at(head_deadline, connection.send(wire)).await;
         let head = match sent {
             Err(_) => {
+                // A silent h2 connection would otherwise be picked again
+                // and make the next request wait as long.
+                if version == HttpVersion::Http2 {
+                    self.inner.pool.evict(key, &connection);
+                }
                 return Err(Failure {
                     error: HttpError::Timeout(timeout),
                     retry: false,
@@ -297,6 +302,8 @@ impl Client {
         let done_at = Instant::now();
         if version == HttpVersion::Http11 {
             self.inner.pool.checkin(key.clone(), connection);
+        } else {
+            self.inner.pool.touch(key, &connection);
         }
 
         let reason = match parts.extensions.get::<hyper::ext::ReasonPhrase>() {
