@@ -42,18 +42,17 @@ function typingIn(target: EventTarget | null): boolean {
 }
 
 /**
- * Listens for shortcuts on `window`, before anything else sees the key.
- * Returns a function that stops listening.
+ * A keydown handler for `window` (capture phase) that runs the command
+ * bound to the pressed chord. Call while a component initialises, so the
+ * parsed shortcuts are owned by it.
  */
-export function installHotkeys(opts: {
-  registry: Registry;
-  shell: Shell;
-  overrides: () => Record<string, string | null | undefined>;
-  platform?: Platform;
-}): () => void {
-  const platform = opts.platform ?? currentPlatform();
+export function createHotkeyHandler(
+  ctx: { readonly registry: Registry; readonly shell: Shell },
+  overrides: () => Record<string, string | null | undefined>,
+  platform: Platform = currentPlatform(),
+): (e: KeyboardEvent) => void {
   const parsed = $derived(
-    effectiveShortcuts(opts.registry, opts.overrides()).flatMap((b) => {
+    effectiveShortcuts(ctx.registry, overrides()).flatMap((b) => {
       try {
         return [{ command: b.command, chord: parseChord(b.chord) }];
       } catch {
@@ -62,7 +61,7 @@ export function installHotkeys(opts: {
     }),
   );
 
-  const onKey = (e: KeyboardEvent) => {
+  return (e) => {
     // A shortcut recorder, such as the one in Settings, gets every key.
     if (e.target instanceof Element && e.target.closest("[data-capture-keys]"))
       return;
@@ -72,14 +71,11 @@ export function installHotkeys(opts: {
     if (!chord.mod && !chord.alt && typingIn(e.target)) return;
     const hit = parsed.find((b) => sameChord(b.chord, chord));
     const command = hit
-      ? opts.registry.commands.find((c) => c.id === hit.command)
+      ? ctx.registry.commands.find((c) => c.id === hit.command)
       : undefined;
     if (!command) return;
     e.preventDefault();
     e.stopPropagation();
-    void runAction(command.action, opts);
+    void runAction(command.action, ctx);
   };
-
-  window.addEventListener("keydown", onKey, { capture: true });
-  return () => window.removeEventListener("keydown", onKey, { capture: true });
 }

@@ -76,3 +76,12 @@ test("the preview shows a tab, an editor and a terminal", () => {
   expect(preview.querySelector(".editor")).not.toBeNull();
   expect(preview.querySelector(".terminal")).not.toBeNull();
 });
+
+test("an empty size field goes back to the size in effect", async () => {
+  render(AppearanceSection);
+  const size = screen.getByRole("spinbutton", { name: "Size in px" });
+  await userEvent.clear(size);
+  await userEvent.type(size, "{Enter}");
+  expect(size).toHaveValue(13);
+  expect(settings.appearance.fontSize).toBe(13);
+});

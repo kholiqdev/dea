@@ -1,7 +1,7 @@
 // Tabs from every module in one bar (F1-FON-02). The active tab decides
 // the active module; picking a module on the rail shows its last tab.
 
-import { tick, untrack } from "svelte";
+import { tick } from "svelte";
 import type { TabState } from "$lib/ipc/bindings/TabState";
 import type { UiState } from "$lib/ipc/bindings/UiState";
 import { registry, type Registry } from "../contributions/registry.svelte";
@@ -39,11 +39,24 @@ export class Tabs {
   readonly #shell: Shell;
   readonly #confirm: TabsOptions["confirmClose"];
   #tabs = $state.raw<TabRecord[]>([]);
-  #activeId = $state<string | null>(null);
+  // The tab each module last showed, by module id.
+  #selected = $state<Record<string, string>>({});
   #closed = $state.raw<TabState[]>([]);
-  // Plain records: neither needs to be watched.
-  #lastActive: Record<string, string> = {};
+  // Not shown anywhere, so not reactive.
   #saveHandlers: Record<string, SaveHandler> = {};
+
+  /**
+   * The tab shown in the work area: the active module's selected tab, or
+   * its last tab. Picking a module on the rail therefore shows its tab.
+   */
+  #active = $derived.by(() => {
+    const module = this.#shell.activeModule;
+    if (!module) return undefined;
+    return (
+      this.#tabs.find((t) => t.id === this.#selected[module]) ??
+      this.#tabs.findLast((t) => t.module === module)
+    );
+  });
 
   constructor(registry: Registry, shell: Shell, opts: TabsOptions) {
     this.#registry = registry;
@@ -56,7 +69,7 @@ export class Tabs {
   }
 
   get active(): TabRecord | undefined {
-    return this.#tabs.find((t) => t.id === this.#activeId);
+    return this.#active;
   }
 
   open(
@@ -90,8 +103,7 @@ export class Tabs {
       performance.mark(start);
       void tick().then(() => performance.measure(`tab-switch:${id}`, start));
     }
-    this.#activeId = id;
-    this.#lastActive[tab.module] = id;
+    this.#selected[tab.module] = id;
     if (this.#shell.activeModule !== tab.module)
       void this.#shell.openModule(tab.module);
   }
@@ -117,12 +129,10 @@ export class Tabs {
     const rest = this.#tabs.filter((t) => t.id !== id);
     this.#tabs = rest;
     this.#closed = [...this.#closed, toState(tab)].slice(-MAX_CLOSED_TABS);
-    if (this.#lastActive[tab.module] === id)
-      delete this.#lastActive[tab.module];
-    if (this.#activeId === id) {
+    if (this.#selected[tab.module] === id) {
       const next = nearest(rest, index, tab.module);
-      this.#activeId = next?.id ?? null;
-      if (next) this.#lastActive[next.module] = next.id;
+      if (next) this.#selected[tab.module] = next.id;
+      else delete this.#selected[tab.module];
     }
     return true;
   }
@@ -137,7 +147,7 @@ export class Tabs {
 
   /** Moves the active tab one place left (-1) or right (+1). */
   moveActive(delta: -1 | 1): void {
-    const id = this.#activeId;
+    const id = this.#active?.id;
     if (!id) return;
     const index = this.#tabs.findIndex((t) => t.id === id);
     this.move(id, index + delta);
@@ -178,38 +188,15 @@ export class Tabs {
     this.#closed = saved.closedTabs.filter(known).slice(-MAX_CLOSED_TABS);
     const active =
       this.#tabs.find((t) => t.id === saved.activeTab) ?? this.#tabs[0];
-    this.#activeId = active?.id ?? null;
-    if (active) this.#lastActive[active.module] = active.id;
+    this.#selected = active ? { [active.module]: active.id } : {};
   }
 
   snapshot(): Pick<UiState, "tabs" | "activeTab" | "closedTabs"> {
     return {
       tabs: this.#tabs.map(toState),
-      activeTab: this.#activeId,
+      activeTab: this.#active?.id ?? null,
       closedTabs: this.#closed,
     };
-  }
-
-  /**
-   * Keeps the active tab in step with the rail: showing a module makes its
-   * last tab active, or none. Call from inside an effect's owner.
-   */
-  followShell(): void {
-    $effect(() => {
-      const module = this.#shell.activeModule;
-      untrack(() => {
-        if (!module || this.active?.module === module) return;
-        this.#activeId = this.#lastIn(module)?.id ?? null;
-      });
-    });
-  }
-
-  #lastIn(module: string): TabRecord | undefined {
-    const id = this.#lastActive[module];
-    return (
-      this.#tabs.find((t) => t.id === id) ??
-      this.#tabs.findLast((t) => t.module === module)
-    );
   }
 }
 

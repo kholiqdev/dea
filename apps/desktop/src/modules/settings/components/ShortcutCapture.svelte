@@ -1,7 +1,6 @@
 <!-- Records the next chord pressed. The shell's shortcuts stay quiet while
      it has focus (data-capture-keys). Escape cancels. -->
 <script lang="ts">
-  import { onMount } from "svelte";
   import {
     chordFromEvent,
     chordToString,
@@ -23,9 +22,10 @@
   } = $props();
 
   const platform = currentPlatform();
-  let input: HTMLInputElement;
 
-  onMount(() => input.focus());
+  function focusOnMount(input: HTMLInputElement): void {
+    input.focus();
+  }
 
   function onkeydown(e: KeyboardEvent): void {
     // Plain Tab still moves focus to the buttons next to the field.
@@ -52,7 +52,7 @@
 </script>
 
 <input
-  bind:this={input}
+  {@attach focusOnMount}
   class="capture"
   type="text"
   readonly

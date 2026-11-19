@@ -5,24 +5,29 @@ import { settings } from "$lib/settings/settings.svelte";
 import { fakeIpc } from "./shell/test-support";
 import { start } from "./start";
 
-// The OS theme, which the test can switch.
+// The OS theme, which the test can switch. Each query is a real
+// EventTarget, as a MediaQueryList is in a browser.
 let osDark = false;
-const listeners = new Set<(e: { matches: boolean }) => void>();
-vi.stubGlobal("matchMedia", (query: string) => ({
-  get matches() {
-    return query === "(prefers-color-scheme: dark)" ? osDark : false;
-  },
-  media: query,
-  addEventListener: (_: string, fn: (e: { matches: boolean }) => void) => {
-    if (query === "(prefers-color-scheme: dark)") listeners.add(fn);
-  },
-  removeEventListener: (_: string, fn: (e: { matches: boolean }) => void) =>
-    listeners.delete(fn),
-}));
+class FakeMediaQueryList extends EventTarget {
+  constructor(readonly media: string) {
+    super();
+  }
+  get matches(): boolean {
+    return this.media === "(prefers-color-scheme: dark)" ? osDark : false;
+  }
+}
+const queries: FakeMediaQueryList[] = [];
+vi.stubGlobal("matchMedia", (query: string) => {
+  const q = new FakeMediaQueryList(query);
+  queries.push(q);
+  return q;
+});
 
 function switchOs(dark: boolean): void {
   osDark = dark;
-  for (const fn of listeners) fn({ matches: dark });
+  for (const q of queries)
+    if (q.media === "(prefers-color-scheme: dark)")
+      q.dispatchEvent(new Event("change"));
   flushSync();
 }
 

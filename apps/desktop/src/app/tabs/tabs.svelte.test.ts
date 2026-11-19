@@ -146,7 +146,7 @@ test("tabs can be reordered", () => {
   expect(tabs.tabs.map((t) => t.id)).toEqual([a, b, c]);
 });
 
-test("open tabs are saved and restored", () => {
+test("open tabs are saved and restored", async () => {
   const first = setup();
   const a = first.tabs.open("requests.request", "A", { url: "/a" });
   first.tabs.open("database.query", "Q", null);
@@ -156,6 +156,7 @@ test("open tabs are saved and restored", () => {
 
   const second = setup();
   second.tabs.restore(saved(snapshot));
+  await second.shell.openModule("requests");
   expect(second.tabs.tabs.map((t) => [t.title, t.module, t.params])).toEqual([
     ["A", "requests", { url: "/a" }],
     ["Q", "database", null],
@@ -163,8 +164,8 @@ test("open tabs are saved and restored", () => {
   expect(second.tabs.active?.id).toBe(a);
 });
 
-test("restored_tabs_of_unknown_types_are_dropped", () => {
-  const { tabs } = setup();
+test("restored_tabs_of_unknown_types_are_dropped", async () => {
+  const { tabs, shell } = setup();
   const tab = (id: string, tabType: string) => ({
     id,
     tabType,
@@ -183,6 +184,7 @@ test("restored_tabs_of_unknown_types_are_dropped", () => {
     }),
   );
   expect(tabs.tabs.map((t) => t.id)).toEqual(["1", "3"]);
+  await shell.openModule("requests");
   expect(tabs.active?.id).toBe("1");
   tabs.reopenLast();
   expect(tabs.active?.id).toBe("5");
@@ -194,14 +196,14 @@ test("rail navigation shows the module's last tab", async () => {
   const { tabs, shell } = setup();
   const q = tabs.open("database.query", "Q", null);
   const a = tabs.open("requests.request", "A", null);
-  const stop = $effect.root(() => tabs.followShell());
+  // No effect keeps the two in step: the active tab is derived from the
+  // shell's module.
   await shell.openModule("database");
   flushSync();
   expect(tabs.active?.id).toBe(q);
   await shell.openModule("requests");
   flushSync();
   expect(tabs.active?.id).toBe(a);
-  stop();
 });
 
 test("a tab opened without params is saved with null params", () => {

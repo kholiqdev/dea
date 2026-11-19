@@ -31,10 +31,8 @@
     ctx.tabs.close(tab.id).catch((e: unknown) => toasts.show(errorMessage(e)));
   }
 
-  let bar = $state<HTMLElement>();
-
-  function focusTab(id: string): void {
-    bar
+  function focusTab(list: Element | null, id: string): void {
+    list
       ?.querySelector<HTMLElement>(
         `[data-tab="${CSS.escape(id)}"] [role="tab"]`,
       )
@@ -52,7 +50,10 @@
     if (!target) return;
     e.preventDefault();
     ctx.tabs.activate(target.id);
-    focusTab(target.id);
+    focusTab(
+      (e.currentTarget as Element).closest('[role="tablist"]'),
+      target.id,
+    );
   }
 
   // Reordering by drag: pointer events, no library. The pointer is only
@@ -77,9 +78,9 @@
     dragging = press.id;
   }
 
-  function dropIndex(x: number, id: string): number {
+  function dropIndex(list: Element | null, x: number, id: string): number {
     const others = [
-      ...(bar?.querySelectorAll<HTMLElement>("[data-tab]") ?? []),
+      ...(list?.querySelectorAll<HTMLElement>("[data-tab]") ?? []),
     ].filter((el) => el.dataset.tab !== id);
     const index = others.findIndex((el) => {
       const r = el.getBoundingClientRect();
@@ -88,37 +89,34 @@
     return index < 0 ? others.length : index;
   }
 
-  // The bar scrolls sideways when the tabs do not fit; keep the active tab
-  // in view, and let a vertical wheel scroll it.
-  $effect(() => {
-    const id = activeId;
-    if (!id || !bar) return;
-    bar
-      .querySelector<HTMLElement>(`[data-tab="${CSS.escape(id)}"]`)
-      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  });
+  // The bar scrolls sideways when the tabs do not fit: the active tab is
+  // kept in view (an attachment on it), and a vertical wheel scrolls it.
+  function keepInView(tab: HTMLElement): void {
+    tab.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }
 
   function onwheel(e: WheelEvent): void {
-    if (!bar || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-    bar.scrollLeft += e.deltaY;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    (e.currentTarget as HTMLElement).scrollLeft += e.deltaY;
   }
 
   function onpointerup(e: PointerEvent): void {
     if (press?.dragging)
-      ctx.tabs.move(press.id, dropIndex(e.clientX, press.id));
+      ctx.tabs.move(
+        press.id,
+        dropIndex(
+          (e.currentTarget as Element).parentElement,
+          e.clientX,
+          press.id,
+        ),
+      );
     press = null;
     dragging = null;
   }
 </script>
 
 {#if tabs.length > 0}
-  <div
-    class="tabbar"
-    role="tablist"
-    aria-label="Open tabs"
-    bind:this={bar}
-    {onwheel}
-  >
+  <div class="tabbar" role="tablist" aria-label="Open tabs" {onwheel}>
     {#each tabs as tab, index (tab.id)}
       {@const Icon = iconOf(tab)}
       {@const active = tab.id === activeId}
@@ -128,6 +126,7 @@
         data-active={active}
         data-dragging={dragging === tab.id}
         role="presentation"
+        {@attach active && keepInView}
         onpointerdown={(e) => onpointerdown(e, tab)}
         {onpointermove}
         {onpointerup}
@@ -145,8 +144,7 @@
           <span class="title">{tab.title}</span>
           {#if tab.environment}
             <span
-              class="tab-env"
-              class:env-prod={tab.environment.production}
+              class={["tab-env", { "env-prod": tab.environment.production }]}
               data-env={tab.environment.name}>{tab.environment.name}</span
             >
           {/if}
