@@ -469,3 +469,29 @@ fn production_is_read_from_the_project_not_the_caller() {
     ));
     assert!(vault.secret(&project, "local", "t").unwrap().is_none());
 }
+
+#[test]
+fn any_production_environment_of_the_name_makes_it_production() {
+    let dir = tempfile::tempdir().unwrap();
+    let (auth, _) = FakeAuthenticator::native(vec![]);
+    let (vault, _) = service(
+        dir.path(),
+        auth,
+        FakePrompter::answering(&[]),
+        ManualClock::new(),
+    );
+    vault.unlock("unlock the Vault").unwrap();
+    let mut project = project();
+    // Two files with the same name, as after a merge: the first is not
+    // production, the second is.
+    let mut second = project.environments[1].clone();
+    second.production = true;
+    project.environments.push(second);
+    assert!(matches!(
+        vault.secret(&project, "staging", "t"),
+        Err(UseError::ReauthRequired)
+    ));
+    assert!(dea_engine::vault::is_production(&project, "staging"));
+    assert!(!dea_engine::vault::is_production(&project, "local"));
+    assert!(dea_engine::vault::is_production(&project, "nowhere"));
+}

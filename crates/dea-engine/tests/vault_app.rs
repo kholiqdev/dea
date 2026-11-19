@@ -392,3 +392,39 @@ fn the_unlock_method_follows_the_os() {
         assert_eq!(method, UnlockMethod::VaultPassword);
     }
 }
+
+#[test]
+fn a_secret_declared_twice_is_one_row_per_environment() {
+    let (vault, _dir, _) = unlocked();
+    let mut p = project();
+    // As after a git merge: the same name twice in vault.yaml.
+    p.vault.secrets = vec![
+        SecretSpec {
+            description: Some("first".into()),
+            ..spec("access_token", SecretKind::Token)
+        },
+        SecretSpec {
+            description: Some("second".into()),
+            ..spec("access_token", SecretKind::Password)
+        },
+    ];
+
+    let rows = vault.rows(&p);
+    let order: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|r| (r.environment.as_str(), r.name.as_str()))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            ("local", "access_token"),
+            ("production", "access_token"),
+            ("staging", "access_token"),
+        ]
+    );
+    // The first declaration wins.
+    for row in &rows {
+        assert_eq!(row.kind, SecretKind::Token, "{row:?}");
+        assert_eq!(row.description.as_deref(), Some("first"), "{row:?}");
+    }
+}

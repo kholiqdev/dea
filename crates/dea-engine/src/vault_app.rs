@@ -139,14 +139,21 @@ fn rfc3339(time: OffsetDateTime) -> Option<String> {
 
 impl VaultService {
     /// The secrets of `project` in every environment, sorted by
-    /// environment and then name. Works while locked: no value is read.
+    /// environment and then name, one row each. A name declared twice in
+    /// `vault.yaml`, as after a merge, takes its first declaration. Works
+    /// while locked: no value is read.
     pub fn rows(&self, project: &Project) -> Vec<SecretRow> {
         let mut rows: Vec<SecretRow> = self
             .statuses(project)
             .into_iter()
             .map(SecretRow::from_status)
             .collect();
+        // A stable sort keeps the declarations in file order, so the first
+        // one stays.
         rows.sort_by(|a, b| (&a.environment, &a.name).cmp(&(&b.environment, &b.name)));
+        rows.dedup_by(|later, first| {
+            later.environment == first.environment && later.name == first.name
+        });
         rows
     }
 }
