@@ -9,6 +9,7 @@ mod migrate;
 mod model;
 mod names;
 mod request;
+mod request_resolve;
 mod requests;
 mod resolve;
 mod schema;
@@ -32,6 +33,11 @@ pub use names::{check_relative_path, is_production_name, safe_file_stem, unique_
 pub use request::{
     ApiKeyLocation, Auth, Body, ClientCertificate, FolderFile, FormField, KeyValue, RawLanguage,
     RequestFile, SendOptions, TlsSettings,
+};
+pub use request_resolve::{
+    DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS, EffectiveOptions, FieldValue, RequestContext,
+    RequestError, Resolved, ResolvedBody, ResolvedClientCertificate, ResolvedField,
+    ResolvedRequest, ResolvedTls, resolve_request,
 };
 pub use requests::{
     Folder, LoadedRequests, RequestEntry, RequestLocation, RequestTree, TreeItem, load_requests,
