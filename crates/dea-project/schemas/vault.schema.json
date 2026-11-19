@@ -1,6 +1,7 @@
 {
   "$defs": {
     "SecretKind": {
+      "description": "What a secret is, which decides how the Vault presents it.",
       "enum": [
         "token",
         "password",
@@ -12,6 +13,7 @@
     },
     "SecretSpec": {
       "additionalProperties": false,
+      "description": "One secret a project needs: its name and kind, never its value.",
       "properties": {
         "description": {
           "type": [

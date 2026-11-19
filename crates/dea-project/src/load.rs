@@ -186,7 +186,7 @@ pub(crate) fn parse_environment(
     }
 }
 
-fn parse_vault(text: &str, read_only: bool) -> Result<VaultManifest, FileError> {
+pub(crate) fn parse_vault(text: &str, read_only: bool) -> Result<VaultManifest, FileError> {
     let rel = Path::new(VAULT);
     if read_only {
         parse::<any_version::VaultFile>(rel, text).map(VaultManifest::from)
