@@ -5,6 +5,14 @@ export const manifest: ModuleManifest = {
   title: "Welcome",
   scope: "app",
   view: () => import("./WelcomeView.svelte"),
+  tabTypes: [
+    {
+      id: "project.environments",
+      title: "Environments",
+      icon: "layers",
+      view: () => import("./EnvironmentsTab.svelte"),
+    },
+  ],
   statusItems: [
     {
       id: "project.environment",
@@ -15,9 +23,30 @@ export const manifest: ModuleManifest = {
   ],
   commands: [
     {
+      id: "project.editEnvironments",
+      title: "Edit environments",
+      action: { type: "intent", intent: "project.editEnvironments" },
+    },
+    {
+      id: "project.saveEnvironments",
+      title: "Save environments",
+      action: { type: "intent", intent: "project.saveEnvironments" },
+    },
+    {
       id: "project.open",
       title: "Show Welcome",
       action: { type: "openModule", module: "project" },
+    },
+  ],
+  shortcuts: [{ command: "project.saveEnvironments", chord: "Mod+S" }],
+  intents: [
+    {
+      intent: "project.editEnvironments",
+      handler: () => import("./intents/edit-environments"),
+    },
+    {
+      intent: "project.saveEnvironments",
+      handler: () => import("./intents/save-environments"),
     },
   ],
 };

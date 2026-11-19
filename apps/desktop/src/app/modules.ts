@@ -5,6 +5,7 @@ import type { Component } from "svelte";
 import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
 import Database from "@lucide/svelte/icons/database";
 import KeyRound from "@lucide/svelte/icons/key-round";
+import Layers from "@lucide/svelte/icons/layers";
 import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
 import Smartphone from "@lucide/svelte/icons/smartphone";
 import SquareTerminal from "@lucide/svelte/icons/square-terminal";
@@ -39,6 +40,7 @@ const ICONS: Record<string, Icon> = {
   "square-terminal": SquareTerminal,
   smartphone: Smartphone,
   "key-round": KeyRound,
+  layers: Layers,
   "sliders-horizontal": SlidersHorizontal,
 };
 

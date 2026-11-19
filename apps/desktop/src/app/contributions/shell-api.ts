@@ -18,6 +18,10 @@ export interface ShellApi {
     params: unknown,
     opts?: OpenTabOptions,
   ): string;
+  /** The id of an open tab of `tabType`, if there is one. */
+  findTab(tabType: string): string | undefined;
+  /** Shows an open tab; false when no tab has that id. */
+  activateTab(id: string): boolean;
   /** Closes a tab, asking first when it has unsaved changes. */
   closeTab(id: string): Promise<boolean>;
   setTabDirty(id: string, dirty: boolean): void;
