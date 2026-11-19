@@ -37,11 +37,14 @@ describe("the shell", () => {
     expect(await projectName()).toBe("shell-api");
     for (const [id, title] of [
       ...MAIN,
-      ["vault", "Vault"],
+      ["vault", "Vault is locked"],
       ["settings", "Appearance"],
     ]) {
       await $(`button[data-module="${id}"]`).click();
-      await expect(mainHeading(title)).toBeDisplayed();
+      // The Vault has no h1 while locked: it shows an h2 instead.
+      await expect(
+        id === "vault" ? $("main").$(`h2=${title}`) : mainHeading(title),
+      ).toBeDisplayed();
       const ms = await lastMeasure(`module-open:${id}`);
       expect(ms).toBeGreaterThanOrEqual(0);
       expect(ms).toBeLessThanOrEqual(100); // F1-FON-01 #2
