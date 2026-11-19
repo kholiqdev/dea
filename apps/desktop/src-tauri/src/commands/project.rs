@@ -240,22 +240,38 @@ pub async fn save_environment(
     environment: Environment,
 ) -> Result<ProjectInfo, IpcError> {
     let session = writable(&app, window.label())?;
-    let vault = app.state::<AppState>().vault.existing();
+    let opened = app.state::<AppState>().vault.existing();
     spawn_blocking(move || {
         let project = load_project(&session.root)?.project;
         // One refusal is enough when a rename also turns production off.
         if production_turned_off(&project, previous.as_deref(), &environment) {
             require_production_open(
-                vault.as_deref(),
+                opened.as_deref(),
                 "turning production off needs authentication first",
             )?;
         } else if renames_production(&project, previous.as_deref(), &environment) {
             require_production_open(
-                vault.as_deref(),
+                opened.as_deref(),
                 "renaming a production environment needs authentication first",
             )?;
         }
+        // A rename takes the environment's Vault values along, so none stay
+        // behind under the freed name (opening the Vault reaches the
+        // keychain, so only a rename does it).
+        let rename = renamed(previous.as_deref(), &environment);
+        let vault = match rename {
+            Some((from, to)) => {
+                let vault = app.state::<AppState>().vault.get_or_open(&app)?;
+                let has_values = vault.has_values(&project, from) || vault.has_values(&project, to);
+                refuse_locked_values(has_values, vault.status().locked, RENAME_LOCKED)?;
+                Some(vault)
+            }
+            None => None,
+        };
         dea_project::save_environment(&project, previous.as_deref(), &environment)?;
+        if let (Some(vault), Some((from, to))) = (vault, rename) {
+            vault.move_environment(&project, from, to)?;
+        }
         info_of(&session)
     })
     .await?
@@ -300,6 +316,35 @@ fn marked_production(project: &Project, name: &str) -> bool {
         .any(|e| e.name == name && e.production)
 }
 
+/// Why a rename waits for the Vault: the environment's values move with it.
+const RENAME_LOCKED: &str = "unlock the Vault to rename an environment that has secrets";
+/// Why a delete waits for the Vault: the environment's values go with it.
+const DELETE_LOCKED: &str = "unlock the Vault to delete an environment that has secrets";
+
+/// The old and new name when saving `environment` over `previous` renames
+/// an environment on disk.
+fn renamed<'a>(
+    previous: Option<&'a str>,
+    environment: &'a Environment,
+) -> Option<(&'a str, &'a str)> {
+    previous
+        .filter(|previous| *previous != environment.name)
+        .map(|previous| (previous, environment.name.as_str()))
+}
+
+/// Refuses with `vaultLocked` and `message` when the Vault is locked and
+/// the environment has values to move or remove. Checked before the
+/// project is written, so a refusal changes nothing.
+fn refuse_locked_values(has_values: bool, locked: bool, message: &str) -> Result<(), IpcError> {
+    if has_values && locked {
+        return Err(IpcError {
+            kind: IpcErrorKind::VaultLocked,
+            message: message.into(),
+        });
+    }
+    Ok(())
+}
+
 /// Refuses with `reauthRequired` and `message` unless the production window
 /// is open.
 fn require_production_open(vault: Option<&VaultService>, message: &str) -> Result<(), IpcError> {
@@ -319,16 +364,25 @@ pub async fn delete_environment(
     name: String,
 ) -> Result<ProjectInfo, IpcError> {
     let session = writable(&app, window.label())?;
-    let vault = app.state::<AppState>().vault.existing();
+    let opened = app.state::<AppState>().vault.existing();
     spawn_blocking(move || {
         let project = load_project(&session.root)?.project;
         if deletes_production(&project, &name) {
             require_production_open(
-                vault.as_deref(),
+                opened.as_deref(),
                 "deleting a production environment needs authentication first",
             )?;
         }
+        // The environment's Vault values go with it, so none stay behind
+        // under the freed name.
+        let vault = app.state::<AppState>().vault.get_or_open(&app)?;
+        refuse_locked_values(
+            vault.has_values(&project, &name),
+            vault.status().locked,
+            DELETE_LOCKED,
+        )?;
         dea_project::delete_environment(&project, &name)?;
+        vault.remove_environment(&project, &name)?;
         info_of(&session)
     })
     .await?
@@ -507,6 +561,42 @@ mod tests {
             &env("production", true)
         ));
         assert!(!renames_production(&project, None, &env("live", true)));
+    }
+
+    #[test]
+    fn a_rename_is_a_new_name_for_an_environment_on_disk() {
+        let env = |name: &str| Environment {
+            name: name.into(),
+            production: false,
+            color: None,
+            variables: Vec::new(),
+        };
+        assert_eq!(
+            renamed(Some("production"), &env("prod")),
+            Some(("production", "prod"))
+        );
+        assert_eq!(renamed(Some("staging"), &env("staging")), None);
+        // A new environment frees no name.
+        assert_eq!(renamed(None, &env("prod")), None);
+    }
+
+    #[test]
+    fn values_to_move_or_remove_need_an_unlocked_vault() {
+        let refused = refuse_locked_values(true, true, RENAME_LOCKED).unwrap_err();
+        assert_eq!(refused.kind, IpcErrorKind::VaultLocked);
+        assert_eq!(
+            refused.message,
+            "unlock the Vault to rename an environment that has secrets"
+        );
+        assert_eq!(
+            refuse_locked_values(true, true, DELETE_LOCKED)
+                .unwrap_err()
+                .message,
+            "unlock the Vault to delete an environment that has secrets"
+        );
+        // Unlocked, or nothing stored: the change goes ahead.
+        assert!(refuse_locked_values(true, false, RENAME_LOCKED).is_ok());
+        assert!(refuse_locked_values(false, true, DELETE_LOCKED).is_ok());
     }
 
     #[test]
