@@ -3,7 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { flushSync } from "svelte";
 import { expect, test, vi } from "vitest";
 import type { UiState } from "$lib/ipc/bindings/UiState";
-import { fakeIpc, projectInfo, type IpcLog } from "../shell/test-support";
+import { registry } from "../contributions/registry.svelte";
+import {
+  fakeIpc,
+  projectInfo,
+  railModule,
+  view,
+  type IpcLog,
+} from "../shell/test-support";
 import { shell } from "../shell/shell-state.svelte";
 import { start } from "../start";
 import { tabs } from "../tabs/tabs.svelte";
@@ -100,8 +107,17 @@ test("clearing resets tabs and layout and the old state is not saved again", asy
 
 // Uses the window the test above started.
 test("clearing waits while a tab has unsaved changes", async () => {
-  const id = tabs.open("project.environments", "Environments", null);
+  // A tab whose view leaves its dirty mark alone.
+  registry.register(
+    railModule("probe", 9, {
+      tabTypes: [
+        { id: "probe.tab", title: "Probe", icon: "x", view: view("probe") },
+      ],
+    }),
+  );
+  const id = tabs.open("probe.tab", "Probe", null);
   tabs.setDirty(id, true);
+  expect(await screen.findByText("probe")).toBeInTheDocument();
   const clears = () => log.calls.filter((c) => c.cmd === "clear_local_data");
   const before = clears().length;
 

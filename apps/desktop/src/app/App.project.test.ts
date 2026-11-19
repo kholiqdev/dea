@@ -2,6 +2,7 @@ import { screen, within } from "@testing-library/svelte";
 import { expect, test } from "vitest";
 import { fakeIpc, projectInfo } from "./shell/test-support";
 import { start } from "./start";
+import { tabs } from "./tabs/tabs.svelte";
 
 test("a window with a project shows its modules and the saved environment", async () => {
   const log = fakeIpc({
@@ -49,4 +50,13 @@ test("a window with a project shows its modules and the saved environment", asyn
   expect(
     await screen.findByRole("heading", { name: "Requests" }),
   ).toBeInTheDocument();
+});
+
+// Uses the window the test above started.
+test("the environment editor opens in a tab and settles", async () => {
+  tabs.open("project.environments", "Environments", null);
+  expect(
+    await screen.findByRole("navigation", { name: "Environments" }),
+  ).toBeInTheDocument();
+  expect(tabs.active?.dirty).toBe(false);
 });

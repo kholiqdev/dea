@@ -154,6 +154,9 @@ export class Tabs {
   }
 
   setDirty(id: string, dirty: boolean): void {
+    // No new tab object when nothing changes: views report their state on
+    // every change and would otherwise never settle.
+    if (this.#tabs.find((t) => t.id === id)?.dirty === dirty) return;
     this.#tabs = this.#tabs.map((t) => (t.id === id ? { ...t, dirty } : t));
   }
 
