@@ -20,5 +20,20 @@ export const manifest: ModuleManifest = {
       title: "Open Vault",
       action: { type: "openModule", module: "vault" },
     },
+    {
+      id: "vault.lock",
+      title: "Lock Vault",
+      action: { type: "intent", intent: "vault.lock" },
+    },
+  ],
+  shortcuts: [{ command: "vault.lock", chord: "Mod+L" }],
+  intents: [{ intent: "vault.lock", handler: () => import("./intents/lock") }],
+  searchSources: [
+    {
+      id: "vault.secrets",
+      group: "Secret names",
+      order: 70,
+      source: () => import("./search"),
+    },
   ],
 };

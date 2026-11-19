@@ -32,11 +32,12 @@
     inEnvironment.filter((r) => filter === "all" || r.kind === filter),
   );
   // The choice is the row's place, so a reload keeps it and another
-  // environment starts with none.
-  let choice = $state<{ environment: string; name: string } | null>(null);
+  // environment starts with none. The palette sets it too.
   const selected = $derived(
     inEnvironment.find(
-      (r) => r.environment === choice?.environment && r.name === choice.name,
+      (r) =>
+        r.environment === secrets.choice?.environment &&
+        r.name === secrets.choice.name,
     ) ?? null,
   );
   let deleting = $state<SecretRow | null>(null);
@@ -58,7 +59,7 @@
   });
 
   function pick(row: SecretRow): void {
-    choice = { environment: row.environment, name: row.name };
+    secrets.choice = { environment: row.environment, name: row.name };
   }
 
   function startAdd(row?: SecretRow): void {
@@ -86,7 +87,7 @@
     addSecret.close();
     project.refresh(updated);
     secrets.chosen = env;
-    choice = { environment: env, name };
+    secrets.choice = { environment: env, name };
     secrets.load().catch((e: unknown) => shellApi().toast(errorMessage(e)));
   }
 
