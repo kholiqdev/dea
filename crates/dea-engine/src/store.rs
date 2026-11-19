@@ -178,6 +178,23 @@ pub struct TabState {
     /// Whatever the tab type needs to open the tab again.
     #[cfg_attr(feature = "ts", ts(type = "unknown"))]
     pub params: serde_json::Value,
+    /// The environment the tab sends with, when it keeps its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub environment: Option<TabEnvironment>,
+}
+
+/// The environment of a tab, kept so a production tab is marked again
+/// after a restart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub struct TabEnvironment {
+    pub name: String,
+    pub production: bool,
 }
 
 /// Why settings or UI state could not be saved.

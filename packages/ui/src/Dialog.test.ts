@@ -37,3 +37,16 @@ test("focus goes back to the trigger when an action closes it", async () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(trigger).toHaveFocus();
 });
+
+test("the rest of the page is inert while the dialog is open", async () => {
+  render(DialogHost);
+  const outside = screen.getByRole("button", { name: "Outside" });
+  await userEvent.click(screen.getByRole("button", { name: "Open" }));
+  expect(outside).toHaveAttribute("inert");
+  expect(screen.getByRole("dialog")).not.toHaveAttribute("inert");
+  expect(screen.getByRole("dialog").closest("[inert]")).toBeNull();
+
+  await userEvent.keyboard("{Escape}");
+  expect(outside).not.toHaveAttribute("inert");
+  expect(screen.getByRole("button", { name: "Open" })).toHaveFocus();
+});

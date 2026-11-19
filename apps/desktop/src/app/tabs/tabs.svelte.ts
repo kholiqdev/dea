@@ -210,6 +210,7 @@ function toState(t: TabRecord): TabState {
     tabType: t.tabType,
     title: t.title,
     params: t.params ?? null,
+    ...(t.environment ? { environment: t.environment } : {}),
   };
 }
 

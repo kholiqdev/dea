@@ -213,6 +213,27 @@ test("a tab opened without params is saved with null params", () => {
   expect(tabs.snapshot().tabs[0]?.params).toBeNull();
 });
 
+test("a production tab keeps its marker after a restart", () => {
+  const first = setup();
+  const production = { name: "production", production: true };
+  first.tabs.open("requests.request", "Charge", null, {
+    environment: production,
+  });
+  first.tabs.open("requests.request", "Plain", null);
+  const snapshot = first.tabs.snapshot();
+  expect(snapshot.tabs.map((t) => t.environment)).toEqual([
+    production,
+    undefined,
+  ]);
+
+  const second = setup();
+  second.tabs.restore(saved(snapshot));
+  expect(second.tabs.tabs.map((t) => t.environment)).toEqual([
+    production,
+    undefined,
+  ]);
+});
+
 test("marking a tab dirty again changes nothing", () => {
   const { tabs } = setup();
   const id = tabs.open("requests.request", "A", null);

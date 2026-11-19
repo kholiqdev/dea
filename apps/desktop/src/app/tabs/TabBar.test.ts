@@ -321,3 +321,25 @@ test("the active tab is scrolled into view", () => {
     else delete (Element.prototype as Partial<Element>).scrollIntoView;
   }
 });
+
+test("closing a tab moves focus to the next tab, then to the work area", async () => {
+  const { tabs } = setup();
+  tabs.open("requests.request", "A", null);
+  const b = tabs.open("requests.request", "B", null);
+  tabs.open("requests.request", "C", null);
+  tabs.activate(b);
+  flushSync();
+
+  await userEvent.click(screen.getByRole("button", { name: "Close B" }));
+  await waitFor(() =>
+    expect(tabs.tabs.map((t) => t.title)).toEqual(["A", "C"]),
+  );
+  const active = within(bar()).getByRole("tab", { selected: true });
+  expect(active).toHaveTextContent(tabs.active?.title ?? "");
+  expect(active).toHaveFocus();
+
+  await userEvent.keyboard("{Control>}w{/Control}");
+  await userEvent.keyboard("{Control>}w{/Control}");
+  await waitFor(() => expect(tabs.tabs).toHaveLength(0));
+  expect(screen.getByRole("main")).toHaveFocus();
+});

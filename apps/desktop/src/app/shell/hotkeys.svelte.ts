@@ -62,6 +62,8 @@ export function createHotkeyHandler(
   );
 
   return (e) => {
+    // A dialog has the keyboard to itself until it closes.
+    if (document.querySelector('[aria-modal="true"]')) return;
     // A shortcut recorder, such as the one in Settings, gets every key.
     if (e.target instanceof Element && e.target.closest("[data-capture-keys]"))
       return;
