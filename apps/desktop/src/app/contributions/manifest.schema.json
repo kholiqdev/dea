@@ -1,0 +1,242 @@
+{
+  "$ref": "#/definitions/ManifestData",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Action": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "module": {
+              "type": "string"
+            },
+            "type": {
+              "const": "openModule",
+              "type": "string"
+            }
+          },
+          "required": ["type", "module"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "section": {
+              "type": "string"
+            },
+            "type": {
+              "const": "openSettings",
+              "type": "string"
+            }
+          },
+          "required": ["type", "section"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {},
+            "intent": {
+              "type": "string"
+            },
+            "type": {
+              "const": "intent",
+              "type": "string"
+            }
+          },
+          "required": ["type", "intent"],
+          "type": "object"
+        }
+      ],
+      "description": "What running a command does."
+    },
+    "CommandData": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/Action"
+        },
+        "id": {
+          "$ref": "#/definitions/ContributionId"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "title", "action"],
+      "type": "object"
+    },
+    "ContributionId": {
+      "description": "A contribution id: `<module>.<name>`, for example `requests.open`.",
+      "type": "string"
+    },
+    "IntentData": {
+      "additionalProperties": false,
+      "properties": {
+        "intent": {
+          "type": "string"
+        }
+      },
+      "required": ["intent"],
+      "type": "object"
+    },
+    "ManifestData": {
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "items": {
+            "$ref": "#/definitions/CommandData"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The module id, for example `requests`.",
+          "type": "string"
+        },
+        "intents": {
+          "items": {
+            "$ref": "#/definitions/IntentData"
+          },
+          "type": "array"
+        },
+        "panels": {
+          "items": {
+            "$ref": "#/definitions/PanelData"
+          },
+          "type": "array"
+        },
+        "rail": {
+          "$ref": "#/definitions/RailData"
+        },
+        "settings": {
+          "items": {
+            "$ref": "#/definitions/SettingsSectionData"
+          },
+          "type": "array"
+        },
+        "shortcuts": {
+          "items": {
+            "$ref": "#/definitions/ShortcutData"
+          },
+          "type": "array"
+        },
+        "statusItems": {
+          "items": {
+            "$ref": "#/definitions/StatusItemData"
+          },
+          "type": "array"
+        },
+        "tabTypes": {
+          "items": {
+            "$ref": "#/definitions/TabTypeData"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "title"],
+      "type": "object"
+    },
+    "PanelData": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ContributionId"
+        },
+        "module": {
+          "description": "The module whose sidebar shows the panel.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "module", "title"],
+      "type": "object"
+    },
+    "RailData": {
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "enum": ["main", "bottom"],
+          "type": "string"
+        },
+        "icon": {
+          "description": "Icon name, mapped to an icon by the shell.",
+          "type": "string"
+        },
+        "order": {
+          "type": "number"
+        }
+      },
+      "required": ["icon", "group", "order"],
+      "type": "object"
+    },
+    "SettingsSectionData": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ContributionId"
+        },
+        "order": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "title", "order"],
+      "type": "object"
+    },
+    "ShortcutData": {
+      "additionalProperties": false,
+      "properties": {
+        "chord": {
+          "description": "A chord such as `Mod+Shift+T`.",
+          "type": "string"
+        },
+        "command": {
+          "$ref": "#/definitions/ContributionId",
+          "description": "The command the chord runs."
+        }
+      },
+      "required": ["command", "chord"],
+      "type": "object"
+    },
+    "StatusItemData": {
+      "additionalProperties": false,
+      "properties": {
+        "align": {
+          "enum": ["start", "end"],
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/definitions/ContributionId"
+        },
+        "order": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "align", "order"],
+      "type": "object"
+    },
+    "TabTypeData": {
+      "additionalProperties": false,
+      "properties": {
+        "icon": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/definitions/ContributionId"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "title", "icon"],
+      "type": "object"
+    }
+  }
+}

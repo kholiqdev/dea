@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "lint": "eslint .",
     "typecheck": "svelte-check --tsconfig ./tsconfig.app.json --fail-on-warnings && tsc -p tsconfig.node.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "schema:manifest": "ts-json-schema-generator --path src/app/contributions/manifest-data.ts --type ManifestData --tsconfig tsconfig.app.json --no-type-check -o src/app/contributions/manifest.schema.json && prettier --write src/app/contributions/manifest.schema.json"
   },
   "dependencies": {
     "@dea/ui": "workspace:*",
@@ -26,6 +27,7 @@
     "jsdom": "^31.0.1",
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.8",
+    "ts-json-schema-generator": "^2.9.0",
     "typescript": "~6.0.3",
     "vite": "^8.3.8",
     "vitest": "^5.1.0"

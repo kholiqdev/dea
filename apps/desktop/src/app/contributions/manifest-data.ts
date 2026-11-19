@@ -1,0 +1,75 @@
+// The data half of a module manifest: everything except the loaders. This
+// is the source of manifest.schema.json, which an external module's
+// manifest must match (F1-FON-18).
+
+/** A contribution id: `<module>.<name>`, for example `requests.open`. */
+export type ContributionId = string;
+
+/** What running a command does. */
+export type Action =
+  | { type: "openModule"; module: string }
+  | { type: "openSettings"; section: string }
+  | { type: "intent"; intent: string; args?: unknown };
+
+export interface RailData {
+  /** Icon name, mapped to an icon by the shell. */
+  icon: string;
+  group: "main" | "bottom";
+  order: number;
+}
+
+export interface TabTypeData {
+  id: ContributionId;
+  title: string;
+  icon: string;
+}
+
+export interface PanelData {
+  id: ContributionId;
+  /** The module whose sidebar shows the panel. */
+  module: string;
+  title: string;
+}
+
+export interface CommandData {
+  id: ContributionId;
+  title: string;
+  action: Action;
+}
+
+export interface ShortcutData {
+  /** The command the chord runs. */
+  command: ContributionId;
+  /** A chord such as `Mod+Shift+T`. */
+  chord: string;
+}
+
+export interface StatusItemData {
+  id: ContributionId;
+  align: "start" | "end";
+  order: number;
+}
+
+export interface SettingsSectionData {
+  id: ContributionId;
+  title: string;
+  order: number;
+}
+
+export interface IntentData {
+  intent: string;
+}
+
+export interface ManifestData {
+  /** The module id, for example `requests`. */
+  id: string;
+  title: string;
+  rail?: RailData;
+  tabTypes?: TabTypeData[];
+  panels?: PanelData[];
+  commands?: CommandData[];
+  shortcuts?: ShortcutData[];
+  statusItems?: StatusItemData[];
+  settings?: SettingsSectionData[];
+  intents?: IntentData[];
+}
