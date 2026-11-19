@@ -1,5 +1,6 @@
 //! Types stored in the project folder. Field order is the order in the file.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use schemars::JsonSchema;
@@ -102,6 +103,9 @@ pub struct Project {
     pub root: PathBuf,
     pub manifest: Manifest,
     pub environments: Vec<Environment>,
+    /// The file each environment was read from, by environment name,
+    /// relative to the root. Empty for a project not read from disk.
+    pub environment_files: BTreeMap<String, PathBuf>,
     pub vault: VaultManifest,
     /// True when the project was written by a newer version of Dea.
     pub read_only: bool,

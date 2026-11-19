@@ -19,6 +19,11 @@ slot: number,
  */
 readOnly: boolean, defaultEnvironment: string | null, environments: Array<Environment>, 
 /**
+ * The file of each environment by name, relative to the root with
+ * forward slashes.
+ */
+environmentFiles: { [key in string]: string }, 
+/**
  * Names of the project's secrets; never their values.
  */
 secretNames: Array<string>, errors: Array<FileErrorInfo>, 

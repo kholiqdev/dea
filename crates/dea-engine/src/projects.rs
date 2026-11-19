@@ -1,5 +1,6 @@
 //! Opening and creating projects, and the list of recent ones.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -67,6 +68,8 @@ pub struct FileErrorInfo {
     pub path: String,
     pub line: Option<u32>,
     pub message: String,
+    /// The file still holds git conflict markers; saving over it is refused.
+    pub merge_conflict: bool,
 }
 
 /// What a window knows about its project.
@@ -88,6 +91,9 @@ pub struct ProjectInfo {
     pub read_only: bool,
     pub default_environment: Option<String>,
     pub environments: Vec<Environment>,
+    /// The file of each environment by name, relative to the root with
+    /// forward slashes.
+    pub environment_files: BTreeMap<String, String>,
     /// Names of the project's secrets; never their values.
     pub secret_names: Vec<String>,
     pub errors: Vec<FileErrorInfo>,
@@ -110,6 +116,11 @@ impl ProjectInfo {
             read_only: p.read_only,
             default_environment: p.manifest.default_environment.clone(),
             environments: p.environments.clone(),
+            environment_files: p
+                .environment_files
+                .iter()
+                .map(|(name, path)| (name.clone(), portable_path(path)))
+                .collect(),
             secret_names: p.vault.secrets.iter().map(|s| s.name.clone()).collect(),
             errors: opened.errors.iter().map(file_error_info).collect(),
             migrated_from: opened
@@ -134,6 +145,7 @@ impl ProjectInfo {
             read_only: true,
             default_environment: None,
             environments: Vec::new(),
+            environment_files: BTreeMap::new(),
             secret_names: Vec::new(),
             errors: Vec::new(),
             migrated_from: None,
@@ -170,6 +182,7 @@ fn file_error_info(e: &FileError) -> FileErrorInfo {
         path: portable_path(&e.path),
         line: e.line.and_then(|l| u32::try_from(l).ok()),
         message: e.message.clone(),
+        merge_conflict: e.merge_conflict,
     }
 }
 

@@ -173,3 +173,54 @@ fn project_info_lists_environments_secrets_and_problems() {
     assert!(missing.missing);
     assert_eq!(missing.name, "nope");
 }
+
+#[test]
+fn project_info_marks_files_with_conflict_markers() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path().join("p");
+    project_at(&root, "p");
+    fs::write(
+        root.join("environments/staging.yaml"),
+        "<<<<<<< HEAD\nname: staging\n=======\nname: stage\n>>>>>>> other\n",
+    )
+    .unwrap();
+    fs::write(root.join("environments/broken.yaml"), "name: [").unwrap();
+    let info = ProjectInfo::new(&open_project(&root).unwrap(), 0);
+    let flags: Vec<_> = info
+        .errors
+        .iter()
+        .map(|e| (e.path.as_str(), e.merge_conflict))
+        .collect();
+    assert!(
+        flags.contains(&("environments/staging.yaml", true)),
+        "{flags:?}"
+    );
+    assert!(
+        flags.contains(&("environments/broken.yaml", false)),
+        "{flags:?}"
+    );
+}
+
+#[test]
+fn project_info_names_the_file_of_each_environment() {
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path().join("p");
+    project_at(&root, "p");
+    fs::write(
+        root.join("environments/Stage Env.yaml"),
+        "name: qa\nproduction: false\n",
+    )
+    .unwrap();
+    let info = ProjectInfo::new(&open_project(&root).unwrap(), 0);
+    assert_eq!(
+        info.environment_files.get("qa").map(String::as_str),
+        Some("environments/Stage Env.yaml")
+    );
+    for env in &info.environments {
+        assert!(
+            info.environment_files.contains_key(&env.name),
+            "{}",
+            env.name
+        );
+    }
+}

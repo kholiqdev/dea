@@ -254,6 +254,7 @@ pub fn project() -> dea_project::Project {
             env("staging", false),
             env("production", true),
         ],
+        environment_files: std::collections::BTreeMap::new(),
         vault: VaultManifest::default(),
         read_only: false,
     }

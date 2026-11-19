@@ -24,6 +24,7 @@ export function info(name: string, root: string): ProjectInfo {
     readOnly: false,
     defaultEnvironment: "local",
     environments: [],
+    environmentFiles: {},
     secretNames: [],
     errors: [],
     migratedFrom: null,

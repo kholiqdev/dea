@@ -7,4 +7,8 @@ export type FileErrorInfo = {
 /**
  * Path relative to the project root, with forward slashes.
  */
-path: string, line: number | null, message: string, };
+path: string, line: number | null, message: string, 
+/**
+ * The file still holds git conflict markers; saving over it is refused.
+ */
+mergeConflict: boolean, };

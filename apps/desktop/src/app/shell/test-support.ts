@@ -108,6 +108,11 @@ export function projectInfo(over: Partial<ProjectInfo> = {}): ProjectInfo {
       { name: "staging", production: false, color: "blue" },
       { name: "production", production: true },
     ],
+    environmentFiles: {
+      local: "environments/local.yaml",
+      staging: "environments/staging.yaml",
+      production: "environments/production.yaml",
+    },
     secretNames: [],
     errors: [],
     migratedFrom: null,
