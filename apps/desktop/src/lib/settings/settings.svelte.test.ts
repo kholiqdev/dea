@@ -75,3 +75,76 @@ test("a refused save keeps the old value and reports why", async () => {
   await settings.update({ appearance: { fontSize: 12 } });
   expect(settings.appearance.fontSize).toBe(12);
 });
+
+/** Listens through a fake that the test can send settings with. */
+async function listening(settings: ReturnType<typeof createSettings>) {
+  let send: (s: Settings) => void = () => {};
+  await settings.listen((handler) => {
+    send = handler;
+    return Promise.resolve(() => {});
+  });
+  return (s: Settings) => send(s);
+}
+
+function withSecurity(autoLockMinutes: number | null): Settings {
+  return {
+    ...structuredClone(DEFAULT_SETTINGS),
+    security: { autoLockMinutes, productionMinutes: 10 },
+  };
+}
+
+test("settings saved in another window reach this one", async () => {
+  const settings = createSettings();
+  await settings.load();
+  const send = await listening(settings);
+  send(withSecurity(30));
+  expect(settings.security.autoLockMinutes).toBe(30);
+});
+
+test("a change never sends back another window's older values", async () => {
+  const settings = createSettings();
+  await settings.load();
+  const send = await listening(settings);
+  // Another window turned auto-lock to 30 minutes.
+  send(withSecurity(30));
+  await settings.update({ appearance: { theme: "dark" } });
+  expect(saved).toHaveLength(1);
+  expect(saved[0]?.security.autoLockMinutes).toBe(30);
+  expect(saved[0]?.appearance.theme).toBe("dark");
+});
+
+test("settings that arrive while a save runs are kept", async () => {
+  const settings = createSettings();
+  await settings.load();
+  const send = await listening(settings);
+  let finish: () => void = () => {};
+  mockIPC((cmd, args) => {
+    if (cmd !== "save_settings") throw new Error(`unexpected ${cmd}`);
+    saved.push((args as { settings: Settings }).settings);
+    return new Promise<null>((resolve) => {
+      finish = () => resolve(null);
+    });
+  });
+  const saving = settings.update({ appearance: { theme: "dark" } });
+  await waitForSave();
+  // Another window saves auto-lock while this save is on its way.
+  send(withSecurity(60));
+  finish();
+  await saving;
+  expect(settings.security.autoLockMinutes).toBe(60);
+  expect(settings.appearance.theme).toBe("dark");
+
+  const next = settings.update({ appearance: { fontSize: 14 } });
+  await waitForSave(2);
+  finish();
+  await next;
+  expect(saved[1]?.security.autoLockMinutes).toBe(60);
+  expect(saved[1]?.appearance).toMatchObject({ theme: "dark", fontSize: 14 });
+});
+
+/** Waits until `count` saves were sent. */
+async function waitForSave(count = 1): Promise<void> {
+  for (let i = 0; i < 50 && saved.length < count; i++)
+    await new Promise((r) => setTimeout(r, 0));
+  expect(saved).toHaveLength(count);
+}

@@ -31,11 +31,21 @@ export async function start(
   setProjectApi(thisProject);
   setVaultApi(thisVault);
 
+  // Every window, Welcome too, follows the Vault and the settings and
+  // answers the Vault's prompts. Each listens before it reads, so a change
+  // made while the window starts is not missed.
   const [, info] = await Promise.all([
-    settings.load(),
+    settings
+      .listen()
+      .catch(() => {})
+      .then(() => settings.load()),
     thisProject.load(),
-    thisVault.load(),
+    thisVault
+      .listen()
+      .catch(() => {})
+      .then(() => thisVault.load()),
   ]);
+  vaultPrompts.listen().catch(() => {});
   registry.setProjectOpen(info !== null);
   // Each window of a project keeps its own layout, tabs and environment.
   const scope = info?.scope ?? NO_PROJECT;
@@ -54,10 +64,7 @@ export async function start(
 
   const app = mount(App, { target, props: { scope, slot } });
   if (isE2e()) exposeE2eApi();
-  // Every window, Welcome too, follows the Vault and answers its prompts.
-  thisVault.listen().catch(() => {});
   thisVault.trackActivity();
-  vaultPrompts.listen().catch(() => {});
   if (info) {
     thisProject.listen().catch(() => {});
     thisProject.recheckOnFocus();
