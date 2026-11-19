@@ -15,6 +15,12 @@ export const manifest: ModuleManifest = {
   ],
   statusItems: [
     {
+      id: "project.watching",
+      align: "start",
+      order: 0,
+      view: () => import("./components/WatchingStatus.svelte"),
+    },
+    {
       id: "project.environment",
       align: "start",
       order: 1,

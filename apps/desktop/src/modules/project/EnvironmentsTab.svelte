@@ -1,18 +1,26 @@
 <!-- The environment editor (F1-FON-06), one tab per window. -->
 <script lang="ts">
   import Copy from "@lucide/svelte/icons/copy";
+  import FileExclamationPoint from "@lucide/svelte/icons/file-exclamation-point";
+  import FileX from "@lucide/svelte/icons/file-x";
+  import Lock from "@lucide/svelte/icons/lock";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Plus from "@lucide/svelte/icons/plus";
+  import { untrack } from "svelte";
   import Button from "@dea/ui/Button.svelte";
+  import FileBanner from "@dea/ui/FileBanner.svelte";
   import { environmentColor, projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
   import { errorMessage } from "$lib/ipc/errors";
   import DeleteEnvironment from "./components/DeleteEnvironment.svelte";
   import EnvironmentInspector from "./components/EnvironmentInspector.svelte";
+  import ProjectProblems from "./components/ProjectProblems.svelte";
   import VariablesTable from "./components/VariablesTable.svelte";
   import {
+    differences,
     environmentsEditor,
     type EnvironmentDraft,
+    type Outside,
   } from "./state/environments.svelte";
 
   let { tab }: { tab: { id: string } } = $props();
@@ -22,7 +30,25 @@
   const selected = $derived(editor.selected);
   const problems = $derived(selected ? editor.problems(selected) : []);
   const readonly = $derived(project.info?.readOnly === true);
+  const newerDea = $derived(readonly && project.info?.missing === false);
+  const fileErrors = $derived(
+    (project.info?.errors ?? []).filter((e) =>
+      e.path.startsWith("environments/"),
+    ),
+  );
   let deleting = $state<EnvironmentDraft | null>(null);
+  let comparing = $state<EnvironmentDraft | null>(null);
+  const compare = $derived(
+    comparing === selected && selected?.outside?.kind === "changed"
+      ? differences(selected.draft, selected.outside.theirs)
+      : null,
+  );
+
+  // Changes from disk arrive as a new ProjectInfo, one per watcher batch.
+  $effect(() => {
+    const info = project.info;
+    if (info) untrack(() => editor.sync(info));
+  });
 
   // The tab bar shows unsaved changes, and a close asks to save them.
   $effect(() => shellApi().setTabDirty(tab.id, editor.dirty));
@@ -30,6 +56,13 @@
 
   function attempt(action: () => Promise<unknown>): void {
     action().catch((e: unknown) => (editor.error = errorMessage(e)));
+  }
+
+  function tag(outside: Outside | null): string | null {
+    if (!outside) return null;
+    if (outside.kind === "changed") return "changed on disk";
+    if (outside.kind === "deleted") return "deleted";
+    return outside.error.mergeConflict ? "merge conflict" : "invalid file";
   }
 
   function focusName(): void {
@@ -65,6 +98,7 @@
         <span class="dot" style:background={environmentColor(d.draft)}></span>
         <span class="label">{d.draft.name}</span>
         {#if d.draft.production}<span class="prod">production</span>{/if}
+        {#if tag(d.outside)}<span class="tag">{tag(d.outside)}</span>{/if}
         {#if d.dirty}<span class="dirty" role="img" aria-label="Unsaved changes"
           ></span>{/if}
         <span class="count">{d.draft.variables?.length ?? 0}</span>
@@ -75,8 +109,75 @@
     >
   </nav>
 
-  {#if selected}
-    <main class="main">
+  <main class="main">
+    {#if newerDea}
+      <FileBanner tone="neutral">
+        {#snippet icon()}<Lock size={16} strokeWidth={1.5} />{/snippet}
+        This project was saved by a newer Dea. It is open read-only so nothing is
+        lost.
+      </FileBanner>
+    {/if}
+    {#if selected?.outside?.kind === "changed"}
+      <FileBanner
+        tone="warning"
+        actions={[
+          {
+            label: "Compare",
+            onclick: () =>
+              (comparing = comparing === selected ? null : selected),
+          },
+          { label: "Keep mine", onclick: () => selected.keepMine() },
+          { label: "Take theirs", onclick: () => selected.takeTheirs() },
+        ]}
+      >
+        {#snippet icon()}<FileExclamationPoint
+            size={16}
+            strokeWidth={1.5}
+          />{/snippet}
+        <code>{selected.file}</code> changed on disk while you were editing it.
+      </FileBanner>
+    {:else if selected?.outside?.kind === "deleted"}
+      <FileBanner
+        tone="warning"
+        actions={[
+          { label: "Save it again", onclick: () => selected.saveAgain() },
+          {
+            label: "Discard changes",
+            variant: "ghost",
+            onclick: () => editor.discard(selected),
+          },
+        ]}
+      >
+        {#snippet icon()}<FileX size={16} strokeWidth={1.5} />{/snippet}
+        <code>{selected.file}</code> was deleted outside Dea. Your changes to it are
+        still here.
+      </FileBanner>
+    {/if}
+    {#if compare}
+      <section class="compare" aria-label="Compare">
+        <h3>Compare</h3>
+        <div class="sides">
+          <div class="side" role="group" aria-label="Mine, not saved">
+            <span class="side-label">Mine, not saved</span>
+            <div class="code">
+              {#each compare as row (row.field)}
+                <div>{row.field}: {row.mine ?? "(none)"}</div>
+              {/each}
+            </div>
+          </div>
+          <div class="side" role="group" aria-label="On disk">
+            <span class="side-label">On disk</span>
+            <div class="code">
+              {#each compare as row (row.field)}
+                <div>{row.field}: {row.theirs ?? "(none)"}</div>
+              {/each}
+            </div>
+          </div>
+        </div>
+      </section>
+    {/if}
+    <ProjectProblems errors={fileErrors} />
+    {#if selected}
       <div class="toolbar">
         <div class="heading">
           <h1>{selected.draft.name}</h1>
@@ -127,8 +228,8 @@
           ondelete={() => (deleting = selected)}
         />
       </div>
-    </main>
-  {/if}
+    {/if}
+  </main>
 </div>
 
 {#if deleting}
@@ -221,6 +322,54 @@
     font: 400 11px/1 var(--font-mono);
     color: var(--negative-text);
     box-shadow: inset 0 0 0 1px var(--negative);
+  }
+
+  .tag {
+    font: 400 12px/16px var(--font-mono);
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  .compare {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    padding: var(--s-4) var(--s-4) 0;
+  }
+
+  h3,
+  .side-label {
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 400;
+    color: var(--text-2);
+  }
+
+  .side-label {
+    color: var(--text-3);
+  }
+
+  .sides {
+    display: flex;
+    gap: var(--s-3);
+  }
+
+  .side {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  .code {
+    padding: var(--s-3) var(--s-4);
+    border-radius: var(--r-card);
+    background: var(--bg-2);
+    box-shadow: inset 0 0 0 1px var(--line);
+    font: 400 12px/20px var(--font-mono);
+    color: var(--text-2);
+    overflow-wrap: anywhere;
   }
 
   .dirty {
