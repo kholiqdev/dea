@@ -264,18 +264,27 @@ fn used_rows(rows: &[KeyValue]) -> impl Iterator<Item = &KeyValue> {
 }
 
 /// A path relative to the project, made absolute. `..` and absolute paths
-/// are refused.
+/// are refused, and so is a path that symbolic links lead out of the
+/// project: a cloned project could otherwise upload `~/.ssh/id_rsa`. A path
+/// that does not exist yet is only checked as written; sending it fails.
 fn project_path(root: &Path, relative: &str) -> Result<PathBuf, RequestError> {
+    let outside = || RequestError::FileOutsideProject(relative.to_string());
     let path = Path::new(relative);
     let inside = path
         .components()
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
         && path.components().any(|c| matches!(c, Component::Normal(_)));
-    if inside {
-        Ok(root.join(path))
-    } else {
-        Err(RequestError::FileOutsideProject(relative.to_string()))
+    if !inside {
+        return Err(outside());
     }
+    let joined = root.join(path);
+    if let (Ok(real_root), Ok(real)) = (root.canonicalize(), joined.canonicalize())
+        && !real.starts_with(&real_root)
+    {
+        return Err(outside());
+    }
+    // The path as written, so a link keeps its own file name.
+    Ok(joined)
 }
 
 fn first_set<T>(values: impl Iterator<Item = Option<T>>) -> Option<T> {
@@ -404,8 +413,8 @@ fn encode(value: &str) -> String {
 /// [`RequestError::NotFound`] when the tree has no such request;
 /// [`RequestError::BrokenFolder`] when a folder around it could not be
 /// read; [`RequestError::FileOutsideProject`] for a body or certificate
-/// path that is absolute or uses `..`; [`RequestError::Resolve`] for a
-/// variable cycle or an unreadable secret.
+/// path that is absolute, uses `..` or leads out through a symbolic link;
+/// [`RequestError::Resolve`] for a variable cycle or an unreadable secret.
 #[allow(clippy::too_many_lines)]
 pub fn resolve_request(
     path: &Path,

@@ -383,6 +383,88 @@ fn body_files_must_stay_in_the_project() {
     }
 }
 
+/// Requests numbered `i` that use `path` as a binary body, a form file and,
+/// through their folder, a CA certificate.
+fn uses_of(i: usize, path: &str) -> Vec<(String, String)> {
+    let request = |body: &str| format!("name: R\nmethod: POST\nurl: http://h\n{body}");
+    vec![
+        (
+            format!("requests/binary/r{i}.yaml"),
+            request(&format!("body:\n  mode: binary\n  file: {path}\n")),
+        ),
+        (
+            format!("requests/form/r{i}.yaml"),
+            request(&format!(
+                "body:\n  mode: formData\n  fields:\n    - name: f\n      file: {path}\n"
+            )),
+        ),
+        (
+            format!("requests/tls{i}/_folder.yaml"),
+            format!("tls:\n  caCertificates:\n    - {path}\n"),
+        ),
+        (format!("requests/tls{i}/r.yaml"), request("")),
+    ]
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_must_stay_in_the_project() {
+    use std::os::unix::fs::symlink;
+
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("id_rsa"), "secret").unwrap();
+    let paths = [
+        "data/escape.bin",
+        "data/out/id_rsa",
+        "data/link.bin",
+        "data/missing.bin",
+    ];
+    let mut files = vec![("data/real.bin".to_string(), "x".to_string())];
+    for (i, path) in paths.iter().enumerate() {
+        files.extend(uses_of(i, path));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(f, t)| (f.as_str(), t.as_str()))
+        .collect();
+    let f = fixture(&files);
+    let root = &f.project.root;
+    // A file and a folder that lead outside, and a link to a file inside.
+    symlink(outside.path().join("id_rsa"), root.join(paths[0])).unwrap();
+    symlink(outside.path(), root.join("data/out")).unwrap();
+    symlink("real.bin", root.join(paths[2])).unwrap();
+
+    let resolve = |i: usize| {
+        [
+            format!("requests/binary/r{i}.yaml"),
+            format!("requests/form/r{i}.yaml"),
+            format!("requests/tls{i}/r.yaml"),
+        ]
+        .map(|path| run_with(&f, &path, Some("staging"), &Vault::new(&[])))
+    };
+    for i in [0, 1] {
+        for result in resolve(i) {
+            assert!(
+                matches!(result, Err(RequestError::FileOutsideProject(_))),
+                "{}: {result:?}",
+                paths[i]
+            );
+        }
+    }
+    // A path that does not exist yet is checked as written; the send
+    // reports it missing.
+    for i in [2, 3] {
+        let expected = root.join(paths[i]);
+        let [binary, form, tls] = resolve(i).map(Result::unwrap);
+        assert!(matches!(binary.body, ResolvedBody::File { path, .. } if path == expected));
+        let ResolvedBody::FormData(fields) = form.body else {
+            panic!("a form body");
+        };
+        assert!(matches!(&fields[0].value, FieldValue::File { path, .. } if *path == expected));
+        assert_eq!(tls.tls.ca_certificates, [expected]);
+    }
+}
+
 #[test]
 fn form_data_and_content_types() {
     let f = fixture(&[
