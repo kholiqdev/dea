@@ -7,7 +7,7 @@
   import ToastStack from "../prompts/ToastStack.svelte";
   import type { Tabs } from "../tabs/tabs.svelte";
   import { setShellContext } from "./context";
-  import { installHotkeys } from "./hotkeys.svelte";
+  import { createHotkeyHandler } from "./hotkeys.svelte";
   import Rail from "./Rail.svelte";
   import type { Shell } from "./shell-state.svelte";
   import Sidebar from "./Sidebar.svelte";
@@ -21,7 +21,7 @@
     tabs,
   }: { registry: Registry; shell: Shell; tabs: Tabs } = $props();
 
-  setShellContext({
+  const ctx = setShellContext({
     get registry() {
       return registry;
     },
@@ -33,18 +33,14 @@
     },
   });
 
-  // Picking a module on the rail shows its last tab.
-  // svelte-ignore state_referenced_locally
-  tabs.followShell();
+  const onHotkey = createHotkeyHandler(ctx, () => settings.shortcuts);
 
   const module = $derived(
     shell.activeModule ? registry.module(shell.activeModule) : undefined,
   );
-
-  $effect(() =>
-    installHotkeys({ registry, shell, overrides: () => settings.shortcuts }),
-  );
 </script>
+
+<svelte:window onkeydowncapture={onHotkey} />
 
 <div class="app">
   <TitleBar />

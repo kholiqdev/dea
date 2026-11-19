@@ -47,7 +47,7 @@
   </button>
 {/snippet}
 
-<nav class="rail" class:wide={expanded} aria-label="Modules">
+<nav class={["rail", { wide: expanded }]} aria-label="Modules">
   {#if expanded}
     <div class="head">
       <span class="brand">Dea</span>

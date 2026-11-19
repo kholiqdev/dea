@@ -22,7 +22,6 @@
   let error = $state<string | null>(null);
   let typingUi = $state(false);
   let typingMono = $state(false);
-  let sizeInput = $state<HTMLInputElement>();
 
   async function update(patch: Partial<Appearance>): Promise<void> {
     try {
@@ -33,16 +32,24 @@
     }
   }
 
+  const clamp = (value: number) =>
+    Math.min(MAX, Math.max(MIN, Math.round(value)));
+
   function setSize(value: number): void {
-    const size = Math.min(MAX, Math.max(MIN, Math.round(value)));
-    if (sizeInput) sizeInput.value = String(size);
+    const size = clamp(value);
     if (size !== a.fontSize) void update({ fontSize: size });
   }
 
-  function commitSize(): void {
-    const value = Number(sizeInput?.value);
-    if (Number.isFinite(value) && sizeInput?.value !== "") setSize(value);
-    else if (sizeInput) sizeInput.value = String(a.fontSize);
+  // The field may hold a value the setting does not take, such as 30, or
+  // nothing at all; it then shows the size in effect.
+  function commitSize(input: HTMLInputElement): void {
+    const value = Number(input.value);
+    if (input.value === "" || !Number.isFinite(value)) {
+      input.value = String(a.fontSize);
+      return;
+    }
+    input.value = String(clamp(value));
+    setSize(value);
   }
 
   function pick(which: "uiFont" | "monoFont", value: string): void {
@@ -142,15 +149,14 @@
             <Minus size={16} strokeWidth={1.5} />
           </button>
           <input
-            bind:this={sizeInput}
             class="input mono"
             type="number"
             min={MIN}
             max={MAX}
             aria-label="Size in px"
             value={a.fontSize}
-            onkeydown={(e) => e.key === "Enter" && commitSize()}
-            onchange={commitSize}
+            onkeydown={(e) => e.key === "Enter" && commitSize(e.currentTarget)}
+            onchange={(e) => commitSize(e.currentTarget)}
           />
           <button
             type="button"

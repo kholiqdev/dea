@@ -7,11 +7,8 @@
   // A derived, not an {@const}: a component taken from {@const} keeps its
   // first value, so switching modules would not swap the view.
   const View = $derived(ctx.shell.activeView);
-  const tab = $derived(
-    ctx.tabs.active?.module === ctx.shell.activeModule
-      ? ctx.tabs.active
-      : undefined,
-  );
+  // The active tab always belongs to the active module.
+  const tab = $derived(ctx.tabs.active);
   const tabType = $derived(tab ? ctx.registry.tabType(tab.tabType) : undefined);
 </script>
 

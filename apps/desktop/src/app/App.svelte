@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { systemPrefersDark, watchSystemTheme } from "@dea/ui/theme";
+  import { MediaQuery } from "svelte/reactivity";
   import { settings } from "$lib/settings/settings.svelte";
   import { registry } from "./contributions/registry.svelte";
   import { setShellApi } from "./contributions/shell-api";
@@ -22,12 +22,16 @@
     openModule: (id) => shell.openModule(id),
   });
 
-  let systemDark = $state(systemPrefersDark());
-
   // "Match system" follows the OS as it changes.
-  $effect(() => watchSystemTheme((dark) => (systemDark = dark)));
+  const systemDark = new MediaQuery("(prefers-color-scheme: dark)");
+
+  // The theme, fonts and size live on <html>, outside this component.
   $effect(() =>
-    applyAppearance(document.documentElement, settings.appearance, systemDark),
+    applyAppearance(
+      document.documentElement,
+      settings.appearance,
+      systemDark.current,
+    ),
   );
   $effect(() =>
     persistUiState(NO_PROJECT, () => ({
