@@ -337,3 +337,61 @@ async fn a_plain_response_has_no_content_encoding() {
     .unwrap();
     assert_eq!(response.content_encoding, None);
 }
+
+#[tokio::test]
+async fn a_gzip_head_response_has_an_empty_body_and_no_error() {
+    let server = TestServer::start(Tls::None).await;
+    let client = Client::new(ClientConfig::default()).unwrap();
+    let mut head = request(&server.url("/gzip"), &ASK, Options::default());
+    head.method = "HEAD".into();
+    let response = send(&client, head).await.unwrap();
+    assert_eq!(response.status, 200);
+    assert!(response.body.is_empty());
+    assert_eq!(response.content_encoding.as_deref(), Some("gzip"));
+}
+
+#[tokio::test]
+async fn a_truncated_gzip_stream_is_a_clear_error() {
+    let server = TestServer::start(Tls::None).await;
+    let client = Client::new(ClientConfig::default()).unwrap();
+    let error = send(
+        &client,
+        request(&server.url("/gzip-cut"), &ASK, Options::default()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&error, HttpError::Protocol(m) if m.contains("gzip")),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_gzip_bomb_stops_at_the_limit() {
+    let server = TestServer::start(Tls::None).await;
+    let client = Client::new(ClientConfig::default()).unwrap();
+    let options = Options {
+        max_body_bytes: 1000,
+        ..Options::default()
+    };
+    let response = send(&client, request(&server.url("/bomb/64"), &ASK, options))
+        .await
+        .unwrap();
+    assert!(response.truncated);
+    assert_eq!(response.body.read_all().unwrap(), vec![0u8; 1000]);
+    let next = send(&client, get(&server.url("/bytes/10"))).await.unwrap();
+    assert!(!next.timing.reused);
+}
+
+#[tokio::test]
+async fn a_decoded_body_spills_like_any_other() {
+    let server = TestServer::start(Tls::None).await;
+    let dir = tempfile::tempdir().unwrap();
+    let response = send(
+        &client_with_spill(dir.path()),
+        request(&server.url("/bomb/12"), &ASK, Options::default()),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(response.body, ResponseBody::File { len, .. } if len == 12 * 1024 * 1024));
+}

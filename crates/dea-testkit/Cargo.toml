@@ -12,6 +12,7 @@ publish = false
 # canary don't compile hyper and rustls.
 http = [
   "dep:bytes",
+  "dep:flate2",
   "dep:http-body-util",
   "dep:hyper",
   "dep:hyper-util",
@@ -29,6 +30,7 @@ workspace = true
 [dependencies]
 base64.workspace = true
 bytes = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "http2", "server"] }
 hyper-util = { workspace = true, optional = true, features = ["tokio"] }

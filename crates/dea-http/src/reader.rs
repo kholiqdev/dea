@@ -1,7 +1,7 @@
 //! Reads a response body: decodes it, keeps it in memory or in a temporary
 //! file, and reports events as the pieces arrive.
 
-use std::io::{self, Write as _};
+use std::io;
 use std::path::Path;
 use std::time::Instant;
 
@@ -94,13 +94,26 @@ impl<'a> BodyReader<'a> {
         self.truncated
     }
 
-    /// Takes the next piece of the body as it came off the wire.
+    /// Takes the next piece of the body as it came off the wire. A
+    /// decoded piece goes through the decoder in small slices, so a piece
+    /// that expands a lot is never held whole.
     pub(crate) async fn push(&mut self, chunk: Bytes) -> Result<(), HttpError> {
-        let chunk = match &mut self.decoder {
-            Some(decoder) => Bytes::from(decoder.feed(&chunk)?),
-            None => chunk,
-        };
-        self.keep(chunk).await
+        if self.decoder.is_none() {
+            return self.keep(chunk).await;
+        }
+        for slice in chunk.chunks(INPUT_SLICE) {
+            let room = room(self.limit, self.len);
+            let Some(decoder) = &mut self.decoder else {
+                break;
+            };
+            let decoded = decoder.feed(slice, room)?;
+            self.truncated |= decoded.full;
+            self.keep(Bytes::from(decoded.bytes)).await?;
+            if self.truncated {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Ends the body: what the decoder still holds is kept, a spilled file
@@ -109,8 +122,9 @@ impl<'a> BodyReader<'a> {
         if !self.truncated
             && let Some(decoder) = self.decoder.take()
         {
-            let rest = decoder.finish()?;
-            self.keep(Bytes::from(rest)).await?;
+            let decoded = decoder.finish(room(self.limit, self.len))?;
+            self.truncated |= decoded.full;
+            self.keep(Bytes::from(decoded.bytes)).await?;
         }
         let truncated = self.truncated;
         if self.file.is_none() {
@@ -200,6 +214,11 @@ impl<'a> BodyReader<'a> {
     }
 }
 
+/// How many more body bytes fit under `limit`.
+fn room(limit: u64, len: u64) -> usize {
+    usize::try_from(limit.saturating_sub(len)).unwrap_or(usize::MAX)
+}
+
 /// The error text names the path and the OS reason, never the body.
 fn file_error(path: &Path, error: &io::Error) -> HttpError {
     HttpError::File {
@@ -208,9 +227,40 @@ fn file_error(path: &Path, error: &io::Error) -> HttpError {
     }
 }
 
-/// A streaming decoder that collects its output in a vector.
+/// How much compressed input goes into the decoder at a time. Deflate
+/// expands at most about 1000 to 1, so this bounds what one step holds.
+const INPUT_SLICE: usize = 4 * 1024;
+
+/// Decoder output that refuses to grow past `room` bytes.
+#[derive(Default)]
+struct Capped {
+    out: Vec<u8>,
+    room: usize,
+    full: bool,
+}
+
+impl io::Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let free = self.room.saturating_sub(self.out.len());
+        if free == 0 && !buf.is_empty() {
+            self.full = true;
+            return Err(io::Error::other("the body limit was reached"));
+        }
+        let take = buf.len().min(free);
+        self.out.extend_from_slice(&buf[..take]);
+        Ok(take)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A streaming decoder with bounded output.
 struct Decoder {
     encoding: Encoding,
+    /// Compressed bytes taken so far; none means there was no body.
+    fed: u64,
     state: State,
 }
 
@@ -218,69 +268,138 @@ enum State {
     /// `deflate` may be zlib-wrapped, as HTTP defines it, or raw, as some
     /// servers send it. The first two bytes tell.
     Undecided(Vec<u8>),
-    Gzip(GzDecoder<Vec<u8>>),
-    Zlib(ZlibDecoder<Vec<u8>>),
-    Raw(DeflateDecoder<Vec<u8>>),
+    Gzip(GzDecoder<Capped>),
+    Zlib(ZlibDecoder<Capped>),
+    Raw(DeflateDecoder<Capped>),
+}
+
+/// What a decoding step produced.
+struct Decoded {
+    bytes: Vec<u8>,
+    /// The step stopped because `room` was used up.
+    full: bool,
 }
 
 impl Decoder {
     fn new(encoding: Encoding) -> Self {
         let state = match encoding {
-            Encoding::Gzip => State::Gzip(GzDecoder::new(Vec::new())),
+            Encoding::Gzip => State::Gzip(GzDecoder::new(Capped::default())),
             Encoding::Deflate => State::Undecided(Vec::new()),
         };
-        Decoder { encoding, state }
+        Decoder {
+            encoding,
+            fed: 0,
+            state,
+        }
     }
 
-    fn feed(&mut self, chunk: &[u8]) -> Result<Vec<u8>, HttpError> {
-        self.feed_inner(chunk)
+    /// Decodes `chunk` into at most `room` bytes.
+    fn feed(&mut self, chunk: &[u8], room: usize) -> Result<Decoded, HttpError> {
+        self.fed += chunk.len() as u64;
+        self.step(Some(chunk), room)
             .map_err(|e| decode_error(self.encoding, &e))
     }
 
-    fn feed_inner(&mut self, chunk: &[u8]) -> io::Result<Vec<u8>> {
-        if let State::Undecided(held) = &mut self.state {
-            held.extend_from_slice(chunk);
-            if held.len() < 2 {
-                return Ok(Vec::new());
+    /// Ends the body. A body that never began (HEAD, 204, 304) ends
+    /// quietly; a stream that stopped early is an error.
+    fn finish(mut self, room: usize) -> Result<Decoded, HttpError> {
+        if self.fed == 0 {
+            return Ok(Decoded {
+                bytes: Vec::new(),
+                full: false,
+            });
+        }
+        let encoding = self.encoding;
+        self.step(None, room)
+            .map_err(|e| decode_error(encoding, &e))
+    }
+
+    /// Writes `chunk`, or ends the stream when there is none.
+    fn step(&mut self, chunk: Option<&[u8]>, room: usize) -> io::Result<Decoded> {
+        let mut held = Vec::new();
+        if let State::Undecided(first) = &mut self.state {
+            first.extend_from_slice(chunk.unwrap_or_default());
+            if first.len() < 2 {
+                if chunk.is_none() && !first.is_empty() {
+                    return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+                }
+                return Ok(Decoded {
+                    bytes: Vec::new(),
+                    full: false,
+                });
             }
-            let held = std::mem::take(held);
+            held = std::mem::take(first);
             let zlib =
                 held[0] & 0x0f == 8 && (u16::from(held[0]) * 256 + u16::from(held[1])) % 31 == 0;
             self.state = if zlib {
-                State::Zlib(ZlibDecoder::new(Vec::new()))
+                State::Zlib(ZlibDecoder::new(Capped::default()))
             } else {
-                State::Raw(DeflateDecoder::new(Vec::new()))
+                State::Raw(DeflateDecoder::new(Capped::default()))
             };
-            return self.feed_inner(&held);
         }
+        let input = if held.is_empty() {
+            chunk.unwrap_or_default()
+        } else {
+            &held
+        };
+        let finishing = chunk.is_none();
         match &mut self.state {
-            State::Gzip(decoder) => {
-                decoder.write_all(chunk)?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
-            State::Zlib(decoder) => {
-                decoder.write_all(chunk)?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
-            State::Raw(decoder) => {
-                decoder.write_all(chunk)?;
-                Ok(std::mem::take(decoder.get_mut()))
-            }
+            State::Gzip(d) => run(d, Ends::GZIP, input, finishing, room),
+            State::Zlib(d) => run(d, Ends::ZLIB, input, finishing, room),
+            State::Raw(d) => run(d, Ends::RAW, input, finishing, room),
             State::Undecided(_) => unreachable!("decided above"),
         }
     }
+}
 
-    /// The output the decoder still held at the end of the body.
-    fn finish(self) -> Result<Vec<u8>, HttpError> {
-        let encoding = self.encoding;
-        let result = match self.state {
-            State::Undecided(held) if held.is_empty() => Ok(Vec::new()),
-            State::Undecided(_) => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-            State::Gzip(decoder) => decoder.finish(),
-            State::Zlib(decoder) => decoder.finish(),
-            State::Raw(decoder) => decoder.finish(),
-        };
-        result.map_err(|e| decode_error(encoding, &e))
+/// What `run` needs from each kind of write decoder.
+struct Ends<D> {
+    sink: fn(&mut D) -> &mut Capped,
+    end: fn(&mut D) -> io::Result<()>,
+}
+
+impl Ends<GzDecoder<Capped>> {
+    const GZIP: Self = Ends {
+        sink: GzDecoder::get_mut,
+        end: GzDecoder::try_finish,
+    };
+}
+
+impl Ends<ZlibDecoder<Capped>> {
+    const ZLIB: Self = Ends {
+        sink: ZlibDecoder::get_mut,
+        end: ZlibDecoder::try_finish,
+    };
+}
+
+impl Ends<DeflateDecoder<Capped>> {
+    const RAW: Self = Ends {
+        sink: DeflateDecoder::get_mut,
+        end: DeflateDecoder::try_finish,
+    };
+}
+
+/// Feeds `input` to a write decoder, or ends it, collecting at most `room`
+/// bytes of output.
+fn run<D: io::Write>(
+    decoder: &mut D,
+    ends: Ends<D>,
+    input: &[u8],
+    finishing: bool,
+    room: usize,
+) -> io::Result<Decoded> {
+    (ends.sink)(decoder).room = room;
+    let result = if finishing {
+        (ends.end)(decoder)
+    } else {
+        decoder.write_all(input)
+    };
+    let capped = (ends.sink)(decoder);
+    let (bytes, full) = (std::mem::take(&mut capped.out), capped.full);
+    match result {
+        Err(_) if full => Ok(Decoded { bytes, full }),
+        Err(e) => Err(e),
+        Ok(()) => Ok(Decoded { bytes, full }),
     }
 }
 
@@ -296,14 +415,15 @@ mod tests {
     use super::*;
     use flate2::Compression;
     use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
+    use std::io::Write as _;
 
     fn decode_by_byte(encoding: Encoding, compressed: &[u8]) -> Result<Vec<u8>, HttpError> {
         let mut decoder = Decoder::new(encoding);
         let mut out = Vec::new();
         for byte in compressed {
-            out.extend(decoder.feed(&[*byte])?);
+            out.extend(decoder.feed(&[*byte], usize::MAX)?.bytes);
         }
-        out.extend(decoder.finish()?);
+        out.extend(decoder.finish(usize::MAX)?.bytes);
         Ok(out)
     }
 
@@ -331,5 +451,61 @@ mod tests {
         let shown = error.to_string();
         assert!(shown.contains("gzip"), "{shown}");
         assert!(!shown.contains("secret"), "{shown}");
+    }
+
+    fn gzip_of_zeros(mib: usize) -> Vec<u8> {
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
+        let zeros = vec![0u8; 1024 * 1024];
+        for _ in 0..mib {
+            gzip.write_all(&zeros).unwrap();
+        }
+        gzip.finish().unwrap()
+    }
+
+    #[test]
+    fn output_never_passes_the_room_it_was_given() {
+        let bomb = gzip_of_zeros(64);
+        let mut decoder = Decoder::new(Encoding::Gzip);
+        let mut total = 0;
+        let mut full = false;
+        for slice in bomb.chunks(INPUT_SLICE) {
+            let decoded = decoder.feed(slice, 1000 - total).unwrap();
+            total += decoded.bytes.len();
+            assert!(total <= 1000);
+            if decoded.full {
+                full = true;
+                break;
+            }
+        }
+        assert!(full);
+        assert_eq!(total, 1000);
+    }
+
+    #[test]
+    fn a_slice_of_a_bomb_stays_small_even_with_a_large_room() {
+        let bomb = gzip_of_zeros(64);
+        let mut decoder = Decoder::new(Encoding::Gzip);
+        for slice in bomb.chunks(INPUT_SLICE) {
+            let decoded = decoder.feed(slice, usize::MAX).unwrap();
+            assert!(
+                decoded.bytes.len() <= 8 * 1024 * 1024,
+                "{}",
+                decoded.bytes.len()
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_that_never_began_ends_quietly_but_a_cut_stream_does_not() {
+        for encoding in [Encoding::Gzip, Encoding::Deflate] {
+            let decoded = Decoder::new(encoding).finish(10).unwrap();
+            assert!(decoded.bytes.is_empty() && !decoded.full);
+        }
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+        gzip.write_all(b"hello hello hello").unwrap();
+        let whole = gzip.finish().unwrap();
+        let mut decoder = Decoder::new(Encoding::Gzip);
+        decoder.feed(&whole[..whole.len() - 4], 100).unwrap();
+        assert!(decoder.finish(100).is_err());
     }
 }

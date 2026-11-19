@@ -17,6 +17,9 @@
 //! - `/bytes/{n}` answers 200 with `n` bytes of `x`, generated while sending.
 //! - `/sse` answers a `text/event-stream` of three events 100 ms apart, with a
 //!   comment first; the second has two data lines and an id.
+//! - `/gzip-cut` answers the `/gzip` body without its last bytes.
+//! - `/bomb/{mib}` answers `mib` MiB of zeros, gzipped, with
+//!   `Content-Encoding: gzip`.
 //! - `/gzip` and `/deflate` answer a short text in that `Content-Encoding`
 //!   whatever the request asked for; `/brotli` claims `br` over plain bytes.
 //!
@@ -27,7 +30,7 @@
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::future::Future;
-use std::io;
+use std::io::{self, Write as _};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -502,6 +505,22 @@ async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> 
         );
         return response;
     }
+    if let Some(mib) = path.strip_prefix("/bomb/") {
+        let Ok(mib) = mib.parse::<usize>() else {
+            return reply(StatusCode::BAD_REQUEST, Bytes::new());
+        };
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        let zeros = vec![0u8; 1024 * 1024];
+        for _ in 0..mib {
+            gzip.write_all(&zeros).expect("write to a vector");
+        }
+        let body = gzip.finish().expect("finish a vector");
+        let mut response = reply(StatusCode::OK, Bytes::from(body));
+        response
+            .headers_mut()
+            .insert("content-encoding", HeaderValue::from_static("gzip"));
+        return response;
+    }
     if let Some((encoding, body)) = encoded(path) {
         let mut response = reply(StatusCode::OK, Bytes::from_static(body));
         response
@@ -560,6 +579,7 @@ fn encoded(path: &str) -> Option<(&'static str, &'static [u8])> {
     ];
     match path {
         "/gzip" => Some(("gzip", GZIP)),
+        "/gzip-cut" => Some(("gzip", &GZIP[..GZIP.len() - 10])),
         "/deflate" => Some(("deflate", DEFLATE)),
         "/brotli" => Some(("br", b"not really brotli")),
         _ => None,
