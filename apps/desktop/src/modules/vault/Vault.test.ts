@@ -13,6 +13,7 @@ import { resetSecrets, usedBy } from "./state/secrets.svelte";
 import VaultSidebar from "./components/VaultSidebar.svelte";
 import VaultView from "./VaultView.svelte";
 
+const NOW = new Date("2026-11-19T12:00:00Z");
 const VALUE = "sk-live-0123456789";
 
 function row(
@@ -75,6 +76,8 @@ function mount() {
 }
 
 beforeEach(() => {
+  // Only the clock stands still: the table's ages and expiry depend on it.
+  vi.useFakeTimers({ toFake: ["Date"], now: NOW });
   resetSecrets();
   info = project();
   rows = [
@@ -194,6 +197,13 @@ test("the table lists each declared secret of the chosen environment", async () 
   );
 });
 
+test("one secret reads in the singular", async () => {
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: /^local/ }));
+  expect(await screen.findByText("1 secret in harbor-api")).toBeInTheDocument();
+});
+
 test("type tabs filter the table", async () => {
   const user = userEvent.setup();
   await openStaging(user);
@@ -253,7 +263,7 @@ test("Used by counts the variables that refer to the secret", async () => {
 });
 
 test("a revealed value hides on lock, on another secret and after 30 s", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: NOW });
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   await openStaging(user);
   await screen.findByRole("table", { name: "Secrets" });
@@ -329,6 +339,7 @@ test("a cancelled production check reveals nothing", async () => {
   const user = userEvent.setup();
   mount();
   await user.click(await screen.findByRole("button", { name: /^production/ }));
+  expect(await screen.findByText("Expires in 40 min")).toBeInTheDocument();
   await user.click(await screen.findByRole("button", { name: "access_token" }));
   revealError = { kind: "cancelled", message: "cancelled" };
   await user.click(screen.getByRole("button", { name: "Reveal value" }));
