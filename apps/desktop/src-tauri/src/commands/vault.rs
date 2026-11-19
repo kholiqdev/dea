@@ -5,7 +5,7 @@
 use dea_engine::projects::ProjectInfo;
 use dea_engine::vault::{
     CLIPBOARD_CLEAR_AFTER, SecretInput, SecretKey, SecretRow, UnlockMethod, UseError, VaultService,
-    save_secret, unlock_method,
+    is_production, save_secret, unlock_method,
 };
 use dea_project::{Project, load_project};
 use serde::Serialize;
@@ -42,16 +42,6 @@ where
         state.vault.prompter().asking(&window, || f(&vault))
     })
     .await?
-}
-
-/// Whether `environment` holds production secrets. An environment the
-/// project does not have counts as production, as in the engine.
-fn is_production(project: &Project, environment: &str) -> bool {
-    project
-        .environments
-        .iter()
-        .find(|e| e.name == environment)
-        .is_none_or(|e| e.production)
 }
 
 /// Opens the production window before a value of a production environment

@@ -444,15 +444,18 @@ impl VaultService {
     }
 }
 
-/// Whether `environment` of `project` holds production secrets. Unknown
-/// environments count as production, so a mistake asks once too often
-/// rather than never.
-fn is_production(project: &Project, environment: &str) -> bool {
-    project
+/// Whether `environment` of `project` holds production secrets: any
+/// environment of that name is marked production, as two files can share a
+/// name after a merge. Unknown environments count as production, so a
+/// mistake asks once too often rather than never.
+#[must_use]
+pub fn is_production(project: &Project, environment: &str) -> bool {
+    let mut named = project
         .environments
         .iter()
-        .find(|e| e.name == environment)
-        .is_none_or(|e| e.production)
+        .filter(|e| e.name == environment)
+        .peekable();
+    named.peek().is_none() || named.any(|e| e.production)
 }
 
 /// Stops the timer and the OS event watcher when dropped.
