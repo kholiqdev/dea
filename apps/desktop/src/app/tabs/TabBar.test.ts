@@ -6,7 +6,13 @@ import { closeQuestion } from "../prompts/confirm-close.svelte";
 import ShellView from "../shell/Shell.svelte";
 import { Shell } from "../shell/shell-state.svelte";
 import { shellModule } from "../shell/shell-module";
-import { fakeIpc, railModule, registryWith, view } from "../shell/test-support";
+import {
+  fakeIpc,
+  openProject,
+  railModule,
+  registryWith,
+  view,
+} from "../shell/test-support";
 import { settings } from "$lib/settings/settings.svelte";
 import { Tabs } from "./tabs.svelte";
 
@@ -42,8 +48,9 @@ function setup(...extra: Parameters<typeof registryWith>) {
   );
   const shell = new Shell(registry);
   const tabs = new Tabs(registry, shell, { confirmClose: closeQuestion.ask });
-  registry.register(shellModule(shell, tabs));
-  render(ShellView, { registry, shell, tabs });
+  const project = openProject();
+  registry.register(shellModule(shell, tabs, project));
+  render(ShellView, { registry, shell, tabs, project });
   return { registry, shell, tabs };
 }
 

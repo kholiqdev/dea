@@ -64,6 +64,11 @@ export interface ManifestData {
   /** The module id, for example `requests`. */
   id: string;
   title: string;
+  /**
+   * `project` (the default): works on the window's project, so it is off
+   * while the window shows Welcome. `app`: always available.
+   */
+  scope?: "app" | "project";
   rail?: RailData;
   tabTypes?: TabTypeData[];
   panels?: PanelData[];

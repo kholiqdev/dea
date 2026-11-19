@@ -13,7 +13,7 @@
 </script>
 
 <main class="main">
-  <TabBar />
+  {#if ctx.project.info}<TabBar />{/if}
   <div class="content">
     {#if tab && tabType}
       {#key tab.id}

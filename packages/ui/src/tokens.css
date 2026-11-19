@@ -108,6 +108,13 @@
   --series-3: #d6b98c;
   --series-4: #c9c9ce;
 
+  /* Environment colours; red (--negative) is kept for production */
+  --env-slate: #a1a1a6;
+  --env-blue: #a3b8dc;
+  --env-green: #9fc7a8;
+  --env-amber: #d6b98c;
+  --env-silver: #c9c9ce;
+
   --shadow-float: 0 24px 64px rgba(0, 0, 0, 0.5);
   --shadow-device: 0 24px 48px rgba(0, 0, 0, 0.4);
   --scrim: rgba(8, 8, 9, 0.62);
@@ -167,6 +174,12 @@
   --series-2: #4f8a5e;
   --series-3: #a07a3c;
   --series-4: #737373;
+
+  --env-slate: #525252;
+  --env-blue: #4f6f9f;
+  --env-green: #3f7a50;
+  --env-amber: #8a6526;
+  --env-silver: #6b6b6b;
 
   --shadow-float: 0 24px 64px rgba(0, 0, 0, 0.16);
   --shadow-device: 0 16px 40px rgba(0, 0, 0, 0.14);

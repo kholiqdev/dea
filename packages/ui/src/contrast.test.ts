@@ -79,3 +79,26 @@ test("contrast follows WCAG 2.1", () => {
   expect(contrastRatio("#fff", "#fff")).toBeCloseTo(1, 5);
   expect(contrastRatio("#777777", "#ffffff")).toBeCloseTo(4.48, 2);
 });
+
+const ENV_COLORS = [
+  "--env-slate",
+  "--env-blue",
+  "--env-green",
+  "--env-amber",
+  "--env-silver",
+];
+
+test.each(["dark", "light"] as const)(
+  "environment colours stay off red and readable in %s",
+  (theme) => {
+    const t = readTokens(tokensCss, theme);
+    for (const c of ENV_COLORS) {
+      expect(token(t, c), c).not.toBe(token(t, "--negative"));
+      for (const bg of SURFACES)
+        expect(
+          contrastRatio(token(t, c), token(t, bg)),
+          `${c} on ${bg}`,
+        ).toBeGreaterThanOrEqual(3);
+    }
+  },
+);

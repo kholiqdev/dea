@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/svelte";
+import { screen } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import { expect, test, vi } from "vitest";
 import { settings } from "$lib/settings/settings.svelte";
@@ -33,24 +33,18 @@ function switchOs(dark: boolean): void {
 
 const root = document.documentElement;
 
-test("starts with the built-in modules and the Welcome view", async () => {
+test("starts on Welcome when the window has no project", async () => {
   const log = fakeIpc();
   const target = document.body.appendChild(document.createElement("div"));
   await start(target);
 
-  const rail = screen.getByRole("navigation", { name: "Modules" });
-  for (const name of [
-    "Requests",
-    "Database",
-    "Terminal",
-    "Mobile",
-    "Vault",
-    "Settings",
-  ])
-    expect(within(rail).getByRole("button", { name })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("navigation", { name: "Modules" }),
+  ).not.toBeInTheDocument();
   expect(
     await screen.findByRole("heading", { name: "Welcome" }),
   ).toBeInTheDocument();
+  expect(screen.getByRole("banner")).toHaveTextContent("No project open");
   expect(root.dataset.theme).toBe("light");
   expect(log.savedUiStates).toEqual([]);
 });
@@ -80,7 +74,7 @@ test("Match system follows a change of the OS theme", async () => {
   expect(root.dataset.theme).toBe("dark");
 });
 
-test("Settings opens with Mod+, and lists its sections", async () => {
+test("Settings opens with Mod+, and Back returns to Welcome", async () => {
   window.dispatchEvent(
     new KeyboardEvent("keydown", { key: ",", code: "Comma", ctrlKey: true }),
   );
@@ -91,10 +85,8 @@ test("Settings opens with Mod+, and lists its sections", async () => {
   expect(
     await screen.findByRole("heading", { name: "Appearance", level: 1 }),
   ).toBeInTheDocument();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    ),
-  );
+  screen.getByRole("button", { name: "Back" }).click();
+  expect(
+    await screen.findByRole("heading", { name: "Welcome" }),
+  ).toBeInTheDocument();
 });

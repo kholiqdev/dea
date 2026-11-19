@@ -191,3 +191,19 @@ test("sections and status items are ordered", () => {
   ]);
   expect(r.statusItems.map((s) => s.id)).toEqual(["settings.a", "settings.b"]);
 });
+
+test("without a project only app-wide modules remain", () => {
+  const r = createRegistry();
+  r.register(manifest("requests", { commands: [cmd("requests.open")] }));
+  r.register(
+    manifest("settings", { scope: "app", commands: [cmd("settings.open")] }),
+  );
+  r.setProjectOpen(false);
+  expect(r.commands.map((c) => c.id)).toEqual(["settings.open"]);
+  expect(r.module("requests")).toBeUndefined();
+  r.setProjectOpen(true);
+  expect(r.commands.map((c) => c.id)).toEqual([
+    "requests.open",
+    "settings.open",
+  ]);
+});

@@ -6,6 +6,7 @@ import type { ModuleManifest } from "$app/contributions/types";
 export const manifest: ModuleManifest = {
   id: "e2e",
   title: "E2E",
+  scope: "app",
   tabTypes: [
     {
       id: "e2e.tab",

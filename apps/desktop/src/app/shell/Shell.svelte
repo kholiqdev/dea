@@ -1,6 +1,7 @@
 <!-- The window: title bar, rail, sidebar, work area and status bar. -->
 <script lang="ts">
   import { settings } from "$lib/settings/settings.svelte";
+  import type { ProjectApi } from "../contributions/project-api";
   import type { Registry } from "../contributions/registry.svelte";
   import ConfirmClose from "../prompts/ConfirmClose.svelte";
   import { closeQuestion } from "../prompts/confirm-close.svelte";
@@ -19,7 +20,9 @@
     registry,
     shell,
     tabs,
-  }: { registry: Registry; shell: Shell; tabs: Tabs } = $props();
+    project,
+  }: { registry: Registry; shell: Shell; tabs: Tabs; project: ProjectApi } =
+    $props();
 
   const ctx = setShellContext({
     get registry() {
@@ -31,7 +34,13 @@
     get tabs() {
       return tabs;
     },
+    get project() {
+      return project;
+    },
   });
+
+  // Without a project the window shows Welcome: no rail, no tabs.
+  const welcome = $derived(!project.info);
 
   const onHotkey = createHotkeyHandler(ctx, () => settings.shortcuts);
 
@@ -42,10 +51,13 @@
 
 <svelte:window onkeydowncapture={onHotkey} />
 
-<div class="app">
+<div
+  class="app"
+  data-env={project.environment?.production ? "production" : undefined}
+>
   <TitleBar />
   <div class="body">
-    <Rail />
+    {#if !welcome}<Rail />{/if}
     {#if module?.sidebar && shell.sidebar(module.id).visible}
       <Sidebar {module} />
     {/if}

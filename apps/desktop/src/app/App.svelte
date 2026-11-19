@@ -5,12 +5,11 @@
   import { setShellApi } from "./contributions/shell-api";
   import { applyAppearance } from "./shell/appearance";
   import Shell from "./shell/Shell.svelte";
-  import {
-    NO_PROJECT,
-    persistUiState,
-    shell,
-  } from "./shell/shell-state.svelte";
+  import { persistUiState, shell } from "./shell/shell-state.svelte";
+  import { thisProject } from "./project/project.svelte";
   import { tabs } from "./tabs/tabs.svelte";
+
+  let { scope, slot }: { scope: string; slot: number } = $props();
 
   // What modules may ask of the shell.
   setShellApi({
@@ -34,11 +33,12 @@
     ),
   );
   $effect(() =>
-    persistUiState(NO_PROJECT, 0, () => ({
+    persistUiState(scope, slot, () => ({
       ...shell.snapshot(),
       ...tabs.snapshot(),
+      activeEnvironment: thisProject.environment?.name ?? null,
     })),
   );
 </script>
 
-<Shell {registry} {shell} {tabs} />
+<Shell {registry} {shell} {tabs} project={thisProject} />
