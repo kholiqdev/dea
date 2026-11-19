@@ -95,9 +95,13 @@ export const config: WebdriverIO.Config = {
         `Port ${DRIVER_PORT} is in use: stop the tauri-driver left from another run`,
       );
     dataDir = mkdtempSync(join(tmpdir(), "dea-e2e-"));
+    // Workers start after this and inherit both: specs read the app data
+    // and pick folders through them.
+    process.env.DEA_APP_DATA_DIR = dataDir;
+    process.env.DEA_E2E_PICK_FILE = join(dataDir, "pick-folder.txt");
     driver = spawn(tauriDriver, [], {
       stdio: ["ignore", "inherit", "inherit"],
-      env: { ...process.env, DEA_E2E: "1", DEA_APP_DATA_DIR: dataDir },
+      env: { ...process.env, DEA_E2E: "1" },
     });
     await waitForDriver(60_000);
   },

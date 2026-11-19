@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { $, $$, browser, expect } from "@wdio/globals";
 import { Key } from "webdriverio";
 import {
@@ -5,8 +8,11 @@ import {
   controlsOutsideTheWindow,
   lastMeasure,
   mainHeading,
+  openProjectAt,
   openTestTabs,
+  projectName,
   waitForShell,
+  writeProject,
 } from "./helpers.js";
 
 const MAIN = [
@@ -17,19 +23,18 @@ const MAIN = [
 ] as const;
 
 describe("the shell", () => {
+  const work = mkdtempSync(join(tmpdir(), "dea-e2e-shell-"));
+
+  // Welcome has no rail: the shell shows once a project is open.
   before(async () => {
-    await waitForShell();
+    await openProjectAt(writeProject("shell-api", work));
   });
+  after(() => rmSync(work, { recursive: true, force: true }));
 
   it("opens each module from the rail and with Mod+1 to Mod+4", async () => {
-    const project = $("header .project");
-    await expect(project).toBeDisplayed();
-    // WebKitWebDriver reads this span's text as empty although it is drawn
-    // (seen in a CI screenshot), so read the text from the page itself.
-    const text = await browser.execute(
-      () => document.querySelector("header .project")?.textContent,
-    );
-    expect(text).toBe("No project open");
+    // WebKitWebDriver reads title bar text as empty although it is drawn
+    // (seen in a CI screenshot), so the helper reads it in the page.
+    expect(await projectName()).toBe("shell-api");
     for (const [id, title] of [
       ...MAIN,
       ["vault", "Vault"],
