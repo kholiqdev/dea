@@ -267,6 +267,8 @@ pub enum ApiKeyLocation {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SendOptions {
+    /// The longest wait for the response head, then between two pieces of
+    /// the body. `0` sets no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

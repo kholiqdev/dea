@@ -302,6 +302,7 @@
           ]
         },
         "timeoutMs": {
+          "description": "The longest wait for the response head, then between two pieces of\nthe body. `0` sets no limit.",
           "format": "uint64",
           "minimum": 0,
           "type": [

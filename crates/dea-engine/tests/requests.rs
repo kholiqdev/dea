@@ -734,3 +734,16 @@ async fn credentials_stay_behind_on_a_redirect_to_another_origin() {
         Some("Basic cHJveHk6cHc=")
     );
 }
+
+#[tokio::test]
+async fn timeout_zero_means_no_limit() {
+    let mut f = Fixture::new().await;
+    let mut file = request("GET", "{{baseUrl}}/delay/300");
+    file.options.timeout_ms = Some(0);
+    let path = f.add("patient", file);
+
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let response = f.send_prepared(prepared).await;
+
+    assert_eq!(response.status, 200);
+}

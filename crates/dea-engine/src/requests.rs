@@ -462,7 +462,8 @@ fn to_http(resolved: ResolvedRequest) -> Result<(Request, Vec<String>), SendErro
         credential_headers,
         body: to_body(body),
         options: Options {
-            timeout: Duration::from_millis(options.timeout_ms),
+            // `timeoutMs: 0` sets no limit, as in Postman.
+            timeout: (options.timeout_ms > 0).then(|| Duration::from_millis(options.timeout_ms)),
             follow_redirects: options.follow_redirects,
             max_redirects: options.max_redirects,
             verify_tls: options.verify_tls,
