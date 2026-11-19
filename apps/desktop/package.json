@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@dea/ui": "workspace:*",
+    "@lucide/svelte": "^1.75.0",
     "@tauri-apps/api": "^2.12.4"
   },
   "devDependencies": {
