@@ -42,6 +42,7 @@ function saved(over: Partial<UiState>): UiState {
   return {
     version: 1,
     activeModule: null,
+    activeEnvironment: null,
     railExpanded: false,
     sidebars: {},
     tabs: [],

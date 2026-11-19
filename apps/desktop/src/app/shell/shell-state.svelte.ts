@@ -134,12 +134,13 @@ export class Shell {
 }
 
 /**
- * Saves what `collect` returns each time it changes, after `delay` ms
+ * Saves what `collect` returns for window `slot` of project `scope` each time it changes, after `delay` ms
  * without another change. The first value is the restored one, so it is
  * not written back. Returns a function that stops saving.
  */
 export function persistUiState(
-  key: string,
+  scope: string,
+  slot: number,
   collect: () => Partial<UiState>,
   delay = 300,
 ): () => void {
@@ -150,6 +151,7 @@ export function persistUiState(
       const state: UiState = {
         version: 1,
         activeModule: null,
+        activeEnvironment: null,
         railExpanded: false,
         sidebars: {},
         tabs: [],
@@ -164,7 +166,7 @@ export function persistUiState(
       clearTimeout(timer);
       // Losing a layout change is not worth bothering anyone about.
       timer = setTimeout(() => {
-        saveUiState(key, state).catch(() => {});
+        saveUiState(scope, slot, state).catch(() => {});
       }, delay);
     });
   });

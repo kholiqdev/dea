@@ -12,10 +12,15 @@ export function saveSettings(settings: Settings): Promise<void> {
   return invoke<void>("save_settings", { settings });
 }
 
-export function getUiState(key: string): Promise<UiState> {
-  return invoke<UiState>("get_ui_state", { key });
+/** The UI state of window `slot` of project `scope`. */
+export function getUiState(scope: string, slot: number): Promise<UiState> {
+  return invoke<UiState>("get_ui_state", { scope, slot });
 }
 
-export function saveUiState(key: string, state: UiState): Promise<void> {
-  return invoke<void>("save_ui_state", { key, state });
+export function saveUiState(
+  scope: string,
+  slot: number,
+  state: UiState,
+): Promise<void> {
+  return invoke<void>("save_ui_state", { scope, slot, state });
 }

@@ -4,14 +4,18 @@
 //! `<name>.damaged` and the defaults are used, so Dea always opens.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
+use dea_project::Project;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::projects::{MAX_RECENT, RecentProject};
 
 /// The settings file format this Dea writes.
 pub const SETTINGS_VERSION: u32 = 1;
@@ -24,6 +28,9 @@ pub const FONT_SIZES: RangeInclusive<u8> = 11..=20;
 
 const SETTINGS_FILE: &str = "settings.json";
 const UI_DIR: &str = "ui";
+const RECENT_FILE: &str = "recent.json";
+/// The recent projects file format this Dea writes.
+pub const RECENT_VERSION: u32 = 1;
 
 /// The person's settings, shared by every project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +117,8 @@ pub struct UiState {
     pub version: u32,
     /// The module shown in the work area, by id.
     pub active_module: Option<String>,
+    /// The environment this window uses for requests, by name.
+    pub active_environment: Option<String>,
     /// Whether the rail shows module names.
     pub rail_expanded: bool,
     /// Sidebar state per module id.
@@ -127,6 +136,7 @@ impl Default for UiState {
         Self {
             version: UI_STATE_VERSION,
             active_module: None,
+            active_environment: None,
             rail_expanded: false,
             sidebars: BTreeMap::new(),
             tabs: Vec::new(),
@@ -225,33 +235,123 @@ impl Store {
         write_json(&self.dir.join(SETTINGS_FILE), &settings)
     }
 
-    /// Reads the UI state saved under `key`, or the defaults. Damaged files
-    /// are set aside as for [`Store::load_settings`].
-    pub fn load_ui_state(&self, key: &str) -> UiState {
-        read_or_default(&self.ui_path(key), |s: &UiState| {
+    /// Reads the UI state of window `slot` of project `scope`, or the
+    /// defaults. Damaged files are set aside as for [`Store::load_settings`].
+    pub fn load_ui_state(&self, scope: &str, slot: u8) -> UiState {
+        read_or_default(&self.ui_path(scope, slot), |s: &UiState| {
             s.version <= UI_STATE_VERSION
         })
     }
 
-    /// Saves the UI state under `key`, keeping the newest
-    /// [`MAX_CLOSED_TABS`] closed tabs.
+    /// Saves the UI state of window `slot` of project `scope`, keeping the
+    /// newest [`MAX_CLOSED_TABS`] closed tabs.
     ///
     /// # Errors
     ///
     /// [`StoreError::Io`] when the file or its folder cannot be written.
-    pub fn save_ui_state(&self, key: &str, mut state: UiState) -> Result<(), StoreError> {
+    pub fn save_ui_state(
+        &self,
+        scope: &str,
+        slot: u8,
+        mut state: UiState,
+    ) -> Result<(), StoreError> {
         state.version = UI_STATE_VERSION;
         let extra = state.closed_tabs.len().saturating_sub(MAX_CLOSED_TABS);
         state.closed_tabs.drain(..extra);
-        write_json(&self.ui_path(key), &state)
+        write_json(&self.ui_path(scope, slot), &state)
     }
 
-    /// The key never appears in the file name, since it may name a project.
-    fn ui_path(&self, key: &str) -> PathBuf {
-        let digest = Sha256::digest(key.as_bytes());
-        let name: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
-        self.dir.join(UI_DIR).join(format!("{name}.json"))
+    /// Removes the UI state of every window of project `scope`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] when the folder exists but cannot be removed.
+    pub fn clear_ui_state(&self, scope: &str) -> Result<(), StoreError> {
+        let dir = self.scope_dir(scope);
+        match fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(StoreError::Io {
+                path: dir,
+                source: e,
+            }),
+            _ => Ok(()),
+        }
     }
+
+    /// The projects opened most recently, newest first.
+    pub fn load_recent(&self) -> Vec<RecentProject> {
+        read_or_default(&self.dir.join(RECENT_FILE), |r: &RecentFile| {
+            r.version <= RECENT_VERSION
+        })
+        .projects
+    }
+
+    /// Puts `project` first in the recent list. An entry for the same folder,
+    /// or for the same project id in another folder, is replaced.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] when the list cannot be written.
+    pub fn touch_recent(&self, project: &Project, now: u64) -> Result<(), StoreError> {
+        let root = fs::canonicalize(&project.root).unwrap_or_else(|_| project.root.clone());
+        let id = project.manifest.id.clone().filter(|id| !id.is_empty());
+        let mut projects = self.load_recent();
+        projects.retain(|p| p.root != root && (id.is_none() || p.id != id));
+        projects.insert(
+            0,
+            RecentProject {
+                root,
+                id,
+                name: project.manifest.name.clone(),
+                last_opened: now,
+            },
+        );
+        // Newest first; for equal times the one just opened wins.
+        projects.sort_by_key(|p| std::cmp::Reverse(p.last_opened));
+        projects.truncate(MAX_RECENT);
+        self.save_recent(projects)
+    }
+
+    /// Removes the entry for `root` from the recent list.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] when the list cannot be written.
+    pub fn remove_recent(&self, root: &Path) -> Result<(), StoreError> {
+        let mut projects = self.load_recent();
+        projects.retain(|p| p.root != root);
+        self.save_recent(projects)
+    }
+
+    fn save_recent(&self, projects: Vec<RecentProject>) -> Result<(), StoreError> {
+        let file = RecentFile {
+            version: RECENT_VERSION,
+            projects,
+        };
+        write_json(&self.dir.join(RECENT_FILE), &file)
+    }
+
+    /// The scope never appears in a file or folder name, since it may name
+    /// a project.
+    fn scope_dir(&self, scope: &str) -> PathBuf {
+        let digest = Sha256::digest(scope.as_bytes());
+        let name = digest[..8].iter().fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        });
+        self.dir.join(UI_DIR).join(name)
+    }
+
+    fn ui_path(&self, scope: &str, slot: u8) -> PathBuf {
+        self.scope_dir(scope).join(format!("{slot}.json"))
+    }
+}
+
+/// The stored recent list.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct RecentFile {
+    version: u32,
+    projects: Vec<RecentProject>,
 }
 
 fn validate(s: &Settings) -> Result<(), StoreError> {

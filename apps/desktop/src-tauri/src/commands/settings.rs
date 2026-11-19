@@ -20,17 +20,22 @@ pub async fn save_settings(app: State<'_, AppState>, settings: Settings) -> Resu
 }
 
 #[tauri::command]
-pub async fn get_ui_state(app: State<'_, AppState>, key: String) -> Result<UiState, IpcError> {
+pub async fn get_ui_state(
+    app: State<'_, AppState>,
+    scope: String,
+    slot: u8,
+) -> Result<UiState, IpcError> {
     let store = app.store.clone();
-    Ok(spawn_blocking(move || store.load_ui_state(&key)).await?)
+    Ok(spawn_blocking(move || store.load_ui_state(&scope, slot)).await?)
 }
 
 #[tauri::command]
 pub async fn save_ui_state(
     app: State<'_, AppState>,
-    key: String,
+    scope: String,
+    slot: u8,
     state: UiState,
 ) -> Result<(), IpcError> {
     let store = app.store.clone();
-    Ok(spawn_blocking(move || store.save_ui_state(&key, state)).await??)
+    Ok(spawn_blocking(move || store.save_ui_state(&scope, slot, state)).await??)
 }

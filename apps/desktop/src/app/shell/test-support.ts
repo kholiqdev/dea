@@ -11,7 +11,7 @@ import {
 import type { AnyComponent, ModuleManifest } from "../contributions/types";
 
 export interface IpcLog {
-  savedUiStates: { key: string; state: UiState }[];
+  savedUiStates: { scope: string; slot: number; state: UiState }[];
 }
 
 export function fakeIpc(): IpcLog {
@@ -22,7 +22,8 @@ export function fakeIpc(): IpcLog {
     if (cmd === "get_settings") return structuredClone(DEFAULT_SETTINGS);
     if (cmd === "save_ui_state") {
       log.savedUiStates.push({
-        key: a.key as string,
+        scope: a.scope as string,
+        slot: a.slot as number,
         state: a.state as UiState,
       });
       return null;

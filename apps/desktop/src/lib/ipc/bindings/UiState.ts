@@ -15,6 +15,10 @@ version: number,
  */
 activeModule: string | null, 
 /**
+ * The environment this window uses for requests, by name.
+ */
+activeEnvironment: string | null, 
+/**
  * Whether the rail shows module names.
  */
 railExpanded: boolean, 
