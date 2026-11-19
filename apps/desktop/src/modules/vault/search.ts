@@ -14,8 +14,13 @@ export default function secretNames(): PaletteItem[] {
     title: name,
     meta: "Name only, values never show here",
     open: async () => {
-      // Shown in the environment the Vault screen would show.
       const now = projectApi().info;
+      // The palette lists what was there when it opened.
+      if (!now?.secretNames.includes(name)) {
+        shellApi().toast(`${name} no longer exists`);
+        return;
+      }
+      // Shown in the environment the Vault screen would show.
       const environment = now ? secrets.current(now) : null;
       if (environment) secrets.show(environment, name);
       await shellApi().openModule("vault");
