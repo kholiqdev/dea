@@ -5,11 +5,31 @@ import type { TabState } from "./TabState";
 /**
  * What the window looked like, so it opens the same way next time.
  */
-export type UiState = { version: number, activeModule: string | null, railExpanded: boolean, 
+export type UiState = { 
+/**
+ * The file format; saving always writes [`UI_STATE_VERSION`].
+ */
+version: number, 
+/**
+ * The module shown in the work area, by id.
+ */
+activeModule: string | null, 
+/**
+ * Whether the rail shows module names.
+ */
+railExpanded: boolean, 
 /**
  * Sidebar state per module id.
  */
-sidebars: { [key in string]: SidebarState }, tabs: Array<TabState>, activeTab: string | null, 
+sidebars: { [key in string]: SidebarState }, 
+/**
+ * Open tabs, in tab bar order.
+ */
+tabs: Array<TabState>, 
+/**
+ * The id of the active tab.
+ */
+activeTab: string | null, 
 /**
  * Recently closed tabs, newest last.
  */

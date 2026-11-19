@@ -25,6 +25,7 @@ pub const FONT_SIZES: RangeInclusive<u8> = 11..=20;
 const SETTINGS_FILE: &str = "settings.json";
 const UI_DIR: &str = "ui";
 
+/// The person's settings, shared by every project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 #[cfg_attr(
@@ -33,6 +34,7 @@ const UI_DIR: &str = "ui";
     ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
 )]
 pub struct Settings {
+    /// The file format; saving always writes [`SETTINGS_VERSION`].
     pub version: u32,
     pub appearance: Appearance,
     /// Shortcut overrides by command id. `None` turns a shortcut off; a
@@ -50,6 +52,7 @@ impl Default for Settings {
     }
 }
 
+/// Theme, fonts and text size; Settings applies them without a restart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 #[cfg_attr(
@@ -59,8 +62,11 @@ impl Default for Settings {
 )]
 pub struct Appearance {
     pub theme: ThemePreference,
+    /// The interface font, by name.
     pub ui_font: String,
+    /// The font of editors, terminals, tables and logs, by name.
     pub mono_font: String,
+    /// Text size in pixels, within [`FONT_SIZES`].
     pub font_size: u8,
 }
 
@@ -75,6 +81,7 @@ impl Default for Appearance {
     }
 }
 
+/// Which theme to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(
@@ -85,6 +92,7 @@ impl Default for Appearance {
 pub enum ThemePreference {
     Dark,
     Light,
+    /// Follow the OS, also when it changes while Dea runs.
     #[default]
     System,
 }
@@ -98,12 +106,17 @@ pub enum ThemePreference {
     ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
 )]
 pub struct UiState {
+    /// The file format; saving always writes [`UI_STATE_VERSION`].
     pub version: u32,
+    /// The module shown in the work area, by id.
     pub active_module: Option<String>,
+    /// Whether the rail shows module names.
     pub rail_expanded: bool,
     /// Sidebar state per module id.
     pub sidebars: BTreeMap<String, SidebarState>,
+    /// Open tabs, in tab bar order.
     pub tabs: Vec<TabState>,
+    /// The id of the active tab.
     pub active_tab: Option<String>,
     /// Recently closed tabs, newest last.
     pub closed_tabs: Vec<TabState>,
@@ -123,6 +136,7 @@ impl Default for UiState {
     }
 }
 
+/// One module's sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(
@@ -132,9 +146,11 @@ impl Default for UiState {
 )]
 pub struct SidebarState {
     pub visible: bool,
+    /// Width in pixels, as last set; the UI fits it to the window.
     pub width: u16,
 }
 
+/// A tab to open again after a restart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(
@@ -143,20 +159,28 @@ pub struct SidebarState {
     ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
 )]
 pub struct TabState {
+    /// Kept across restarts, so the active tab can be found again.
     pub id: String,
+    /// The contribution id of the tab type, for example `requests.request`.
     pub tab_type: String,
+    /// The text on the tab.
     pub title: String,
     /// Whatever the tab type needs to open the tab again.
     #[cfg_attr(feature = "ts", ts(type = "unknown"))]
     pub params: serde_json::Value,
 }
 
+/// Why settings or UI state could not be saved.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    /// The value breaks a rule, such as a font size outside [`FONT_SIZES`].
+    /// The message is meant to be shown to the person as it is.
     #[error("{0}")]
     Invalid(String),
-    #[error("cannot write {}: {source}", path.display())]
+    /// The file or its folder could not be written.
+    #[error("cannot write {}", path.display())]
     Io {
+        /// The file or folder that could not be written.
         path: PathBuf,
         #[source]
         source: io::Error,
@@ -170,39 +194,53 @@ pub struct Store {
 }
 
 impl Store {
-    /// Does no I/O: folders are created on the first save.
-    pub fn new(app_data: &Path) -> Store {
+    /// A store in the `app_data` folder. Does no I/O: folders are created
+    /// on the first save.
+    #[must_use]
+    pub fn new(app_data: impl Into<PathBuf>) -> Store {
         Store {
-            dir: app_data.to_path_buf(),
+            dir: app_data.into(),
         }
     }
 
-    pub fn settings(&self) -> Settings {
+    /// Reads the settings, or the defaults when there are none yet. A file
+    /// that is damaged, invalid or from a newer Dea is set aside as
+    /// `settings.json.damaged`.
+    pub fn load_settings(&self) -> Settings {
         read_or_default(&self.dir.join(SETTINGS_FILE), |s: &Settings| {
             s.version <= SETTINGS_VERSION && validate(s).is_ok()
         })
     }
 
-    pub fn save_settings(&self, settings: &Settings) -> Result<(), StoreError> {
-        validate(settings)?;
-        let settings = Settings {
-            version: SETTINGS_VERSION,
-            ..settings.clone()
-        };
+    /// Saves the settings in this Dea's format.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Invalid`] when the font size is outside [`FONT_SIZES`]
+    /// or a font name is empty; nothing is written then.
+    /// [`StoreError::Io`] when the file or its folder cannot be written.
+    pub fn save_settings(&self, mut settings: Settings) -> Result<(), StoreError> {
+        validate(&settings)?;
+        settings.version = SETTINGS_VERSION;
         write_json(&self.dir.join(SETTINGS_FILE), &settings)
     }
 
-    pub fn ui_state(&self, key: &str) -> UiState {
+    /// Reads the UI state saved under `key`, or the defaults. Damaged files
+    /// are set aside as for [`Store::load_settings`].
+    pub fn load_ui_state(&self, key: &str) -> UiState {
         read_or_default(&self.ui_path(key), |s: &UiState| {
             s.version <= UI_STATE_VERSION
         })
     }
 
-    pub fn save_ui_state(&self, key: &str, state: &UiState) -> Result<(), StoreError> {
-        let mut state = UiState {
-            version: UI_STATE_VERSION,
-            ..state.clone()
-        };
+    /// Saves the UI state under `key`, keeping the newest
+    /// [`MAX_CLOSED_TABS`] closed tabs.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] when the file or its folder cannot be written.
+    pub fn save_ui_state(&self, key: &str, mut state: UiState) -> Result<(), StoreError> {
+        state.version = UI_STATE_VERSION;
         let extra = state.closed_tabs.len().saturating_sub(MAX_CLOSED_TABS);
         state.closed_tabs.drain(..extra);
         write_json(&self.ui_path(key), &state)

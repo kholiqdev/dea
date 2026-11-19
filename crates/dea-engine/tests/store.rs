@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::error::Error;
 use std::fs;
 
 use dea_engine::store::{
@@ -19,13 +20,13 @@ fn tab(n: usize) -> TabState {
 fn missing_files_give_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::new(dir.path());
-    let s = store.settings();
+    let s = store.load_settings();
     assert_eq!(s.appearance.theme, ThemePreference::System);
     assert_eq!(s.appearance.ui_font, "IBM Plex Sans");
     assert_eq!(s.appearance.mono_font, "IBM Plex Mono");
     assert_eq!(s.appearance.font_size, 13);
     assert!(s.shortcuts.is_empty());
-    assert_eq!(store.ui_state("no-project"), UiState::default());
+    assert_eq!(store.load_ui_state("no-project"), UiState::default());
     // Reading creates nothing.
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
@@ -47,7 +48,7 @@ fn settings_and_ui_state_round_trip() {
         ]),
         ..Settings::default()
     };
-    store.save_settings(&settings).unwrap();
+    store.save_settings(settings.clone()).unwrap();
     let ui = UiState {
         active_module: Some("terminal".into()),
         rail_expanded: true,
@@ -63,18 +64,18 @@ fn settings_and_ui_state_round_trip() {
         closed_tabs: vec![tab(0)],
         ..UiState::default()
     };
-    store.save_ui_state("no-project", &ui).unwrap();
+    store.save_ui_state("no-project", ui.clone()).unwrap();
 
     let again = Store::new(dir.path());
-    assert_eq!(again.settings(), settings);
-    assert_eq!(again.ui_state("no-project"), ui);
+    assert_eq!(again.load_settings(), settings);
+    assert_eq!(again.load_ui_state("no-project"), ui);
 }
 
 #[test]
 fn files_use_camel_case_names() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::new(dir.path());
-    store.save_settings(&Settings::default()).unwrap();
+    store.save_settings(Settings::default()).unwrap();
     let text = fs::read_to_string(dir.path().join("settings.json")).unwrap();
     assert!(text.contains("\"fontSize\": 13"), "{text}");
     assert!(text.contains("\"theme\": \"system\""), "{text}");
@@ -88,14 +89,14 @@ fn font_size_outside_11_to_20_is_refused() {
         let mut s = Settings::default();
         s.appearance.font_size = size;
         assert!(matches!(
-            store.save_settings(&s),
+            store.save_settings(s),
             Err(StoreError::Invalid(_))
         ));
     }
     for size in [11, 20] {
         let mut s = Settings::default();
         s.appearance.font_size = size;
-        store.save_settings(&s).unwrap();
+        store.save_settings(s).unwrap();
     }
 }
 
@@ -106,7 +107,7 @@ fn an_empty_font_name_is_refused() {
     let mut s = Settings::default();
     s.appearance.mono_font = "  ".into();
     assert!(matches!(
-        store.save_settings(&s),
+        store.save_settings(s),
         Err(StoreError::Invalid(_))
     ));
     assert!(!dir.path().join("settings.json").exists());
@@ -121,15 +122,15 @@ fn damaged_settings_fall_back_to_defaults_and_are_kept() {
         fs::write(&path, text).unwrap();
         let store = Store::new(dir.path());
 
-        assert_eq!(store.settings(), Settings::default(), "{text}");
+        assert_eq!(store.load_settings(), Settings::default(), "{text}");
         assert_eq!(
             fs::read_to_string(dir.path().join("settings.json.damaged")).unwrap(),
             text
         );
         assert!(!path.exists());
 
-        store.save_settings(&Settings::default()).unwrap();
-        assert_eq!(store.settings(), Settings::default());
+        store.save_settings(Settings::default()).unwrap();
+        assert_eq!(store.load_settings(), Settings::default());
         assert_eq!(
             fs::read_to_string(dir.path().join("settings.json.damaged")).unwrap(),
             text,
@@ -143,7 +144,7 @@ fn damaged_ui_state_falls_back_to_defaults_and_is_kept() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::new(dir.path());
     store
-        .save_ui_state("no-project", &UiState::default())
+        .save_ui_state("no-project", UiState::default())
         .unwrap();
     let file = fs::read_dir(dir.path().join("ui"))
         .unwrap()
@@ -153,7 +154,7 @@ fn damaged_ui_state_falls_back_to_defaults_and_is_kept() {
         .path();
     fs::write(&file, r#"{"tabs": 5}"#).unwrap();
 
-    assert_eq!(store.ui_state("no-project"), UiState::default());
+    assert_eq!(store.load_ui_state("no-project"), UiState::default());
     let mut damaged = file.clone().into_os_string();
     damaged.push(".damaged");
     assert_eq!(fs::read_to_string(damaged).unwrap(), r#"{"tabs": 5}"#);
@@ -171,10 +172,10 @@ fn ui_state_is_kept_per_key() {
         active_module: Some("database".into()),
         ..UiState::default()
     };
-    store.save_ui_state("no-project", &a).unwrap();
-    store.save_ui_state("p-1", &b).unwrap();
-    assert_eq!(store.ui_state("no-project"), a);
-    assert_eq!(store.ui_state("p-1"), b);
+    store.save_ui_state("no-project", a.clone()).unwrap();
+    store.save_ui_state("p-1", b.clone()).unwrap();
+    assert_eq!(store.load_ui_state("no-project"), a);
+    assert_eq!(store.load_ui_state("p-1"), b);
     // The key never appears in a file name.
     for entry in fs::read_dir(dir.path().join("ui")).unwrap() {
         let name = entry.unwrap().file_name().into_string().unwrap();
@@ -190,8 +191,8 @@ fn closed_tabs_keep_the_newest_twenty() {
         closed_tabs: (0..25).map(tab).collect(),
         ..UiState::default()
     };
-    store.save_ui_state("no-project", &ui).unwrap();
-    let closed = store.ui_state("no-project").closed_tabs;
+    store.save_ui_state("no-project", ui.clone()).unwrap();
+    let closed = store.load_ui_state("no-project").closed_tabs;
     assert_eq!(closed.len(), MAX_CLOSED_TABS);
     assert_eq!(closed.first().unwrap().id, "t5");
     assert_eq!(closed.last().unwrap().id, "t24");
@@ -205,10 +206,36 @@ fn settings_that_are_not_utf8_are_set_aside() {
     fs::write(&path, bytes).unwrap();
     let store = Store::new(dir.path());
 
-    assert_eq!(store.settings(), Settings::default());
+    assert_eq!(store.load_settings(), Settings::default());
     assert_eq!(
         fs::read(dir.path().join("settings.json.damaged")).unwrap(),
         bytes
     );
     assert!(!path.exists());
+}
+
+#[test]
+fn a_write_error_names_the_path_and_keeps_the_cause_separate() {
+    let dir = tempfile::tempdir().unwrap();
+    // A file where the store expects its folder makes every write fail.
+    let blocked = dir.path().join("data");
+    fs::write(&blocked, "").unwrap();
+
+    let err = Store::new(&blocked)
+        .save_settings(Settings::default())
+        .unwrap_err();
+
+    let StoreError::Io { path, .. } = &err else {
+        panic!("expected an I/O error, got {err:?}");
+    };
+    assert_eq!(path, &blocked);
+    let cause = err
+        .source()
+        .expect("the I/O error is the source")
+        .to_string();
+    // The cause comes through source(), so a printed chain shows it once.
+    assert!(
+        !err.to_string().contains(&cause),
+        "{err} repeats its cause {cause}"
+    );
 }
