@@ -231,22 +231,25 @@ fn validate(s: &Settings) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Reads `path`, or gives the defaults. A file that does not parse, or
-/// that `usable` rejects, is renamed to `<name>.damaged`.
+/// Reads `path`, or gives the defaults when there is no file. A file that
+/// cannot be read or parsed (not UTF-8, not JSON, locked), or that `usable`
+/// rejects, is renamed to `<name>.damaged` so the next save cannot
+/// overwrite it.
 fn read_or_default<T: DeserializeOwned + Default>(path: &Path, usable: impl Fn(&T) -> bool) -> T {
-    let Ok(text) = fs::read_to_string(path) else {
-        return T::default();
+    let value = match fs::read(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return T::default(),
+        Err(_) => None,
+        Ok(bytes) => serde_json::from_slice::<T>(&bytes)
+            .ok()
+            .filter(|v| usable(v)),
     };
-    match serde_json::from_str::<T>(&text) {
-        Ok(value) if usable(&value) => value,
-        _ => {
-            let mut damaged = path.as_os_str().to_owned();
-            damaged.push(".damaged");
-            // If even the rename fails, the next save replaces the file.
-            let _ = fs::rename(path, PathBuf::from(damaged));
-            T::default()
-        }
-    }
+    value.unwrap_or_else(|| {
+        let mut damaged = path.as_os_str().to_owned();
+        damaged.push(".damaged");
+        // If even the rename fails, the next save replaces the file.
+        let _ = fs::rename(path, PathBuf::from(damaged));
+        T::default()
+    })
 }
 
 /// Replaces `path` through a temporary file in the same folder, so a crash

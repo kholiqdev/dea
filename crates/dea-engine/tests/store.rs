@@ -196,3 +196,19 @@ fn closed_tabs_keep_the_newest_twenty() {
     assert_eq!(closed.first().unwrap().id, "t5");
     assert_eq!(closed.last().unwrap().id, "t24");
 }
+
+#[test]
+fn settings_that_are_not_utf8_are_set_aside() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let bytes = [0xff, 0xfe, b'{', b'}'];
+    fs::write(&path, bytes).unwrap();
+    let store = Store::new(dir.path());
+
+    assert_eq!(store.settings(), Settings::default());
+    assert_eq!(
+        fs::read(dir.path().join("settings.json.damaged")).unwrap(),
+        bytes
+    );
+    assert!(!path.exists());
+}
