@@ -15,6 +15,12 @@ export const manifest: ModuleManifest = {
     },
   ],
   shortcuts: [{ command: "settings.open", chord: "Mod+," }],
+  intents: [
+    {
+      intent: "settings.openSection",
+      handler: () => import("./intents/open-section"),
+    },
+  ],
   settings: [
     {
       id: "settings.appearance",

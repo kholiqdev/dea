@@ -45,6 +45,14 @@ export const manifest: ModuleManifest = {
     },
   ],
   shortcuts: [{ command: "project.saveEnvironments", chord: "Mod+S" }],
+  searchSources: [
+    {
+      id: "project.searchEnvironments",
+      group: "Environments",
+      order: 60,
+      source: () => import("./search"),
+    },
+  ],
   intents: [
     {
       intent: "project.editEnvironments",

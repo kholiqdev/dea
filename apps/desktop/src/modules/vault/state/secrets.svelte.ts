@@ -22,6 +22,8 @@ class Secrets {
   rows = $state.raw<SecretRow[]>([]);
   /** The environment picked in the sidebar; not kept across restarts. */
   chosen = $state<string | null>(null);
+  /** The secret shown in the inspector, by its place. */
+  choice = $state<{ environment: string; name: string } | null>(null);
 
   async load(): Promise<void> {
     this.rows = await vaultSecrets();
@@ -29,6 +31,12 @@ class Secrets {
 
   of(environment: string): SecretRow[] {
     return this.rows.filter((r) => r.environment === environment);
+  }
+
+  /** Shows one secret: its environment in the sidebar, the secret selected. */
+  show(environment: string, name: string): void {
+    this.chosen = environment;
+    this.choice = { environment, name };
   }
 
   /** How many values this device has in the environment. */
@@ -51,4 +59,5 @@ export const secrets = new Secrets();
 export function resetSecrets(): void {
   secrets.rows = [];
   secrets.chosen = null;
+  secrets.choice = null;
 }
