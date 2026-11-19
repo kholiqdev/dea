@@ -14,6 +14,10 @@ export const DEFAULT_SETTINGS: Settings = {
     fontSize: 13,
   },
   shortcuts: {},
+  security: {
+    autoLockMinutes: 15,
+    productionMinutes: 10,
+  },
 };
 
 export interface SettingsPatch {
