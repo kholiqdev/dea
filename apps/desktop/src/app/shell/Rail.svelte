@@ -9,7 +9,7 @@
   import type { ModuleManifest } from "../contributions/types";
   import { railIcon } from "../modules";
   import { shellContext } from "./context";
-  import { effectiveShortcuts } from "./hotkeys.svelte";
+  import { effectiveShortcuts } from "../contributions/shortcuts";
 
   const ctx = shellContext();
   const platform = currentPlatform();

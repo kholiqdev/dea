@@ -5,6 +5,7 @@ export const manifest: ModuleManifest = {
   title: "Settings",
   rail: { icon: "sliders-horizontal", group: "bottom", order: 2 },
   view: () => import("./SettingsView.svelte"),
+  sidebar: () => import("./SettingsSidebar.svelte"),
   commands: [
     {
       id: "settings.open",
@@ -13,4 +14,18 @@ export const manifest: ModuleManifest = {
     },
   ],
   shortcuts: [{ command: "settings.open", chord: "Mod+," }],
+  settings: [
+    {
+      id: "settings.appearance",
+      title: "Appearance",
+      order: 1,
+      view: () => import("./components/AppearanceSection.svelte"),
+    },
+    {
+      id: "settings.shortcuts",
+      title: "Keyboard shortcuts",
+      order: 2,
+      view: () => import("./components/ShortcutsSection.svelte"),
+    },
+  ],
 };

@@ -7,7 +7,7 @@
   } from "$lib/keyboard/chord";
   import { settings } from "$lib/settings/settings.svelte";
   import { shellContext } from "./context";
-  import { effectiveShortcuts } from "./hotkeys.svelte";
+  import { effectiveShortcuts } from "../contributions/shortcuts";
 
   const ctx = shellContext();
   const module = $derived(

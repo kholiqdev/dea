@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   chordFromEvent,
+  chordParts,
   chordToString,
   formatChord,
   parseChord,
@@ -99,4 +100,14 @@ test("named keys and punctuation", () => {
 test("same chord compares every field", () => {
   expect(sameChord(parseChord("Mod+T"), parseChord("mod+t"))).toBe(true);
   expect(sameChord(parseChord("Mod+T"), parseChord("Mod+Shift+T"))).toBe(false);
+});
+
+test("splits a chord into keycaps", () => {
+  expect(chordParts(parseChord("Mod+Shift+T"), "mac")).toEqual(["⌘", "⇧", "T"]);
+  expect(chordParts(parseChord("Mod+Shift+T"), "other")).toEqual([
+    "Ctrl",
+    "Shift",
+    "T",
+  ]);
+  expect(chordParts(parseChord("Alt+Enter"), "mac")).toEqual(["⌥", "↩"]);
 });
