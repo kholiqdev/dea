@@ -43,7 +43,8 @@
   });
 </script>
 
-{#if info && active}
+<!-- Shown without environments too: it holds "Edit environments…". -->
+{#if info}
   <Menu
     bind:open={menus.environment}
     {items}
@@ -51,9 +52,13 @@
     title="Environment for requests"
   >
     {#snippet trigger()}
-      <span class="dot" style:background={environmentColor(active)}></span>
-      <span class="name">{active.name}</span>
-      {#if active.production}<span class="prod-label">production</span>{/if}
+      {#if active}
+        <span class="dot" style:background={environmentColor(active)}></span>
+        <span class="name">{active.name}</span>
+        {#if active.production}<span class="prod-label">production</span>{/if}
+      {:else}
+        <span class="name none">No environment</span>
+      {/if}
       <ChevronDown size={14} strokeWidth={1.5} />
     {/snippet}
   </Menu>
@@ -69,6 +74,10 @@
 
   .name {
     color: var(--text-1);
+  }
+
+  .none {
+    color: var(--text-3);
   }
 
   .prod-label {

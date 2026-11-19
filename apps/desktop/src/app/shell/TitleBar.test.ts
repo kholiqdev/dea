@@ -45,6 +45,13 @@ function setup(info: ProjectInfo | null = projectInfo()) {
       title: "Welcome",
       scope: "app",
       view: railModule("welcome", 8).view,
+      commands: [
+        {
+          id: "project.editEnvironments",
+          title: "Edit environments",
+          action: { type: "openModule", module: "requests" },
+        },
+      ],
     },
   );
   const shell = new Shell(registry);
@@ -131,4 +138,20 @@ test("project-scoped modules and their shortcuts are off without a project", asy
   expect(await screen.findByText("settings view")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Back" }));
   expect(await screen.findByText("welcome view")).toBeInTheDocument();
+});
+
+test("a project without environments still reaches the editor", async () => {
+  const { shell } = setup(
+    projectInfo({ environments: [], environmentFiles: {} }),
+  );
+  const bar = screen.getByRole("banner");
+  expect(
+    within(bar).getByRole("button", { name: /No environment/ }),
+  ).toBeInTheDocument();
+  await userEvent.keyboard("{Control>}e{/Control}");
+  const menu = await screen.findByRole("menu", { name: "Environments" });
+  await userEvent.click(
+    within(menu).getByRole("menuitem", { name: /Edit environments/ }),
+  );
+  await waitFor(() => expect(shell.activeModule).toBe("requests"));
 });
