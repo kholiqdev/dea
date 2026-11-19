@@ -160,3 +160,34 @@ export async function answerVaultPassword(password: string): Promise<void> {
     .$(`button=${fields.length > 1 ? "Create password" : "Unlock"}`)
     .click();
 }
+
+/** Opens the command palette with its shortcut and waits for it. */
+export async function openPalette(): Promise<void> {
+  await browser.keys([MOD, "k"]);
+  await $('[role="dialog"]').$('input[role="combobox"]').waitForDisplayed();
+}
+
+/** Types `text` into the open palette's search box. */
+export async function paletteSearch(text: string): Promise<void> {
+  await $('[role="dialog"]').$('input[role="combobox"]').setValue(text);
+}
+
+/** The label of the palette's active row, read in the page. */
+export function paletteActive(): Promise<string | null> {
+  return browser.execute(() => {
+    const box = document.querySelector('[role="combobox"]');
+    const id = box?.getAttribute("aria-activedescendant");
+    return id
+      ? (document.getElementById(id)?.querySelector(".label")?.textContent ??
+          null)
+      : null;
+  });
+}
+
+/** Waits until no dialog is open. */
+export async function waitForNoDialog(): Promise<void> {
+  await browser.waitUntil(
+    async () => !(await $('[role="dialog"]').isExisting()),
+    { timeoutMsg: "a dialog stayed open" },
+  );
+}
