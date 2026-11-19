@@ -11,6 +11,7 @@ use hyper::header::HeaderValue;
 use tokio_util::sync::CancellationToken;
 
 use crate::connect::{self, Connection};
+use crate::cookies::CookieJar;
 use crate::error::{HttpError, describe};
 use crate::pool::{Pool, PoolKey};
 use crate::reader::{BodyReader, Encoding, ReaderConfig};
@@ -62,6 +63,7 @@ struct Inner {
 pub struct SendContext<'a> {
     cancel: &'a CancellationToken,
     events: Option<&'a EventSink<'a>>,
+    cookies: Option<&'a CookieJar>,
 }
 
 /// Receives the events of the response being read.
@@ -87,6 +89,7 @@ impl<'a> SendContext<'a> {
         SendContext {
             cancel,
             events: None,
+            cookies: None,
         }
     }
 
@@ -97,12 +100,21 @@ impl<'a> SendContext<'a> {
         self.events = Some(sink);
         self
     }
+
+    /// Sends the cookies of `jar` that match each hop, and keeps the ones
+    /// each hop sets. Without a jar no cookie is sent or kept.
+    #[must_use]
+    pub fn cookies(mut self, jar: &'a CookieJar) -> Self {
+        self.cookies = Some(jar);
+        self
+    }
 }
 
 /// What one send reports to, and when it began.
 #[derive(Clone, Copy)]
 struct Run<'a> {
     events: Option<&'a EventSink<'a>>,
+    cookies: Option<&'a CookieJar>,
     started: Instant,
 }
 
@@ -203,7 +215,7 @@ impl Client {
         tokio::select! {
             biased;
             () = ctx.cancel.cancelled() => Err(HttpError::Cancelled),
-            result = self.follow(request, Run { events: ctx.events, started: Instant::now() }) => result,
+            result = self.follow(request, Run { events: ctx.events, cookies: ctx.cookies, started: Instant::now() }) => result,
         }
     }
 
@@ -212,7 +224,16 @@ impl Client {
         let mut current = request;
         let mut redirects = Vec::new();
         loop {
-            let mut response = self.hop(&current, run).await?;
+            // The jar's cookies go on a copy, so they are matched again
+            // for every hop and never carried into the next one.
+            let mut response = match run.cookies {
+                Some(jar) => {
+                    let response = self.hop(&jar.apply(&current), run).await?;
+                    jar.absorb(&current.url, &response.headers);
+                    response
+                }
+                None => self.hop(&current, run).await?,
+            };
             let next = if current.options.follow_redirects {
                 match header(&response.headers, "location") {
                     Some(location) => next_hop(&current, response.status, location)?,

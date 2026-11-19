@@ -49,6 +49,7 @@ base64 = "0.23.1"
 block2 = "0.6.2"
 bytes = "1.12.1"
 cargo_metadata = "0.23.1"
+cookie_store = { version = "0.22.1", default-features = false, features = ["serde_json"] }
 dea-engine = { path = "crates/dea-engine" }
 dea-http = { path = "crates/dea-http" }
 dea-project = { path = "crates/dea-project" }
