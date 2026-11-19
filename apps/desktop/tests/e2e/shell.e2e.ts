@@ -1,4 +1,4 @@
-import { $, browser, expect } from "@wdio/globals";
+import { $, $$, browser, expect } from "@wdio/globals";
 import { Key } from "webdriverio";
 import {
   MOD,
@@ -22,9 +22,9 @@ describe("the shell", () => {
   });
 
   it("opens each module from the rail and with Mod+1 to Mod+4", async () => {
-    await expect($("header")).toHaveText(
-      expect.stringContaining("No project open"),
-    );
+    const project = $("header .project");
+    await expect(project).toBeDisplayed();
+    await expect(project).toHaveText("No project open");
     for (const [id, title] of [
       ...MAIN,
       ["vault", "Vault"],
@@ -100,7 +100,7 @@ describe("the shell", () => {
   it("switches between 30 tabs in under 50 ms each", async () => {
     await openTestTabs(30);
     await expect(mainHeading("Tab 30")).toBeDisplayed();
-    await $('[role="tab"]').click();
+    await $$('[role="tab"]')[0]!.click();
     await expect(mainHeading("Tab 1")).toBeDisplayed();
     await browser.execute(() => performance.clearMeasures());
     for (let i = 0; i < 29; i++) await browser.keys(Key.ArrowRight);

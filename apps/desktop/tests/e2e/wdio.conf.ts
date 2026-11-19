@@ -3,7 +3,7 @@
 // WKWebView.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -31,6 +31,9 @@ let driver: ChildProcess | undefined;
 let dataDir: string | undefined;
 
 const DRIVER_PORT = 4444;
+
+/** Screenshots and page source of failed specs, kept by CI. */
+const ARTIFACTS = join(repo, "target", "e2e");
 
 function portOpen(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -74,6 +77,17 @@ export const config: WebdriverIO.Config = {
   waitforTimeout: 15_000,
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,
+
+  async afterTest(test, _context, result) {
+    if (result.passed) return;
+    mkdirSync(ARTIFACTS, { recursive: true });
+    const name = test.title.replace(/[^a-z0-9]+/gi, "-");
+    await browser.saveScreenshot(join(ARTIFACTS, `${name}.png`));
+    writeFileSync(
+      join(ARTIFACTS, `${name}.html`),
+      await browser.getPageSource(),
+    );
+  },
 
   async onPrepare() {
     if (await portOpen(DRIVER_PORT))
