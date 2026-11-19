@@ -30,7 +30,9 @@ fn published_schemas_are_up_to_date() {
         [
             "manifest.schema.json",
             "environment.schema.json",
-            "vault.schema.json"
+            "vault.schema.json",
+            "request.schema.json",
+            "folder.schema.json"
         ]
     );
     for (file, schema) in json_schemas() {
@@ -106,5 +108,34 @@ fn schemas_follow_the_parser_rules() {
     assert!(!is_valid(
         "environment.schema.json",
         "name: s\nproduction: false\nvariables:\n- name: baseUrl\n"
+    ));
+}
+
+#[test]
+fn request_schema_accepts_a_full_request() {
+    let full = "name: Upload\nmethod: POST\nurl: '{{baseUrl}}/files/:id'\n\
+pathVariables:\n- name: id\n  value: '1'\n\
+params:\n- name: q\n  value: x\n  enabled: false\n\
+headers:\n- name: Accept\n  value: '*/*'\n  description: any\n\
+body:\n  mode: formData\n  fields:\n  - name: doc\n    file: a.pdf\n    contentType: application/pdf\n\
+auth:\n  type: apiKey\n  key: k\n  value: '{{vault:k}}'\n  in: query\n\
+options:\n  timeoutMs: 1000\n  followRedirects: false\n";
+    assert!(is_valid("request.schema.json", full));
+    assert!(is_valid(
+        "request.schema.json",
+        "name: A\nmethod: GET\nurl: u\nauth:\n  type: none\nbody:\n  mode: json\n  text: '{}'\n"
+    ));
+    assert!(!is_valid("request.schema.json", "name: A\nmethod: GET\n"));
+    assert!(!is_valid(
+        "request.schema.json",
+        "name: A\nmethod: GET\nurl: u\nauth:\n  type: oauth\n"
+    ));
+    assert!(!is_valid(
+        "request.schema.json",
+        "name: A\nmethod: GET\nurl: u\ncolour: red\n"
+    ));
+    assert!(is_valid(
+        "folder.schema.json",
+        "name: Shipments\norder:\n- a\ntls:\n  caCertificates:\n  - ca.pem\n"
     ));
 }

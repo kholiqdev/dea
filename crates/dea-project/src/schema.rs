@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde_json::Value;
 
-use crate::{Environment, Manifest, VaultManifest};
+use crate::{Environment, FolderFile, Manifest, RequestFile, VaultManifest};
 
 /// Every schema with the file name it is published under.
 pub fn json_schemas() -> Vec<(&'static str, Value)> {
@@ -12,6 +12,8 @@ pub fn json_schemas() -> Vec<(&'static str, Value)> {
         ("manifest.schema.json", schema::<Manifest>()),
         ("environment.schema.json", schema::<Environment>()),
         ("vault.schema.json", schema::<VaultManifest>()),
+        ("request.schema.json", schema::<RequestFile>()),
+        ("folder.schema.json", schema::<FolderFile>()),
     ]
 }
 

@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "ApiKeyLocation": {
+      "enum": [
+        "header",
+        "query"
+      ],
+      "type": "string"
+    },
+    "Auth": {
+      "description": "How a request signs in. `inherit` takes the setting of the nearest\nfolder that has one.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "inherit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "bearer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "token"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "password": {
+              "type": "string"
+            },
+            "type": {
+              "const": "basic",
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "username",
+            "password"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "$ref": "#/$defs/ApiKeyLocation"
+            },
+            "key": {
+              "type": "string"
+            },
+            "type": {
+              "const": "apiKey",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "key",
+            "value",
+            "in"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ClientCertificate": {
+      "additionalProperties": false,
+      "properties": {
+        "certificate": {
+          "description": "Path of the certificate, relative to the project.",
+          "type": "string"
+        },
+        "key": {
+          "description": "A single `{{vault:<name>}}` reference: a private key never lives in\nthe project folder.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "certificate",
+        "key"
+      ],
+      "type": "object"
+    },
+    "KeyValue": {
+      "additionalProperties": false,
+      "description": "A parameter or header. A disabled row stays in the file but is not sent.",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SendOptions": {
+      "additionalProperties": false,
+      "description": "Per-request or per-folder send settings. A field left out inherits.",
+      "properties": {
+        "cookies": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "followRedirects": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "maxRedirects": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "timeoutMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "useSystemProxy": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "verifyTls": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "TlsSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "caCertificates": {
+          "description": "Paths of extra certificate authorities, relative to the project.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "clientCertificate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClientCertificate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Variable": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "description": "Plain text, or a reference to a secret such as `{{vault:access_token}}`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A folder's settings, stored in its `_folder.yaml`. The file at\n`requests/_folder.yaml` only sets the order of the collections.",
+  "properties": {
+    "auth": {
+      "$ref": "#/$defs/Auth"
+    },
+    "headers": {
+      "items": {
+        "$ref": "#/$defs/KeyValue"
+      },
+      "type": "array"
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "options": {
+      "$ref": "#/$defs/SendOptions"
+    },
+    "order": {
+      "description": "File names (without `.yaml`) and folder names, in display order.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tls": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TlsSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "variables": {
+      "items": {
+        "$ref": "#/$defs/Variable"
+      },
+      "type": "array"
+    }
+  },
+  "title": "FolderFile",
+  "type": "object"
+}

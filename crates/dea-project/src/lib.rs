@@ -8,6 +8,8 @@ mod load;
 mod migrate;
 mod model;
 mod names;
+mod request;
+mod requests;
 mod resolve;
 mod schema;
 mod secrets;
@@ -27,6 +29,14 @@ pub use model::{
     SecretKind, SecretSpec, Variable, VaultManifest,
 };
 pub use names::{check_relative_path, is_production_name, safe_file_stem, unique_file_stem};
+pub use request::{
+    ApiKeyLocation, Auth, Body, ClientCertificate, FolderFile, FormField, KeyValue, RawLanguage,
+    RequestFile, SendOptions, TlsSettings,
+};
+pub use requests::{
+    Folder, LoadedRequests, RequestEntry, RequestLocation, RequestTree, TreeItem, load_requests,
+    save_request,
+};
 pub use resolve::{
     DynamicSource, Resolution, ResolveContext, ResolveError, Scope, ScopeKind, SecretLookup,
     SecretLookupError, SystemDynamicSource, UsedVariable, ValueSource, resolve,
