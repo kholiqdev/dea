@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dea/ui": "workspace:*",
     "@tauri-apps/api": "^2.12.4"
   },
   "devDependencies": {

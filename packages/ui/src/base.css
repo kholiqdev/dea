@@ -1,0 +1,71 @@
+/* A small reset and the page defaults. Every value comes from tokens.css. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--font-size, 13px);
+  line-height: 1.4;
+  background: var(--bg-1);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+ul,
+ol {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}

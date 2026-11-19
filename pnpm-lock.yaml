@@ -53,6 +53,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@dea/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@tauri-apps/api':
         specifier: ^2.12.4
         version: 2.12.4
@@ -63,6 +66,49 @@ importers:
       '@tauri-apps/cli':
         specifier: ^2.12.4
         version: 2.12.4
+      '@testing-library/jest-dom':
+        specifier: ^7.0.1
+        version: 7.0.1(@testing-library/dom@10.4.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.1)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)))
+      '@testing-library/svelte':
+        specifier: ^5.4.2
+        version: 5.4.2(svelte@5.57.3(@typescript-eslint/types@8.72.2))(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0))(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.1)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)))
+      '@tsconfig/svelte':
+        specifier: ^5.0.9
+        version: 5.0.9
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      jsdom:
+        specifier: ^31.0.1
+        version: 31.0.1
+      svelte:
+        specifier: ^5.57.3
+        version: 5.57.3(@typescript-eslint/types@8.72.2)
+      svelte-check:
+        specifier: ^4.7.8
+        version: 4.7.8(picomatch@4.0.7)(svelte@5.57.3(@typescript-eslint/types@8.72.2))(typescript@6.0.3)
+      typescript:
+        specifier: ~6.0.3
+        version: 6.0.3
+      vite:
+        specifier: ^8.3.8
+        version: 8.3.8(@types/node@26.6.6)(jiti@2.7.0)
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@26.6.6)(jsdom@31.0.1)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0))
+
+  packages/ui:
+    dependencies:
+      '@fontsource/ibm-plex-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/ibm-plex-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
+    devDependencies:
+      '@sveltejs/vite-plugin-svelte':
+        specifier: ^7.3.1
+        version: 7.3.1(svelte@5.57.3(@typescript-eslint/types@8.72.2))(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0))
       '@testing-library/jest-dom':
         specifier: ^7.0.1
         version: 7.0.1(@testing-library/dom@10.4.2)(vitest@5.1.0(@types/node@26.6.6)(jsdom@31.0.1)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)))
@@ -270,6 +316,12 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource/ibm-plex-mono@5.3.0':
+    resolution: {integrity: sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==}
+
+  '@fontsource/ibm-plex-sans@5.3.0':
+    resolution: {integrity: sha512-CbE4CbbEEZJX860XyUiRpsksXIQR8Rp2XDva2VO53NJox9tVNtusrysd2x5YkUEY3ErQ66W1IiiQL8/wihhw5w==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -2214,6 +2266,10 @@ snapshots:
       levn: 0.4.1
 
   '@exodus/bytes@1.16.0': {}
+
+  '@fontsource/ibm-plex-mono@5.3.0': {}
+
+  '@fontsource/ibm-plex-sans@5.3.0': {}
 
   '@humanfs/core@0.19.2':
     dependencies:
