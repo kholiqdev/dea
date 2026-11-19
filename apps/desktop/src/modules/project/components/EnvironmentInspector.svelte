@@ -22,16 +22,26 @@
   ] as const;
 
   const env = $derived(draft.draft);
+  let authorizing = $state(false);
 
   // Production on disk can only be turned off after signing in (F1-FON-07 #4).
   async function toggleProduction(): Promise<void> {
-    if (env.production && draft.saved?.production) {
-      const ok = await vaultApi().authorize(
-        `turn off production for ${draft.saved.name}`,
-      );
-      if (!ok) return;
+    if (authorizing) return;
+    // Another environment may be selected by the time the answer comes.
+    const target = draft.draft;
+    if (target.production && draft.saved?.production) {
+      authorizing = true;
+      try {
+        const ok = await vaultApi().authorize(
+          `turn off production for ${draft.saved.name}`,
+        );
+        if (ok) target.production = false;
+      } finally {
+        authorizing = false;
+      }
+      return;
     }
-    env.production = !env.production;
+    target.production = !target.production;
   }
 </script>
 
