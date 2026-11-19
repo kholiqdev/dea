@@ -15,6 +15,9 @@
 //!   chunks, `ms` apart.
 //! - `/stall-body` answers 200, sends one byte and then nothing.
 //! - `/bytes/{n}` answers 200 with `n` bytes of `x`, generated while sending.
+//! - `/throttle/{bytes_per_s}` reads the request body no faster than that,
+//!   then answers 200 with the number of bytes it read. `0` never reads the
+//!   body and never answers. The recorded body is empty.
 //! - `/sse` answers a `text/event-stream` of three events 100 ms apart, with a
 //!   comment first; the second has two data lines and an id.
 //! - `/gzip-cut` answers the `/gzip` body without its last bytes.
@@ -409,8 +412,23 @@ async fn handle(
 ) -> Result<Reply, Infallible> {
     let at = Instant::now();
     let (parts, body) = request.into_parts();
-    let Some(body) = read_body(body).await else {
-        return Ok(reply(StatusCode::BAD_REQUEST, Bytes::new()));
+    let throttle = parts
+        .uri
+        .path()
+        .strip_prefix("/throttle/")
+        .map(str::parse::<u64>);
+    let (body, answer) = match throttle {
+        Some(Ok(rate)) => {
+            let Some(read) = read_slowly(body, rate).await else {
+                return Ok(reply(StatusCode::BAD_REQUEST, Bytes::new()));
+            };
+            (Vec::new(), Some(Bytes::from(read.to_string())))
+        }
+        Some(Err(_)) => return Ok(reply(StatusCode::BAD_REQUEST, Bytes::new())),
+        None => match read_body(body).await {
+            Some(body) => (body, None),
+            None => return Ok(reply(StatusCode::BAD_REQUEST, Bytes::new())),
+        },
     };
     let echo = if parts.uri.path() == "/echo" && parts.uri.query() != Some("quiet") {
         Bytes::copy_from_slice(&body)
@@ -442,7 +460,28 @@ async fn handle(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .push(received);
+    if let Some(answer) = answer {
+        return Ok(reply(StatusCode::OK, answer));
+    }
     Ok(route(parts.uri.path(), parts.uri.query(), echo, &close).await)
+}
+
+/// Reads `body` no faster than `rate` bytes a second and returns how many
+/// bytes it read. With `rate` 0 it never reads, and never returns.
+async fn read_slowly(mut body: Incoming, rate: u64) -> Option<u64> {
+    if rate == 0 {
+        std::future::pending::<()>().await;
+    }
+    let started = tokio::time::Instant::now();
+    let mut read = 0u64;
+    while let Some(frame) = body.frame().await {
+        if let Ok(chunk) = frame.ok()?.into_data() {
+            read += chunk.len() as u64;
+        }
+        let due = Duration::from_secs_f64(read as f64 / rate as f64);
+        tokio::time::sleep_until(started + due).await;
+    }
+    Some(read)
 }
 
 async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> Reply {

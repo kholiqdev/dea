@@ -1,6 +1,7 @@
 //! Timeouts, cancel, redirects, TLS options and error kinds, against the
 //! local test servers.
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dea_http::{
@@ -288,6 +289,63 @@ async fn stalled_body_times_out() {
     )
     .await;
     assert!(matches!(result, Err(HttpError::Timeout(_))), "{result:?}");
+}
+
+/// A file of `len` bytes in `dir`.
+fn file_of(dir: &Path, len: usize) -> PathBuf {
+    use std::io::Write as _;
+    let path = dir.join("upload.bin");
+    let mut file = std::fs::File::create(&path).unwrap();
+    let block = vec![b'x'; 1024 * 1024];
+    for _ in 0..len / block.len() {
+        file.write_all(&block).unwrap();
+    }
+    path
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn steady_upload_is_not_a_timeout() {
+    // The server reads 16 MiB a second, so the upload lasts twice the
+    // timeout. What the socket buffers still hold once the last byte is
+    // written is read well within the timeout.
+    const SIZE: usize = 48 * 1024 * 1024;
+    let server = TestServer::start(Tls::None).await;
+    let dir = tempfile::tempdir().unwrap();
+    let request = Request {
+        body: Body::File {
+            path: file_of(dir.path(), SIZE),
+            content_type: None,
+        },
+        ..request(
+            "POST",
+            &server.url(&format!("/throttle/{}", 16 * 1024 * 1024)),
+            with_timeout(1500),
+        )
+    };
+    let started = Instant::now();
+    let response = send(&client(), request).await.unwrap();
+    assert!(started.elapsed() > Duration::from_secs(2));
+    assert_eq!(
+        response.body.read_all().unwrap(),
+        SIZE.to_string().as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn stalled_upload_times_out() {
+    let server = TestServer::start(Tls::None).await;
+    // More than the socket buffers hold, to a server that never reads it.
+    let request = Request {
+        body: Body::Bytes {
+            data: vec![b'x'; 32 * 1024 * 1024].into(),
+            content_type: None,
+        },
+        ..request("POST", &server.url("/throttle/0"), with_timeout(300))
+    };
+    let started = Instant::now();
+    let result = send(&client(), request).await;
+    assert!(matches!(result, Err(HttpError::Timeout(_))), "{result:?}");
+    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[tokio::test]
