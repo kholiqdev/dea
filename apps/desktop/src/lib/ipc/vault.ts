@@ -2,6 +2,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { ProjectInfo } from "./bindings/ProjectInfo";
+import type { SecretInput } from "./bindings/SecretInput";
 import type { SecretRow } from "./bindings/SecretRow";
 import type { UnlockMethod } from "./bindings/UnlockMethod";
 import type { VaultStatus } from "./bindings/VaultStatus";
@@ -101,4 +103,12 @@ export function vaultDeleteValue(
   name: string,
 ): Promise<void> {
   return invoke<void>("vault_delete_value", { environment, name });
+}
+
+/**
+ * Declares the secret in the project and stores its value. Returns the
+ * project as it is now. The value passes here and nowhere else.
+ */
+export function vaultSaveSecret(input: SecretInput): Promise<ProjectInfo> {
+  return invoke<ProjectInfo>("vault_save_secret", { input });
 }

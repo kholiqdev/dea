@@ -5,17 +5,20 @@
   import { projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
   import { vaultApi } from "$app/contributions/vault-api";
+  import type { ProjectInfo } from "$lib/ipc/bindings/ProjectInfo";
   import type { SecretKind } from "$lib/ipc/bindings/SecretKind";
   import type { SecretRow } from "$lib/ipc/bindings/SecretRow";
   import { errorMessage } from "$lib/ipc/errors";
   import { settings } from "$lib/settings/settings.svelte";
   import { vaultDeleteValue } from "./api";
+  import AddSecret from "./components/AddSecret.svelte";
   import DeleteValue from "./components/DeleteValue.svelte";
   import LockedVault from "./components/LockedVault.svelte";
   import SecretInspector from "./components/SecretInspector.svelte";
   import SecretsTable from "./components/SecretsTable.svelte";
   import VaultFooter from "./components/VaultFooter.svelte";
   import { KIND_FILTERS } from "./kinds";
+  import { addSecret } from "./state/add-secret.svelte";
   import { secrets } from "./state/secrets.svelte";
 
   const vault = vaultApi();
@@ -58,6 +61,35 @@
     choice = { environment: row.environment, name: row.name };
   }
 
+  function startAdd(row?: SecretRow): void {
+    if (!environment) return;
+    addSecret.open(
+      row
+        ? {
+            environment: row.environment,
+            name: row.name,
+            kind: row.kind,
+            description: row.description ?? "",
+            locked: true,
+          }
+        : {
+            environment,
+            name: "",
+            kind: "token",
+            description: "",
+            locked: false,
+          },
+    );
+  }
+
+  function saved(updated: ProjectInfo, env: string, name: string): void {
+    addSecret.close();
+    project.refresh(updated);
+    secrets.chosen = env;
+    choice = { environment: env, name };
+    secrets.load().catch((e: unknown) => shellApi().toast(errorMessage(e)));
+  }
+
   async function confirmDelete(): Promise<void> {
     const target = deleting;
     deleting = null;
@@ -73,7 +105,15 @@
 
 <div class="vault">
   <div class="body">
-    {#if vault.locked}
+    {#if addSecret.draft && info}
+      <!-- Kept while the Vault is locked, so a lock does not lose the form. -->
+      <AddSecret
+        {info}
+        draft={addSecret.draft}
+        onsaved={saved}
+        oncancel={() => addSecret.close()}
+      />
+    {:else if vault.locked}
       <LockedVault />
     {:else if info && environment}
       <div class="main">
@@ -86,7 +126,9 @@
             <Button variant="ghost" onclick={() => vault.lock()}
               >Lock now</Button
             >
-            <Button variant="primary" disabled>Add secret</Button>
+            <Button variant="primary" onclick={() => startAdd()}
+              >Add secret</Button
+            >
           </div>
         </div>
         <div class="tabs" role="tablist" aria-label="Type">
@@ -102,7 +144,13 @@
         </div>
         <div class="work">
           <section class="pane" aria-label="Secrets in {environment}">
-            <SecretsTable rows={shown} {info} {selected} onselect={pick} />
+            <SecretsTable
+              rows={shown}
+              {info}
+              {selected}
+              onselect={pick}
+              onadd={startAdd}
+            />
           </section>
           {#if selected}
             {#key `${selected.environment}/${selected.name}`}
