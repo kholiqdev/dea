@@ -81,16 +81,14 @@ impl CookieJar {
         })
     }
 
-    /// Every cookie, session cookies included, for saving.
-    #[must_use]
-    pub fn to_json(&self) -> String {
+    /// Every cookie, session cookies included, for saving. An error means
+    /// nothing was produced; never save an empty text in its place.
+    pub fn to_json(&self) -> Result<String, CookieJarError> {
+        let fail = || CookieJarError("the cookie jar could not be written".into());
         let mut out = Vec::new();
-        let saved =
-            cookie_store::serde::json::save_incl_expired_and_nonpersistent(&self.lock(), &mut out);
-        match saved {
-            Ok(()) => String::from_utf8(out).unwrap_or_default(),
-            Err(_) => String::new(),
-        }
+        cookie_store::serde::json::save_incl_expired_and_nonpersistent(&self.lock(), &mut out)
+            .map_err(|_| fail())?;
+        String::from_utf8(out).map_err(|_| fail())
     }
 
     /// The cookies that have not expired, in a steady order.

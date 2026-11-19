@@ -81,7 +81,12 @@ fn max_age_zero_deletes() {
     let jar = CookieJar::new();
     jar.store(&url("http://example.test/"), &["a=1", "b=2"]);
     assert_eq!(jar.list().len(), 2);
+    assert!(jar.take_changed());
+    // Expiring a cookie the jar never had is no change.
+    jar.store(&url("http://example.test/"), &["never=; Max-Age=0"]);
+    assert!(!jar.take_changed());
     jar.store(&url("http://example.test/"), &["a=; Max-Age=0"]);
+    assert!(jar.take_changed());
     assert_eq!(sent(&jar, "http://example.test/").as_deref(), Some("b=2"));
     assert_eq!(jar.list().len(), 1);
 }
@@ -121,7 +126,7 @@ fn session_cookies_survive_json() {
         &url("https://example.test/app/"),
         &["s=abc; HttpOnly; Secure", "p=2; Max-Age=3600; Path=/"],
     );
-    let json = jar.to_json();
+    let json = jar.to_json().unwrap();
     let loaded = CookieJar::from_json(&json).unwrap();
     let (mut before, mut after) = (jar.list(), loaded.list());
     before.sort_by(|a, b| a.name.cmp(&b.name));
@@ -134,6 +139,20 @@ fn session_cookies_survive_json() {
     let mut pairs: Vec<&str> = header.split("; ").collect();
     pairs.sort_unstable();
     assert_eq!(pairs, ["p=2", "s=abc"]);
+}
+
+#[test]
+fn to_json_reports_failure_instead_of_an_empty_file() {
+    // The result type is the contract: a caller can not mistake an error
+    // for a saved jar.
+    let jar = CookieJar::new();
+    let json: Result<String, dea_http::CookieJarError> = jar.to_json();
+    assert!(
+        CookieJar::from_json(&json.unwrap())
+            .unwrap()
+            .list()
+            .is_empty()
+    );
 }
 
 #[test]
