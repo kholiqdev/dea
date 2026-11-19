@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "apps/desktop/src-tauri",
   "crates/dea-engine",
+  "crates/dea-http",
   "crates/dea-project",
   "crates/dea-testkit",
   "crates/dea-vault",
@@ -46,13 +47,18 @@ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 argon2 = { version = "0.6.0", features = ["password-hash"] }
 base64 = "0.23.1"
 block2 = "0.6.2"
+bytes = "1.12.1"
 cargo_metadata = "0.23.1"
 dea-engine = { path = "crates/dea-engine" }
+dea-http = { path = "crates/dea-http" }
 dea-project = { path = "crates/dea-project" }
 dea-testkit = { path = "crates/dea-testkit" }
 dea-vault = { path = "crates/dea-vault" }
 clap = { version = "4.6.8", features = ["derive"] }
 flate2 = "1.1.11"
+http-body-util = "0.1.5"
+hyper = "1.12.0"
+hyper-util = "0.1.21"
 jsonschema = { version = "0.61.2", default-features = false }
 keyring-core = "1.0.1"
 libc = "0.2.191"
@@ -75,7 +81,12 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "block2", "LAContext", "LAError"] }
 rand = "0.10.4"
+# TLS uses the ring provider, never aws-lc-rs, so Windows builds need no
+# CMake or NASM. Keep default features off on every rustls crate.
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 regex = "1.13.1"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7.1"
 schemars = "1.2.3"
 secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -86,8 +97,12 @@ sysinfo = "0.40.4"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 time = "0.3.55"
+tokio = "1.54.1"
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tokio-util = "0.7.20"
 toml = "1.2.1"
 ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+url = "2.5.8"
 uuid = { version = "1.29.3", features = ["v4"] }
 windows = { version = "0.62.2", features = ["Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT"] }
 windows-future = "0.3.2"
