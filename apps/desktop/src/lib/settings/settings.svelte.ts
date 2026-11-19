@@ -3,7 +3,11 @@
 
 import type { Appearance } from "$lib/ipc/bindings/Appearance";
 import type { Settings } from "$lib/ipc/bindings/Settings";
-import { getSettings, saveSettings } from "$lib/ipc/settings";
+import {
+  getSettings,
+  onSettingsChanged,
+  saveSettings,
+} from "$lib/ipc/settings";
 
 export const DEFAULT_SETTINGS: Settings = {
   version: 1,
@@ -58,21 +62,39 @@ export class SettingsState {
     }
   }
 
-  /** Saves the change, then makes it current. A refused save changes nothing. */
+  /** Takes settings saved by any window. */
+  apply(saved: Settings): void {
+    this.#value = saved;
+  }
+
+  /** Follows the settings every window saves until the returned function is called. */
+  async listen(subscribe = onSettingsChanged): Promise<() => void> {
+    return await subscribe((saved) => this.apply(saved));
+  }
+
+  /**
+   * Saves the change, then makes it current. A refused save changes nothing.
+   * The patch goes over the latest settings, those saved by other windows
+   * included, so this window never sends back their older values.
+   */
   update(patch: SettingsPatch): Promise<void> {
     const run = this.#queue.then(async () => {
-      const next: Settings = {
-        ...this.#value,
-        appearance: { ...this.#value.appearance, ...patch.appearance },
-        shortcuts: patch.shortcuts ?? this.#value.shortcuts,
-        security: { ...this.#value.security, ...patch.security },
-      };
-      await saveSettings(next);
-      this.#value = next;
+      await saveSettings(merged(this.#value, patch));
+      // Settings from another window may have come while this one saved.
+      this.#value = merged(this.#value, patch);
     });
     this.#queue = run.catch(() => {});
     return run;
   }
+}
+
+function merged(value: Settings, patch: SettingsPatch): Settings {
+  return {
+    ...value,
+    appearance: { ...value.appearance, ...patch.appearance },
+    shortcuts: patch.shortcuts ?? value.shortcuts,
+    security: { ...value.security, ...patch.security },
+  };
 }
 
 export function createSettings(): SettingsState {

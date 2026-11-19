@@ -46,6 +46,9 @@ export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
       return null;
     }
     if (cmd === "vault_info") return { locked: true, method: "vaultPassword" };
+    // Listening needs a current window (mockWindows); the id is the call's.
+    if (cmd === "plugin:event|listen") return log.calls.length;
+    if (cmd === "vault_resend_prompts") return null;
     if (cmd === "pick_folder") return opts.picked ?? null;
     if (cmd === "open_project") return projectInfo({ root: a.root as string });
     if (cmd === "close_project") return null;
