@@ -239,3 +239,26 @@ fn the_default_environment_is_a_reference() {
     );
     assert_eq!(environment_references(&p, "staging"), []);
 }
+
+#[test]
+fn a_colour_already_in_the_file_still_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = project(dir.path());
+    fs::write(
+        p.root.join("environments/staging.yaml"),
+        "name: staging\nproduction: false\ncolor: teal\n",
+    )
+    .unwrap();
+    let p = reload(&p);
+    // Editing a variable keeps a colour this Dea does not know.
+    let mut staging = env("staging");
+    staging.color = Some("teal".into());
+    save_environment(&p, Some("staging"), &staging).unwrap();
+    // Choosing it for another environment is still refused.
+    let mut local = env("local");
+    local.color = Some("teal".into());
+    assert!(matches!(
+        save_environment(&p, Some("local"), &local),
+        Err(ProjectError::InvalidEnvironment(_))
+    ));
+}
