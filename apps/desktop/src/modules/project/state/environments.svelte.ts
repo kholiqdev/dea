@@ -7,12 +7,28 @@ import { vaultApi } from "$app/contributions/vault-api";
 import type { Environment } from "$lib/ipc/bindings/Environment";
 import type { FileErrorInfo } from "$lib/ipc/bindings/FileErrorInfo";
 import type { ProjectInfo } from "$lib/ipc/bindings/ProjectInfo";
-import { errorMessage } from "$lib/ipc/errors";
+import { errorMessage, isIpcError } from "$lib/ipc/errors";
 import {
   deleteEnvironment,
   duplicateEnvironment,
   saveEnvironment,
 } from "../api";
+
+/**
+ * Runs `write`. Renaming or deleting an environment that has secrets on
+ * this device moves or removes them, so Dea refuses while the Vault is
+ * locked: then this unlocks and tries once more. A cancelled unlock keeps
+ * the refusal, which says why nothing changed.
+ */
+async function unlockingOnce<T>(write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } catch (e) {
+    if (!isIpcError(e) || e.kind !== "vaultLocked") throw e;
+    if (!(await vaultApi().unlock())) throw e;
+    return await write();
+  }
+}
 
 /** Same rule as `is_production_name` in dea-project (F1-FON-07 #5). */
 export function isProductionName(name: string): boolean {
@@ -276,7 +292,8 @@ export class EnvironmentsEditor {
    * something stops a save, so a close that asked to save keeps the tab.
    * A failure keeps every draft not written yet. Renaming a production
    * environment asks to sign in first; if that is cancelled nothing is
-   * written and the drafts stay as they are.
+   * written and the drafts stay as they are. Renaming one that has secrets
+   * while the Vault is locked asks to unlock.
    */
   async save(): Promise<void> {
     if (!this.dirty) return;
@@ -301,7 +318,7 @@ export class EnvironmentsEditor {
       for (const d of this.drafts.filter((x) => x.dirty)) {
         const env = $state.snapshot(d.draft);
         const previous = d.saved?.name ?? null;
-        info = await saveEnvironment(previous, env);
+        info = await unlockingOnce(() => saveEnvironment(previous, env));
         d.markSaved(env);
         // A renamed environment stays the one this window uses.
         if (previous !== null && previous === active && env.name !== previous)
@@ -340,7 +357,8 @@ export class EnvironmentsEditor {
         );
         if (!ok) return;
       }
-      const info = await deleteEnvironment(d.saved.name);
+      const name = d.saved.name;
+      const info = await unlockingOnce(() => deleteEnvironment(name));
       projectApi().refresh(info);
     }
     this.drafts = this.drafts.filter((x) => x !== d);
