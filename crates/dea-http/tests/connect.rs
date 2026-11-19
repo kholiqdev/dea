@@ -160,6 +160,7 @@ async fn http1_over_plain_tcp() {
     assert_eq!(response.version, HttpVersion::Http11);
     assert_eq!(response.status, 200);
     assert_eq!(response.reason, "OK");
+    assert_eq!(response.timing.dns, Duration::ZERO);
     assert_eq!(response.timing.tls, Duration::ZERO);
 }
 
@@ -228,6 +229,21 @@ async fn body_and_its_content_type_are_sent() {
     assert_eq!(received.method, "POST");
     assert_eq!(received.header("content-type"), Some("application/json"));
     assert_eq!(received.header("content-length"), Some("7"));
+}
+
+#[tokio::test]
+async fn user_host_becomes_the_http2_authority() {
+    let server = TestServer::start(tls(&[b"h2"])).await;
+    let mut request = get_trusting(&server.url("/echo"), &server);
+    let host = server
+        .url("")
+        .replace("https://localhost", "dea-target.test");
+    request.headers = vec![("Host".into(), host.clone())];
+    let response = send(&client(), request).await.unwrap();
+    assert_eq!(response.version, HttpVersion::Http2);
+    let received = &server.requests()[0];
+    assert_eq!(received.authority.as_deref(), Some(host.as_str()));
+    assert_eq!(received.header("host"), None);
 }
 
 #[tokio::test]

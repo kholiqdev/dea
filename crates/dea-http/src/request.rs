@@ -121,8 +121,10 @@ pub(crate) struct Prepared {
     method: Method,
     /// `path?query`, for HTTP/1.1.
     origin_form: Uri,
-    /// `scheme://host:port/path?query`, for HTTP/2. No user info or fragment.
-    absolute_form: Uri,
+    /// `scheme://authority/path?query`, for HTTP/2. The authority is the
+    /// user's `Host` when they wrote one, as curl does, otherwise the URL's
+    /// without user info. `None` when the user's `Host` can't be one.
+    absolute_form: Option<Uri>,
     /// `None` when the user wrote their own `Host`.
     host: Option<HeaderValue>,
     headers: Vec<(HeaderName, HeaderValue)>,
@@ -154,8 +156,13 @@ impl Prepared {
         };
         let not_sendable = || HttpError::InvalidRequest("the URL cannot be sent".into());
         let origin_form = Uri::try_from(path_and_query.as_str()).map_err(|_| not_sendable())?;
-        let absolute_form = Uri::try_from(format!("{scheme}://{authority}{path_and_query}"))
-            .map_err(|_| not_sendable())?;
+        let absolute_form = |authority: &[u8]| {
+            Uri::builder()
+                .scheme(scheme)
+                .authority(authority)
+                .path_and_query(path_and_query.as_str())
+                .build()
+        };
 
         let mut user = Vec::with_capacity(request.headers.len());
         for (name, value) in &request.headers {
@@ -169,6 +176,10 @@ impl Prepared {
             user.push((header, value));
         }
         let user_wrote = |name: &HeaderName| user.iter().any(|(n, _)| n == name);
+        let absolute_form = match user.iter().find(|(name, _)| name == HOST) {
+            Some((_, host)) => absolute_form(host.as_bytes()).ok(),
+            None => Some(absolute_form(authority.as_bytes()).map_err(|_| not_sendable())?),
+        };
 
         let (body, content_type) = match &request.body {
             Body::Empty => (Bytes::new(), None),
@@ -207,10 +218,13 @@ impl Prepared {
     }
 
     /// The request for one attempt. HTTP/1.1 gets the origin form and a
-    /// `Host` header; HTTP/2 gets the full URI, which becomes `:authority`.
-    /// `Content-Length` is added by hyper from the body unless the user
-    /// wrote one.
-    pub(crate) fn to_wire(&self, version: HttpVersion) -> hyper::Request<WireBody> {
+    /// `Host` header; HTTP/2 gets the full URI, whose authority becomes
+    /// `:authority`, and no `Host` header. `Content-Length` is added by
+    /// hyper from the body unless the user wrote one.
+    pub(crate) fn to_wire(
+        &self,
+        version: HttpVersion,
+    ) -> Result<hyper::Request<WireBody>, HttpError> {
         let mut headers = HeaderMap::with_capacity(self.headers.len() + 1);
         let uri = match version {
             HttpVersion::Http11 => {
@@ -219,16 +233,23 @@ impl Prepared {
                 }
                 self.origin_form.clone()
             }
-            HttpVersion::Http2 => self.absolute_form.clone(),
+            HttpVersion::Http2 => self.absolute_form.clone().ok_or_else(|| {
+                HttpError::InvalidRequest(
+                    "the value of header Host is not a host and port, which HTTP/2 needs".into(),
+                )
+            })?,
         };
         for (name, value) in &self.headers {
+            if version == HttpVersion::Http2 && name == HOST {
+                continue;
+            }
             headers.append(name.clone(), value.clone());
         }
         let mut request = hyper::Request::new(Full::new(self.body.clone()));
         *request.method_mut() = self.method.clone();
         *request.uri_mut() = uri;
         *request.headers_mut() = headers;
-        request
+        Ok(request)
     }
 }
 
@@ -284,15 +305,17 @@ mod tests {
             tls: TlsConfig::default(),
         };
         let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
-        let wire = prepared.to_wire(HttpVersion::Http11);
+        let wire = prepared.to_wire(HttpVersion::Http11).unwrap();
         assert_eq!(wire.uri(), "/a?b=1");
         assert_eq!(wire.headers().get_all(HOST).iter().count(), 1);
         assert_eq!(wire.headers()[HOST], "other.example");
         assert_eq!(wire.headers().get_all(ACCEPT).iter().count(), 1);
         assert_eq!(wire.headers()[ACCEPT], "text/plain");
         assert_eq!(wire.headers()[USER_AGENT], "Dea/test");
-        let wire = prepared.to_wire(HttpVersion::Http2);
-        assert_eq!(wire.uri(), "http://example.com/a?b=1");
+        let wire = prepared.to_wire(HttpVersion::Http2).unwrap();
+        assert_eq!(wire.uri(), "http://other.example/a?b=1");
+        assert_eq!(wire.headers().get(HOST), None);
+        assert_eq!(wire.headers()[ACCEPT], "text/plain");
     }
 
     #[test]
@@ -307,12 +330,32 @@ mod tests {
         };
         let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
         assert_eq!(
-            prepared.to_wire(HttpVersion::Http2).uri(),
+            prepared.to_wire(HttpVersion::Http2).unwrap().uri(),
             "https://example.com:8443/"
         );
         assert_eq!(
-            prepared.to_wire(HttpVersion::Http11).headers()[HOST],
+            prepared.to_wire(HttpVersion::Http11).unwrap().headers()[HOST],
             "example.com:8443"
         );
+    }
+
+    #[test]
+    fn host_that_is_not_an_authority_fails_only_on_http2() {
+        let request = Request {
+            method: "GET".into(),
+            url: "https://example.com/".parse().unwrap(),
+            headers: vec![("Host".into(), "odd host/secret-path".into())],
+            body: Body::Empty,
+            options: Options::default(),
+            tls: TlsConfig::default(),
+        };
+        let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
+        let wire = prepared.to_wire(HttpVersion::Http11).unwrap();
+        assert_eq!(wire.headers()[HOST], "odd host/secret-path");
+        let Err(HttpError::InvalidRequest(message)) = prepared.to_wire(HttpVersion::Http2) else {
+            panic!("expected InvalidRequest");
+        };
+        assert!(message.contains("Host"), "{message}");
+        assert!(!message.contains("secret-path"), "{message}");
     }
 }
