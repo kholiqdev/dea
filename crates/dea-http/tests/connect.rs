@@ -21,6 +21,7 @@ fn get(url: &str, options: Options) -> Request {
         method: "GET".into(),
         url: url.parse().unwrap(),
         headers: Vec::new(),
+        credential_headers: Vec::new(),
         body: Body::Empty,
         options,
         tls: TlsConfig::default(),

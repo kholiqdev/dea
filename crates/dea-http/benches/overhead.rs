@@ -48,6 +48,7 @@ async fn dea_once(url: &str) -> Duration {
         method: "GET".into(),
         url: url.parse().expect("parse the url"),
         headers: Vec::new(),
+        credential_headers: Vec::new(),
         body: Body::Empty,
         options: Options::default(),
         tls: TlsConfig::default(),

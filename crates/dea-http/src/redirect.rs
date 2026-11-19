@@ -12,8 +12,9 @@ use crate::request::{Body, Request};
 /// - 301, 302 and 303 turn any method but `GET` and `HEAD` into `GET`
 ///   without a body, and drop `Content-Type` and `Content-Length`.
 /// - 307 and 308 keep the method and the body.
-/// - A hop to another scheme, host or port drops the `Authorization` and
-///   `Cookie` headers the user wrote, and the TLS client identity.
+/// - A hop to another scheme, host or port drops every header that carries
+///   credentials (see [`Request::credential_headers`]), and the TLS client
+///   identity.
 pub(crate) fn next_hop(
     current: &Request,
     status: u16,
@@ -44,7 +45,8 @@ pub(crate) fn next_hop(
         drop_headers(&mut next, &["content-type", "content-length"]);
     }
     if origin(&current.url) != origin(&url) {
-        drop_headers(&mut next, &["authorization", "cookie"]);
+        next.headers
+            .retain(|(name, _)| !current.is_credential(name));
         // Like the headers, the client certificate belongs to the origin
         // the user sent it to.
         next.tls.client_identity = None;
@@ -81,6 +83,7 @@ mod tests {
                 ("COOKIE".into(), "s=1".into()),
                 ("X-Keep".into(), "1".into()),
             ],
+            credential_headers: Vec::new(),
             body: Body::Bytes {
                 data: Bytes::from_static(b"abc"),
                 content_type: Some("text/plain".into()),
@@ -180,6 +183,30 @@ mod tests {
             assert!(!names.contains(&"authorization".to_owned()), "{location}");
             assert!(!names.contains(&"cookie".to_owned()), "{location}");
             assert!(names.contains(&"x-keep".to_owned()), "{location}");
+        }
+    }
+
+    #[test]
+    fn marked_and_proxy_credentials_survive_only_within_one_origin() {
+        let mut current = request("GET", "http://a.test/x");
+        current.headers = vec![
+            ("X-Api-Key".into(), "k".into()),
+            ("x-from-vault".into(), "v".into()),
+            ("Proxy-Authorization".into(), "Basic p".into()),
+            ("X-Keep".into(), "1".into()),
+        ];
+        current.credential_headers = vec!["x-api-key".into(), "X-From-Vault".into()];
+        let all = ["x-api-key", "x-from-vault", "proxy-authorization", "x-keep"];
+
+        let same = next_hop(&current, 302, "/z").unwrap().unwrap();
+        assert_eq!(names(&same), all);
+        for location in [
+            "http://b.test/z",
+            "https://a.test/z",
+            "http://a.test:8080/z",
+        ] {
+            let next = next_hop(&current, 302, location).unwrap().unwrap();
+            assert_eq!(names(&next), ["x-keep"], "{location}");
         }
     }
 

@@ -232,6 +232,7 @@ fn get(url: &str) -> Request {
         method: "GET".into(),
         url: url.parse().unwrap(),
         headers: Vec::new(),
+        credential_headers: Vec::new(),
         body: Body::Empty,
         options: Options::default(),
         tls: TlsConfig::default(),
