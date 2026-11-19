@@ -2,6 +2,10 @@
 <script lang="ts">
   import { settings } from "$lib/settings/settings.svelte";
   import type { Registry } from "../contributions/registry.svelte";
+  import ConfirmClose from "../prompts/ConfirmClose.svelte";
+  import { closeQuestion } from "../prompts/confirm-close.svelte";
+  import ToastStack from "../prompts/ToastStack.svelte";
+  import type { Tabs } from "../tabs/tabs.svelte";
   import { setShellContext } from "./context";
   import { installHotkeys } from "./hotkeys.svelte";
   import Rail from "./Rail.svelte";
@@ -11,7 +15,11 @@
   import TitleBar from "./TitleBar.svelte";
   import Workspace from "./Workspace.svelte";
 
-  let { registry, shell }: { registry: Registry; shell: Shell } = $props();
+  let {
+    registry,
+    shell,
+    tabs,
+  }: { registry: Registry; shell: Shell; tabs: Tabs } = $props();
 
   setShellContext({
     get registry() {
@@ -20,7 +28,14 @@
     get shell() {
       return shell;
     },
+    get tabs() {
+      return tabs;
+    },
   });
+
+  // Picking a module on the rail shows its last tab.
+  // svelte-ignore state_referenced_locally
+  tabs.followShell();
 
   const module = $derived(
     shell.activeModule ? registry.module(shell.activeModule) : undefined,
@@ -42,6 +57,8 @@
   </div>
   <StatusBar />
 </div>
+<ConfirmClose question={closeQuestion} />
+<ToastStack />
 
 <style>
   .app {

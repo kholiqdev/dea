@@ -49,10 +49,11 @@ export type ShellSnapshot = Pick<
 export class Shell {
   readonly registry: Registry;
   activeModule = $state<string | null>(null);
-  /** The active module's main view, once loaded. */
-  activeView = $state.raw<AnyComponent | null>(null);
   railExpanded = $state(false);
   #sidebars = $state<Record<string, SidebarState>>({});
+  #loaded = $state.raw<{ module: string; view: AnyComponent } | null>(null);
+  // Views already loaded, by module: switching back is instant.
+  #views: Record<string, AnyComponent> = {};
   #request = 0;
 
   constructor(registry: Registry) {
@@ -80,26 +81,38 @@ export class Shell {
     this.railExpanded = !this.railExpanded;
   }
 
+  /** The active module's main view, once it has loaded. */
+  get activeView(): AnyComponent | null {
+    const loaded = this.#loaded;
+    return loaded && loaded.module === this.activeModule ? loaded.view : null;
+  }
+
   /**
-   * Shows a module. While a view is still loading, a newer request wins,
-   * so the last module asked for is the one shown.
+   * Shows a module. The rail follows at once; while a view is still
+   * loading, a newer request wins, so the last module asked for is the one
+   * shown.
    */
   async openModule(id: string): Promise<void> {
+    const loader = this.registry.module(id)?.view;
+    if (!loader) return;
     const request = ++this.#request;
     const start = `module-open-start:${id}`;
     mark(start);
-    const loader = this.registry.module(id)?.view;
-    if (!loader) return;
-    let view: AnyComponent;
-    try {
-      view = (await loader()).default;
-    } catch (e) {
-      console.error(`Cannot load the ${id} view`, e);
-      return;
+    const previous = this.activeModule;
+    this.activeModule = id;
+    let view = this.#views[id];
+    if (!view) {
+      try {
+        view = (await loader()).default;
+      } catch (e) {
+        console.error(`Cannot load the ${id} view`, e);
+        if (request === this.#request) this.activeModule = previous;
+        return;
+      }
+      this.#views[id] = view;
     }
     if (request !== this.#request) return;
-    this.activeModule = id;
-    this.activeView = view;
+    this.#loaded = { module: id, view };
     await tick();
     measure(`module-open:${id}`, start);
   }
