@@ -224,3 +224,19 @@ fn project_info_names_the_file_of_each_environment() {
         );
     }
 }
+
+#[test]
+fn a_relative_location_is_refused() {
+    for location in ["work/api", "~/work/api"] {
+        let err = new_project(Path::new(location), "api").unwrap_err();
+        assert!(
+            matches!(err, OpenError::RelativeLocation { .. }),
+            "{location}: {err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("{location} is not a full path: choose the folder with Choose…")
+        );
+        assert!(!Path::new(location).exists());
+    }
+}

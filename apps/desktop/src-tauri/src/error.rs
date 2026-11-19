@@ -91,9 +91,9 @@ impl From<OpenError> for IpcError {
         match e {
             OpenError::Project(e) => e.into(),
             OpenError::NotAProject { .. } => Self::new(IpcErrorKind::NotAProject, &e),
-            OpenError::NotAFolder { .. } | OpenError::EmptyName => {
-                Self::new(IpcErrorKind::Invalid, &e)
-            }
+            OpenError::NotAFolder { .. }
+            | OpenError::EmptyName
+            | OpenError::RelativeLocation { .. } => Self::new(IpcErrorKind::Invalid, &e),
         }
     }
 }

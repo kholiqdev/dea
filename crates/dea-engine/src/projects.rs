@@ -207,6 +207,10 @@ pub enum OpenError {
     NotAFolder { path: PathBuf },
     #[error("a project needs a name")]
     EmptyName,
+    /// A typed location that is not a full path, such as `~/work/api`,
+    /// would land somewhere unexpected.
+    #[error("{} is not a full path: choose the folder with Choose…", path.display())]
+    RelativeLocation { path: PathBuf },
     #[error(transparent)]
     Project(#[from] ProjectError),
 }
@@ -242,12 +246,18 @@ pub fn open_project(root: &Path) -> Result<OpenedProject, OpenError> {
 ///
 /// # Errors
 ///
-/// [`OpenError::EmptyName`] for a blank name; [`OpenError::Project`] when a
+/// [`OpenError::EmptyName`] for a blank name, [`OpenError::RelativeLocation`]
+/// for a location that is not a full path; [`OpenError::Project`] when a
 /// project file already exists there or cannot be written.
 pub fn new_project(location: &Path, name: &str) -> Result<OpenedProject, OpenError> {
     let name = name.trim();
     if name.is_empty() {
         return Err(OpenError::EmptyName);
+    }
+    if !location.is_absolute() {
+        return Err(OpenError::RelativeLocation {
+            path: location.to_path_buf(),
+        });
     }
     fs::create_dir_all(location).map_err(ProjectError::Io)?;
     create_project(location, name)?;
