@@ -4,7 +4,7 @@ use dea_project::{SecretKind, SecretSpec, VaultManifest};
 use dea_testkit::{canary, find_canary};
 use dea_vault::{
     Backend, MemoryBackend, OAuthToken, SecretData, SecretKey, SecretState, SecretStatus,
-    SecretStore,
+    SecretStore, has_values_in,
 };
 use secrecy::{ExposeSecret, SecretString};
 use time::OffsetDateTime;
@@ -301,4 +301,23 @@ fn a_broken_index_is_reported_and_kept() {
         std::fs::read_to_string(&path).unwrap(),
         r#"{"version": 99, "entries": []}"#
     );
+}
+
+#[test]
+fn values_are_found_from_the_index_alone() {
+    let (dir, _, store) = store();
+    // No index yet: nothing stored.
+    assert!(!has_values_in(dir.path(), "project-1", "staging"));
+    store
+        .set(&key("staging", "token"), SecretKind::Token, &text("t"))
+        .unwrap();
+    assert!(has_values_in(dir.path(), "project-1", "staging"));
+    assert!(!has_values_in(dir.path(), "project-1", "production"));
+    assert!(!has_values_in(dir.path(), "project-2", "staging"));
+    // A damaged index, or one from a newer Dea, counts as holding values.
+    let path = dir.path().join("index.json");
+    std::fs::write(&path, "{ not json").unwrap();
+    assert!(has_values_in(dir.path(), "project-1", "production"));
+    std::fs::write(&path, r#"{"version": 99, "entries": []}"#).unwrap();
+    assert!(has_values_in(dir.path(), "project-1", "production"));
 }

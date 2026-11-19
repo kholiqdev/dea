@@ -22,8 +22,8 @@ use crate::clipboard::{Clipboard, copy_and_clear_later};
 pub use crate::error::UseError;
 pub use crate::prompt::{PasswordPrompt, PromptProblem, Prompter};
 pub use crate::vault_app::{
-    SaveSecretError, SecretInput, SecretRow, UnlockMethod, open_app_vault, save_secret,
-    unlock_method,
+    SaveSecretError, SecretInput, SecretRow, UnlockMethod, app_vault_has_values, open_app_vault,
+    save_secret, unlock_method,
 };
 pub use dea_vault::{MIN_PASSWORD_CHARS, Policy, SecretKey, VaultError};
 pub use secrecy::SecretString;

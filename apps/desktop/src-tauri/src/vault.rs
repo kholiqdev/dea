@@ -13,8 +13,9 @@ use std::time::Duration;
 
 use dea_engine::vault::{
     PasswordPrompt, PromptProblem, Prompter, SecretString, SystemClipboard, VaultService,
-    open_app_vault,
+    app_vault_has_values, open_app_vault,
 };
+use dea_project::Project;
 use serde::Serialize;
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -92,6 +93,17 @@ impl AppVault {
     /// The Vault, if a command has opened it.
     pub fn existing(&self) -> Option<Arc<VaultService>> {
         self.vault.get().cloned()
+    }
+
+    /// Whether `environment` of `project` has values on this device: asked
+    /// of the open Vault or, before the Vault is first used, read from its
+    /// index on disk, so the keychain is not reached. A damaged index counts
+    /// as having values.
+    pub fn has_values(&self, project: &Project, environment: &str) -> bool {
+        match self.existing() {
+            Some(vault) => vault.has_values(project, environment),
+            None => app_vault_has_values(&self.app_data, project, environment),
+        }
     }
 
     /// Where Vault password prompts go and their answers come back.
