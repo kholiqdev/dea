@@ -7,6 +7,7 @@
   import Shell from "./shell/Shell.svelte";
   import { persistUiState, shell } from "./shell/shell-state.svelte";
   import { thisProject } from "./project/project.svelte";
+  import { toasts } from "./prompts/toasts.svelte";
   import { tabs } from "./tabs/tabs.svelte";
 
   let { scope, slot }: { scope: string; slot: number } = $props();
@@ -25,6 +26,7 @@
     setTabDirty: (id, dirty) => tabs.setDirty(id, dirty),
     setSaveHandler: (tabType, save) => tabs.setSaveHandler(tabType, save),
     openModule: (id) => shell.openModule(id),
+    toast: (text) => void toasts.show(text),
   });
 
   // "Match system" follows the OS as it changes.

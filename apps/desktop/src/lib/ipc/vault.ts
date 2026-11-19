@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { SecretRow } from "./bindings/SecretRow";
 import type { UnlockMethod } from "./bindings/UnlockMethod";
 import type { VaultStatus } from "./bindings/VaultStatus";
 
@@ -74,4 +75,30 @@ export function onVaultPrompt(
     "vault-prompt",
     (e) => handler(e.payload),
   );
+}
+
+/** The window's project secrets in every environment; works while locked. */
+export function vaultSecrets(): Promise<SecretRow[]> {
+  return invoke<SecretRow[]>("vault_secrets");
+}
+
+/** The value of a secret. Production asks the user first. */
+export function vaultReveal(
+  environment: string,
+  name: string,
+): Promise<string> {
+  return invoke<string>("vault_reveal", { environment, name });
+}
+
+/** Copies the value; the clipboard clears after 30 s. */
+export function vaultCopy(environment: string, name: string): Promise<void> {
+  return invoke<void>("vault_copy", { environment, name });
+}
+
+/** Removes the value from this device; the declaration stays. */
+export function vaultDeleteValue(
+  environment: string,
+  name: string,
+): Promise<void> {
+  return invoke<void>("vault_delete_value", { environment, name });
 }
