@@ -43,6 +43,8 @@ export interface ModuleManifest extends Omit<
 > {
   /** The module's main view. */
   view?: Loader<AnyComponent>;
+  /** What the module shows in the sidebar, if it has one. */
+  sidebar?: Loader<AnyComponent>;
   tabTypes?: TabTypeContribution[];
   panels?: PanelContribution[];
   statusItems?: StatusItemContribution[];
