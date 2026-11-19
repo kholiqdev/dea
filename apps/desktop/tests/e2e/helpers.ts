@@ -140,3 +140,23 @@ export async function waitForText(
     { timeout, timeoutMsg: `${selector} never showed "${text}"` },
   );
 }
+
+/** The Vault's state in the status bar: `Vault locked` or `Vault unlocked`. */
+export function vaultStatus(): Promise<string | null> {
+  return textOf("footer .vault-status");
+}
+
+/**
+ * Answers the open Vault password dialog and presses its primary button.
+ * The dialog that creates the password has two fields (the password and
+ * "Repeat it"): both get `password`.
+ */
+export async function answerVaultPassword(password: string): Promise<void> {
+  const dialog = $('[role="dialog"]');
+  await dialog.waitForDisplayed({ timeout: 15_000 });
+  const fields = await dialog.$$('input[type="password"]');
+  for (const field of fields) await field.setValue(password);
+  await dialog
+    .$(`button=${fields.length > 1 ? "Create password" : "Unlock"}`)
+    .click();
+}
