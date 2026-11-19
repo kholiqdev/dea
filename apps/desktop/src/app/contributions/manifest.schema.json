@@ -113,6 +113,12 @@
           "enum": ["app", "project"],
           "type": "string"
         },
+        "searchSources": {
+          "items": {
+            "$ref": "#/definitions/SearchSourceData"
+          },
+          "type": "array"
+        },
         "settings": {
           "items": {
             "$ref": "#/definitions/SettingsSectionData"
@@ -177,6 +183,25 @@
         }
       },
       "required": ["icon", "group", "order"],
+      "type": "object"
+    },
+    "SearchSourceData": {
+      "additionalProperties": false,
+      "description": "A source of command palette items, such as a module's environments.",
+      "properties": {
+        "group": {
+          "description": "The palette group its items show under, such as `Environments`.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/definitions/ContributionId"
+        },
+        "order": {
+          "description": "Where the group sits in the palette: lower first.",
+          "type": "number"
+        }
+      },
+      "required": ["id", "group", "order"],
       "type": "object"
     },
     "SettingsSectionData": {

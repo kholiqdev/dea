@@ -7,6 +7,7 @@ import type {
   Command,
   FromModule,
   ModuleManifest,
+  SearchSourceContribution,
   SettingsSectionContribution,
   ShortcutData,
   StatusItemContribution,
@@ -28,6 +29,7 @@ function contributionIds(m: ModuleManifest): string[] {
     ...(m.commands ?? []),
     ...(m.statusItems ?? []),
     ...(m.settings ?? []),
+    ...(m.searchSources ?? []),
   ].map((c) => c.id);
 }
 
@@ -114,6 +116,11 @@ export class Registry {
 
   get settingsSections(): FromModule<SettingsSectionContribution>[] {
     return flatten(this.#active, (m) => m.settings).sort(byOrder);
+  }
+
+  /** Sources of command palette items, by group order. */
+  get searchSources(): FromModule<SearchSourceContribution>[] {
+    return flatten(this.#active, (m) => m.searchSources).sort(byOrder);
   }
 
   tabType(id: string): FromModule<TabTypeContribution> | undefined {
