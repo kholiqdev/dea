@@ -133,6 +133,20 @@ export class Shell {
   }
 }
 
+/** A window as Dea first opens it: no tabs, the default layout. */
+export function emptyUiState(): UiState {
+  return {
+    version: 1,
+    activeModule: null,
+    activeEnvironment: null,
+    railExpanded: false,
+    sidebars: {},
+    tabs: [],
+    activeTab: null,
+    closedTabs: [],
+  };
+}
+
 /**
  * Saves what `collect` returns for window `slot` of project `scope` each time it changes, after `delay` ms
  * without another change. The first value is the restored one, so it is
@@ -148,17 +162,7 @@ export function persistUiState(
   let first = true;
   const stop = $effect.root(() => {
     $effect(() => {
-      const state: UiState = {
-        version: 1,
-        activeModule: null,
-        activeEnvironment: null,
-        railExpanded: false,
-        sidebars: {},
-        tabs: [],
-        activeTab: null,
-        closedTabs: [],
-        ...collect(),
-      };
+      const state: UiState = { ...emptyUiState(), ...collect() };
       if (first) {
         first = false;
         return;
