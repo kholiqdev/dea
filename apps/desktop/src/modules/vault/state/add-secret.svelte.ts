@@ -28,7 +28,7 @@ class AddSecret {
 
 export const addSecret = new AddSecret();
 
-/** How long Reveal and Copy last (F1-FON-08 #8, #9). */
+/** How long Reveal lasts (F1-FON-08 #8). */
 export const HIDE_MS = 30_000;
 
 export interface Problems {
@@ -57,22 +57,4 @@ export function toRfc3339(local: string): string | null {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const date = new Date(local);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-/**
- * Empties the clipboard after 30 s if it still holds `text`. It outlives
- * the form on purpose. Where the clipboard cannot be read it does nothing,
- * as it would risk clearing something else.
- */
-export function clearClipboardLater(text: string): void {
-  setTimeout(() => {
-    void (async () => {
-      try {
-        if ((await navigator.clipboard.readText()) === text)
-          await navigator.clipboard.writeText("");
-      } catch {
-        // Not readable or not allowed: leave the clipboard as it is.
-      }
-    })();
-  }, HIDE_MS);
 }

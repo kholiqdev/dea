@@ -1,7 +1,7 @@
 <!--
   The `Add a secret` page. The typed value lives only in this component: it
-  goes on Cancel, on save and when the page goes. Reveal and Copy act on it
-  here, without asking Dea.
+  goes on Cancel, on save and when the page goes. Reveal acts on it here,
+  without asking Dea.
 -->
 <script lang="ts">
   import Button from "@dea/ui/Button.svelte";
@@ -12,12 +12,12 @@
   import { vaultSaveSecret } from "../api";
   import { KIND_LABELS } from "../kinds";
   import {
-    clearClipboardLater,
     HIDE_MS,
     problems,
     toRfc3339,
     type Draft,
   } from "../state/add-secret.svelte";
+  import { secrets } from "../state/secrets.svelte";
 
   let {
     info,
@@ -51,9 +51,49 @@
   let submitted = $state(false);
   let error = $state<string | null>(null);
   let busy = $state(false);
+  // Fields the person changed keep their text when a declared name is typed.
+  let kindChanged = false;
+  let descriptionChanged = false;
+  // The environment and name a second press of Save replaces the value of.
+  let armed = $state<string | null>(null);
 
   const found = $derived(problems(name, value));
   const oauth = $derived(kind === "oauthToken");
+  const trimmed = $derived(name.trim());
+  const replaces = $derived(
+    secrets.rows.some(
+      (r) => r.environment === environment && r.name === trimmed && !r.missing,
+    ),
+  );
+  const target = $derived(`${environment}/${trimmed}`);
+  const replacing = $derived(replaces && armed === target);
+
+  /** The declaration of `secret` in `vault.yaml`, if it has one. */
+  function declarationOf(secret: string) {
+    if (!info.secretNames.includes(secret)) return undefined;
+    const names = info.environments.map((e) => e.name);
+    return secrets.rows.find(
+      (r) => r.name === secret && names.includes(r.environment),
+    );
+  }
+
+  function setName(next: string): void {
+    name = next;
+    const declared = declarationOf(next.trim());
+    if (!declared) return;
+    if (!kindChanged) kind = declared.kind;
+    if (!descriptionChanged) description = declared.description ?? "";
+  }
+
+  function setKind(next: SecretKind): void {
+    kind = next;
+    kindChanged = true;
+  }
+
+  function setDescription(next: string): void {
+    description = next;
+    descriptionChanged = true;
+  }
 
   function mask(): void {
     clearTimeout(hideTimer);
@@ -67,20 +107,10 @@
   });
 
   function reveal(): void {
+    if (vault.locked) return;
     shown = true;
     clearTimeout(hideTimer);
     hideTimer = setTimeout(mask, HIDE_MS);
-  }
-
-  async function copy(): Promise<void> {
-    if (value === "") return;
-    const text = value;
-    try {
-      await navigator.clipboard.writeText(text);
-      clearClipboardLater(text);
-    } catch (e) {
-      error = errorMessage(e);
-    }
   }
 
   function forget(): void {
@@ -99,21 +129,27 @@
     submitted = true;
     error = null;
     if (found.name || found.value || busy) return;
+    // Replacing a value takes a second press.
+    if (replaces && armed !== target) {
+      armed = target;
+      return;
+    }
     busy = true;
     try {
       if (vault.locked && !(await vault.unlock())) return;
-      const trimmed = name.trim();
+      const secret = trimmed;
+      const env = environment;
       const updated = await vaultSaveSecret({
-        name: trimmed,
+        name: secret,
         kind,
-        environment,
+        environment: env,
         description: description.trim() === "" ? null : description.trim(),
         value,
         refreshToken: oauth && refreshToken !== "" ? refreshToken : null,
         expiresAt: oauth ? toRfc3339(expires) : null,
       });
       forget();
-      onsaved(updated, environment, trimmed);
+      onsaved(updated, env, secret);
     } catch (e) {
       error = errorMessage(e);
     } finally {
@@ -143,7 +179,7 @@
       aria-describedby={submitted && found.name
         ? `${id}-name-problem`
         : undefined}
-      bind:value={name}
+      bind:value={() => name, setName}
     />
     {#if submitted && found.name}
       <span class="problem" id="{id}-name-problem">{found.name}</span>
@@ -156,7 +192,7 @@
       id="{id}-kind"
       class="input"
       disabled={draft.locked}
-      bind:value={kind}
+      bind:value={() => kind, setKind}
     >
       {#each Object.entries(KIND_LABELS) as [k, label] (k)}
         <option value={k}>{label}</option>
@@ -171,6 +207,11 @@
         <option value={env.name}>{env.name}</option>
       {/each}
     </select>
+    {#if replaces}
+      <span class="warning"
+        >"{trimmed}" already has a value in {environment}. Saving replaces it.</span
+      >
+    {/if}
   </div>
 
   <div class="frow">
@@ -188,17 +229,16 @@
           : undefined}
         bind:value
       />
-      <Button size="small" onclick={shown ? mask : reveal}
-        >{shown ? "Hide" : "Reveal"}</Button
+      <Button
+        size="small"
+        disabled={vault.locked}
+        onclick={shown ? mask : reveal}>{shown ? "Hide" : "Reveal"}</Button
       >
-      <Button size="small" onclick={copy}>Copy</Button>
     </span>
     {#if submitted && found.value}
       <span class="problem" id="{id}-value-problem">{found.value}</span>
     {/if}
-    <span class="meta"
-      >Reveal and Copy hide the value again after 30 seconds</span
-    >
+    <span class="meta">Reveal hides the value again after 30 seconds</span>
   </div>
 
   {#if oauth}
@@ -230,13 +270,15 @@
       id="{id}-description"
       class="input"
       type="text"
-      bind:value={description}
+      bind:value={() => description, setDescription}
     />
   </div>
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <div class="buttons">
-    <Button variant="primary" type="submit" disabled={busy}>Save secret</Button>
+    <Button variant="primary" type="submit" disabled={busy}
+      >{replacing ? "Replace value" : "Save secret"}</Button
+    >
     <Button onclick={cancel}>Cancel</Button>
   </div>
 </form>
@@ -314,9 +356,14 @@
   }
 
   .meta,
-  .problem {
+  .problem,
+  .warning {
     grid-column: 2;
     font-size: 12px;
+  }
+
+  .warning {
+    color: var(--warning-text);
   }
 
   .meta {
