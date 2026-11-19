@@ -24,6 +24,7 @@ use crate::request::{Options, Prepared, Request};
 use crate::response::{HttpVersion, Redirect, Response};
 use crate::sse::SseEvent;
 use crate::timing::Marks;
+use crate::tls::TlsConfigs;
 
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -54,6 +55,7 @@ struct Inner {
     spill_dir: PathBuf,
     proxy: ProxyConfig,
     pool: Pool,
+    tls: Arc<TlsConfigs>,
 }
 
 /// What a single send may use besides the request.
@@ -205,14 +207,19 @@ async fn open(
     request: &Request,
     proxy: Option<&Url>,
     deadline: Option<Deadline>,
+    configs: &Arc<TlsConfigs>,
 ) -> Result<(Connection, Marks), HttpError> {
-    let (url, proxy, tls, verify) = (
+    let (url, proxy, tls, verify, configs) = (
         request.url.clone(),
         proxy.cloned(),
         request.tls.clone(),
         request.options.verify_tls,
+        Arc::clone(configs),
     );
-    let task = tokio::spawn(async move { connect::open(&url, proxy.as_ref(), &tls, verify).await });
+    let task =
+        tokio::spawn(
+            async move { connect::open(&url, proxy.as_ref(), &tls, verify, &configs).await },
+        );
     let _stop = StopOnDrop(task.abort_handle());
     match before(deadline, task).await? {
         Ok(opened) => opened,
@@ -247,6 +254,7 @@ impl Client {
                 spill_dir: config.spill_dir,
                 proxy: config.proxy,
                 pool: Pool::default(),
+                tls: Arc::default(),
             }),
         })
     }
@@ -375,7 +383,8 @@ impl Client {
             }
         }
 
-        let (connection, marks) = open(request, proxy.as_ref(), head_deadline).await?;
+        let (connection, marks) =
+            open(request, proxy.as_ref(), head_deadline, &self.inner.tls).await?;
         if let Some(shared) = connection.share() {
             self.inner.pool.checkin(key.clone(), shared);
         }
@@ -540,5 +549,52 @@ impl Client {
             timing: marks.finish(head_at, done_at),
             redirects: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dea_testkit::http::{TestServer, Tls};
+
+    use super::*;
+    use crate::request::{Body, TlsConfig};
+
+    fn get(server: &TestServer, verify_tls: bool) -> Request {
+        Request {
+            method: "GET".into(),
+            // The server closes every connection, so each request opens one.
+            url: server.url("/close").parse().unwrap(),
+            headers: Vec::new(),
+            credential_headers: Vec::new(),
+            body: Body::Empty,
+            options: Options {
+                verify_tls,
+                ..Options::default()
+            },
+            tls: TlsConfig {
+                extra_roots_pem: vec![server.ca_pem()],
+                client_identity: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn new_connections_with_the_same_tls_settings_share_a_config() {
+        let server = TestServer::start(Tls::SelfSigned {
+            alpn: vec![b"http/1.1".to_vec()],
+        })
+        .await;
+        let client = Client::new(ClientConfig::default()).unwrap();
+        let cancel = CancellationToken::new();
+        for verify in [true, true, false, false] {
+            let response = client
+                .send(get(&server, verify), SendContext::new(&cancel))
+                .await
+                .unwrap();
+            assert_eq!(response.status, 200);
+            assert!(!response.timing.reused);
+        }
+        assert_eq!(server.connections(), 4);
+        assert_eq!(client.inner.tls.len(), 2);
     }
 }

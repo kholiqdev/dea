@@ -1,7 +1,7 @@
 //! TLS for HTTPS connections: rustls with the ring provider, verified
 //! against the operating system's trust store plus the request's extra CAs.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
@@ -57,15 +57,71 @@ fn hash<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// How many TLS settings keep their client config. A person uses a few at
+/// a time.
+const MAX_CONFIGS: usize = 16;
+
+/// Client configs by TLS settings, so a new connection reuses the verifier
+/// (which may read the operating system's trust store when it is made) and
+/// the TLS sessions it can resume. The least recently used goes first.
+#[derive(Default)]
+pub(crate) struct TlsConfigs {
+    built: Mutex<Vec<(TlsFingerprint, Arc<ClientConfig>)>>,
+}
+
+impl TlsConfigs {
+    /// The client config for `config` and `verify`.
+    pub(crate) fn get(
+        &self,
+        config: &TlsConfig,
+        verify: bool,
+    ) -> Result<Arc<ClientConfig>, HttpError> {
+        let key = TlsFingerprint::new(config, verify);
+        if let Some(found) = self.find(&key) {
+            return Ok(found);
+        }
+        // Made without the lock: the verifier may read the trust store.
+        let made = Arc::new(client_config(config, verify)?);
+        let mut built = self.lock();
+        if let Some((_, found)) = built.iter().find(|(k, _)| *k == key) {
+            // Another connection made it meanwhile.
+            return Ok(Arc::clone(found));
+        }
+        if built.len() >= MAX_CONFIGS {
+            built.remove(0);
+        }
+        built.push((key, Arc::clone(&made)));
+        Ok(made)
+    }
+
+    /// The config made for `key`, now the most recently used.
+    fn find(&self, key: &TlsFingerprint) -> Option<Arc<ClientConfig>> {
+        let mut built = self.lock();
+        let at = built.iter().position(|(k, _)| k == key)?;
+        let entry = built.remove(at);
+        let config = Arc::clone(&entry.1);
+        built.push(entry);
+        Some(config)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Vec<(TlsFingerprint, Arc<ClientConfig>)>> {
+        self.built.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// Runs the TLS handshake over `stream` and reports whether the server
 /// chose HTTP/2.
 pub(crate) async fn handshake(
     stream: TcpStream,
     host: &Host<String>,
-    config: &TlsConfig,
-    verify: bool,
+    config: Arc<ClientConfig>,
 ) -> Result<(TlsStream<TcpStream>, bool), HttpError> {
-    let connector = TlsConnector::from(Arc::new(client_config(config, verify)?));
+    let connector = TlsConnector::from(config);
     let server_name = match host {
         Host::Domain(name) => ServerName::try_from(name.clone())
             .map_err(|_| HttpError::Tls(format!("{name} is not a valid TLS server name")))?,
@@ -167,5 +223,74 @@ impl ServerCertVerifier for AcceptAny {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.0.supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dea_testkit::http::client_identity_pem;
+    use zeroize::Zeroizing;
+
+    use super::*;
+    use crate::request::ClientIdentity;
+
+    #[test]
+    fn same_settings_share_one_config_and_others_do_not() {
+        let configs = TlsConfigs::default();
+        let (certificate_pem, key_pem) = client_identity_pem();
+        let plain = TlsConfig::default();
+        let rooted = TlsConfig {
+            extra_roots_pem: vec![certificate_pem.clone()],
+            client_identity: None,
+        };
+        let identified = TlsConfig {
+            extra_roots_pem: Vec::new(),
+            client_identity: Some(ClientIdentity {
+                certificate_pem,
+                key_pem: Zeroizing::new(key_pem),
+            }),
+        };
+        let first = configs.get(&plain, true).unwrap();
+        assert!(Arc::ptr_eq(&first, &configs.get(&plain, true).unwrap()));
+        let others = [
+            configs.get(&plain, false).unwrap(),
+            configs.get(&rooted, true).unwrap(),
+            configs.get(&identified, true).unwrap(),
+        ];
+        for (i, other) in others.iter().enumerate() {
+            assert!(!Arc::ptr_eq(&first, other), "{i}");
+        }
+        assert!(Arc::ptr_eq(
+            &others[2],
+            &configs.get(&identified, true).unwrap()
+        ));
+        assert_eq!(configs.len(), 4);
+    }
+
+    #[test]
+    fn the_least_recently_used_config_goes_first() {
+        let configs = TlsConfigs::default();
+        // Unverified, so the roots are only told apart, never read.
+        let settings = |n: usize| TlsConfig {
+            extra_roots_pem: vec![b"root".to_vec(); n],
+            client_identity: None,
+        };
+        let first = configs.get(&settings(0), false).unwrap();
+        let second = configs.get(&settings(1), false).unwrap();
+        for n in 2..MAX_CONFIGS {
+            configs.get(&settings(n), false).unwrap();
+        }
+        // Using the first makes the second the oldest.
+        configs.get(&settings(0), false).unwrap();
+        configs.get(&settings(MAX_CONFIGS), false).unwrap();
+        assert_eq!(configs.len(), MAX_CONFIGS);
+        assert!(Arc::ptr_eq(
+            &first,
+            &configs.get(&settings(0), false).unwrap()
+        ));
+        assert!(!Arc::ptr_eq(
+            &second,
+            &configs.get(&settings(1), false).unwrap()
+        ));
     }
 }
