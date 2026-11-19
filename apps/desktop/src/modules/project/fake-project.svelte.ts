@@ -9,13 +9,18 @@ import type { ProjectInfo } from "$lib/ipc/bindings/ProjectInfo";
 export class FakeProject implements ProjectApi {
   info = $state.raw<ProjectInfo | null>(null);
   changed = $state.raw<readonly string[]>([]);
-  readonly environment: Environment | null = null;
+  environment = $state.raw<Environment | null>(null);
+  /** Every name setEnvironment was called with. */
+  chosen: string[] = [];
 
   constructor(info: ProjectInfo) {
     this.info = info;
   }
 
-  setEnvironment(): Promise<void> {
+  setEnvironment(name: string): Promise<void> {
+    this.chosen.push(name);
+    this.environment =
+      this.info?.environments.find((e) => e.name === name) ?? null;
     return Promise.resolve();
   }
 

@@ -266,7 +266,9 @@ test("merge conflict markers block saving that environment", async () => {
   );
   expect(draftNamed("staging").dirty).toBe(true);
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  await environmentsEditor().save();
+  await expect(environmentsEditor().save()).rejects.toThrow(
+    "Decide what to do with the changes on disk before saving",
+  );
   expect(saves).toHaveLength(0);
 
   // Resolved in the editor: the file loads again.

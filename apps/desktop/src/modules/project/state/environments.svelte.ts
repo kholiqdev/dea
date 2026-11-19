@@ -163,6 +163,12 @@ export class EnvironmentDraft {
     if (this.outside?.kind === "changed") this.reset(this.outside.theirs);
   }
 
+  /** Records that `saved` is now on disk; edits made since stay edits. */
+  markSaved(saved: Environment): void {
+    this.#saved = saved;
+    this.outside = null;
+  }
+
   /** Keeps the edits; the next save writes them over the disk version. */
   keepMine(): void {
     if (this.outside?.kind === "changed") this.#saved = this.outside.theirs;
@@ -271,33 +277,50 @@ export class EnvironmentsEditor {
     this.selected = d;
   }
 
-  /** Saves every changed environment, one after another. */
+  /**
+   * Saves every changed environment, one after another. Refuses while
+   * something stops a save, so a close that asked to save keeps the tab.
+   * A failure keeps every draft not written yet.
+   */
   async save(): Promise<void> {
-    if (!this.canSave) return;
+    if (!this.dirty) return;
+    if (!this.canSave)
+      throw new Error(
+        this.drafts.some((d) => d.outside)
+          ? "Decide what to do with the changes on disk before saving"
+          : "Fix the problems in the environments before saving",
+      );
+    const project = projectApi();
+    const active = project.environment?.name;
     let info: ProjectInfo | null = null;
     try {
-      for (const d of this.drafts.filter((x) => x.dirty))
-        info = await saveEnvironment(
-          d.saved?.name ?? null,
-          $state.snapshot(d.draft),
-        );
+      for (const d of this.drafts.filter((x) => x.dirty)) {
+        const env = $state.snapshot(d.draft);
+        const previous = d.saved?.name ?? null;
+        info = await saveEnvironment(previous, env);
+        d.markSaved(env);
+        // A renamed environment stays the one this window uses.
+        if (previous !== null && previous === active && env.name !== previous)
+          await project.setEnvironment(env.name);
+      }
       this.error = null;
     } catch (e) {
       this.error = errorMessage(e);
       throw e;
     } finally {
       if (info) {
-        projectApi().refresh(info);
-        this.load(info);
+        project.refresh(info);
+        this.sync(info);
       }
     }
   }
 
+  /** Copies an environment on disk; edits elsewhere stay as they are. */
   async duplicate(d: EnvironmentDraft): Promise<void> {
     if (!d.saved) return;
     const info = await duplicateEnvironment(d.saved.name);
     projectApi().refresh(info);
-    this.load(info);
+    this.sync(info);
   }
 
   /** Drops a draft whose file is gone, leaving the disk alone. */
