@@ -32,11 +32,13 @@ export const manifest: ModuleManifest = {
       id: "project.editEnvironments",
       title: "Edit environments",
       action: { type: "intent", intent: "project.editEnvironments" },
+      scope: "project",
     },
     {
       id: "project.saveEnvironments",
       title: "Save environments",
       action: { type: "intent", intent: "project.saveEnvironments" },
+      scope: "project",
     },
     {
       id: "project.open",

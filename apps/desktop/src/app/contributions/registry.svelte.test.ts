@@ -256,3 +256,23 @@ test("a duplicate search source id is refused, naming it", () => {
     r.register(manifest("third", { searchSources: [source("vault.secrets")] })),
   ).toThrow('"vault.secrets"');
 });
+
+test("commands that need a project are hidden without one", () => {
+  const r = createRegistry();
+  r.register(
+    manifest("project", {
+      scope: "app",
+      commands: [
+        cmd("project.open"),
+        { ...cmd("project.editEnvironments"), scope: "project" as const },
+      ],
+    }),
+  );
+  r.setProjectOpen(false);
+  expect(r.commands.map((c) => c.id)).toEqual(["project.open"]);
+  r.setProjectOpen(true);
+  expect(r.commands.map((c) => c.id)).toEqual([
+    "project.open",
+    "project.editEnvironments",
+  ]);
+});

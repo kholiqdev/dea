@@ -81,3 +81,13 @@ test("Welcome has no environments to list", () => {
   project.info = null;
   expect(environments()).toEqual([]);
 });
+
+test("environment commands need a project", () => {
+  const scoped = (manifest.commands ?? [])
+    .filter((c) => c.scope === "project")
+    .map((c) => c.id);
+  expect(scoped).toEqual([
+    "project.editEnvironments",
+    "project.saveEnvironments",
+  ]);
+});
