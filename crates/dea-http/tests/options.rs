@@ -101,32 +101,127 @@ async fn cancel_closes_the_connection_within_200_ms() {
     assert!(closed.duration_since(cancelled_at) <= Duration::from_millis(200));
 }
 
-#[tokio::test]
-async fn cancel_before_the_connection_is_open_returns_cancelled() {
-    // 192.0.2.0/24 is reserved for documentation; connecting hangs or fails
-    // fast, and either way the cancel must win or the connect must fail.
+/// The hold server never answers a TLS ClientHello, so the handshake hangs
+/// locally until the caller gives up.
+fn hanging_tls_url(hold: &HoldServer) -> String {
+    hold.url().replacen("http://", "https://", 1)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_during_the_tls_handshake_closes_the_connection() {
+    let hold = HoldServer::start().await;
+    let client = client();
     let cancel = CancellationToken::new();
     let task = {
-        let cancel = cancel.clone();
-        tokio::spawn(async move {
-            client()
-                .send(get("http://192.0.2.1/"), SendContext::new(&cancel))
-                .await
-        })
+        let (client, cancel, url) = (client.clone(), cancel.clone(), hanging_tls_url(&hold));
+        tokio::spawn(async move { client.send(get(&url), SendContext::new(&cancel)).await })
     };
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cancelled_at = Instant::now();
     cancel.cancel();
-    let result = tokio::time::timeout(Duration::from_secs(2), task)
+    assert!(matches!(task.await.unwrap(), Err(HttpError::Cancelled)));
+    assert!(cancelled_at.elapsed() <= Duration::from_millis(200));
+    let closed = hold
+        .wait_closed(Duration::from_secs(1))
         .await
-        .expect("send returns promptly")
-        .unwrap();
+        .expect("connection closed");
+    assert!(closed.duration_since(cancelled_at) <= Duration::from_millis(200));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timeout_during_the_tls_handshake_closes_the_connection() {
+    let hold = HoldServer::start().await;
+    let started = Instant::now();
+    let result = send(
+        &client(),
+        request("GET", &hanging_tls_url(&hold), with_timeout(300)),
+    )
+    .await;
+    let elapsed = started.elapsed();
+    assert!(matches!(result, Err(HttpError::Timeout(_))), "{result:?}");
     assert!(
-        matches!(
-            result,
-            Err(HttpError::Cancelled | HttpError::Connect { .. })
-        ),
-        "{result:?}"
+        elapsed >= Duration::from_millis(290) && elapsed <= Duration::from_millis(500),
+        "{elapsed:?}"
     );
+    let closed = hold
+        .wait_closed(Duration::from_secs(1))
+        .await
+        .expect("connection closed");
+    assert!(closed.duration_since(started + elapsed) <= Duration::from_millis(200));
+}
+
+fn h2_tls() -> Tls {
+    Tls::SelfSigned {
+        alpn: vec![b"h2".to_vec()],
+    }
+}
+
+fn trusting_get(server: &TestServer, path: &str, options: Options) -> Request {
+    Request {
+        tls: trusting(server),
+        ..request("GET", &server.url(path), options)
+    }
+}
+
+#[tokio::test]
+async fn http2_head_timeout_leads_to_a_fresh_connection() {
+    let server = TestServer::start(h2_tls()).await;
+    let client = client();
+    // Warm up with the default timeout: the first TLS check can be slow.
+    send(
+        &client,
+        trusting_get(&server, "/status/200", Options::default()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(server.connections(), 1);
+    let result = send(
+        &client,
+        trusting_get(&server, "/delay/2000", with_timeout(300)),
+    )
+    .await;
+    assert!(matches!(result, Err(HttpError::Timeout(_))), "{result:?}");
+    let next = send(
+        &client,
+        trusting_get(&server, "/status/200", Options::default()),
+    )
+    .await
+    .unwrap();
+    assert!(!next.timing.reused);
+    assert_eq!(server.connections(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_one_http2_request_leaves_a_concurrent_one_alone() {
+    let server = TestServer::start(h2_tls()).await;
+    let client = client();
+    send(
+        &client,
+        trusting_get(&server, "/status/200", Options::default()),
+    )
+    .await
+    .unwrap();
+    let cancel = CancellationToken::new();
+    let cancelled = {
+        let (client, cancel) = (client.clone(), cancel.clone());
+        let request = trusting_get(&server, "/delay/3000", Options::default());
+        tokio::spawn(async move { client.send(request, SendContext::new(&cancel)).await })
+    };
+    let other = {
+        let client = client.clone();
+        let request = trusting_get(&server, "/delay/600", Options::default());
+        tokio::spawn(async move { send(&client, request).await })
+    };
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    cancel.cancel();
+    assert!(matches!(
+        cancelled.await.unwrap(),
+        Err(HttpError::Cancelled)
+    ));
+    let other = other.await.unwrap().unwrap();
+    assert_eq!(other.status, 200);
+    assert!(other.timing.reused);
+    assert_eq!(server.connections(), 1);
 }
 
 #[tokio::test]

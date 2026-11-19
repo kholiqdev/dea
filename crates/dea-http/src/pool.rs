@@ -56,8 +56,10 @@ impl Pool {
         prune(&mut idle);
         let entries = idle.get_mut(key)?;
         let newest = entries.last_mut()?;
+        // An HTTP/2 connection's `since` is not refreshed here: handing it
+        // out proves nothing about the peer. `touch` does that once a
+        // response arrived.
         if let Some(shared) = newest.connection.share() {
-            newest.since = Instant::now();
             return Some(shared);
         }
         entries.pop().map(|entry| entry.connection)
@@ -74,6 +76,27 @@ impl Pool {
             connection,
             since: Instant::now(),
         });
+    }
+
+    /// Records that `connection` just carried a response, so it counts as
+    /// recently used.
+    pub(crate) fn touch(&self, key: &PoolKey, connection: &Connection) {
+        let mut idle = self.lock();
+        if let Some(entry) = idle.get_mut(key).and_then(|entries| {
+            entries
+                .iter_mut()
+                .find(|e| e.connection.same_connection(connection))
+        }) {
+            entry.since = Instant::now();
+        }
+    }
+
+    /// Forgets `connection`, so the next request opens a new one.
+    pub(crate) fn evict(&self, key: &PoolKey, connection: &Connection) {
+        let mut idle = self.lock();
+        if let Some(entries) = idle.get_mut(key) {
+            entries.retain(|e| !e.connection.same_connection(connection));
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<PoolKey, Vec<Idle>>> {

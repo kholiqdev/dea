@@ -13,7 +13,7 @@ use crate::request::{Body, Request};
 ///   without a body, and drop `Content-Type` and `Content-Length`.
 /// - 307 and 308 keep the method and the body.
 /// - A hop to another scheme, host or port drops the `Authorization` and
-///   `Cookie` headers the user wrote.
+///   `Cookie` headers the user wrote, and the TLS client identity.
 pub(crate) fn next_hop(
     current: &Request,
     status: u16,
@@ -45,6 +45,9 @@ pub(crate) fn next_hop(
     }
     if origin(&current.url) != origin(&url) {
         drop_headers(&mut next, &["authorization", "cookie"]);
+        // Like the headers, the client certificate belongs to the origin
+        // the user sent it to.
+        next.tls.client_identity = None;
     }
     next.url = url;
     Ok(Some(next))
@@ -65,7 +68,7 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::request::{Options, TlsConfig};
+    use crate::request::{ClientIdentity, Options, TlsConfig};
 
     fn request(method: &str, url: &str) -> Request {
         Request {
@@ -83,7 +86,13 @@ mod tests {
                 content_type: Some("text/plain".into()),
             },
             options: Options::default(),
-            tls: TlsConfig::default(),
+            tls: TlsConfig {
+                extra_roots_pem: vec![b"root".to_vec()],
+                client_identity: Some(ClientIdentity {
+                    certificate_pem: b"cert".to_vec(),
+                    key_pem: zeroize::Zeroizing::new(b"key".to_vec()),
+                }),
+            },
         }
     }
 
@@ -171,6 +180,21 @@ mod tests {
             assert!(!names.contains(&"authorization".to_owned()), "{location}");
             assert!(!names.contains(&"cookie".to_owned()), "{location}");
             assert!(names.contains(&"x-keep".to_owned()), "{location}");
+        }
+    }
+
+    #[test]
+    fn client_identity_survives_only_within_one_origin() {
+        let same = hop("GET", 302, "/z");
+        assert!(same.tls.client_identity.is_some());
+        for location in [
+            "http://b.test/z",
+            "https://a.test/z",
+            "http://a.test:8080/z",
+        ] {
+            let next = hop("GET", 302, location);
+            assert!(next.tls.client_identity.is_none(), "{location}");
+            assert_eq!(next.tls.extra_roots_pem.len(), 1, "{location}");
         }
     }
 
