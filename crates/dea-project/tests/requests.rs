@@ -463,3 +463,140 @@ fn save_refuses_read_only_projects_and_paths_outside_requests() {
         Err(ProjectError::ReadOnly)
     ));
 }
+
+fn load_one(root: &Path, rel: &str) -> RequestFile {
+    let loaded = load_requests(root).unwrap();
+    assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+    loaded
+        .tree
+        .find(Path::new(rel))
+        .unwrap()
+        .entry
+        .request
+        .clone()
+}
+
+fn pairs(fields: &[KeyValue]) -> Vec<(&str, &str)> {
+    fields
+        .iter()
+        .map(|f| (f.name.as_str(), f.value.as_str()))
+        .collect()
+}
+
+#[test]
+fn unquoted_scalars_in_body_and_auth_are_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = project(dir.path());
+    let root = dir.path();
+    let head = "name: R\nmethod: POST\nurl: http://h\n";
+    let scalars = "    - name: 7\n      value: 20\n    - name: b\n      value: true\n    \
+                   - name: e\n      value:\n    - name: z\n      value: 007\n";
+    write(
+        root,
+        "requests/a/urlencoded.yaml",
+        &format!(
+            "{head}body:\n  mode: urlencoded\n  fields:\n{scalars}\
+             auth:\n  type: apiKey\n  key: 12\n  value: 12345\n  in: header\n"
+        ),
+    );
+    write(
+        root,
+        "requests/a/form.yaml",
+        &format!(
+            "{head}body:\n  mode: formData\n  fields:\n{scalars}\
+             auth:\n  type: basic\n  username: 1000\n  password: false\n"
+        ),
+    );
+    write(
+        root,
+        "requests/a/text.yaml",
+        &format!("{head}body:\n  mode: json\n  text: 20\nauth:\n  type: bearer\n  token: 12345\n"),
+    );
+    write(
+        root,
+        "requests/a/binary.yaml",
+        &format!("{head}body:\n  mode: binary\n  file: 2024\n"),
+    );
+    write(
+        root,
+        "requests/b/_folder.yaml",
+        "auth:\n  type: apiKey\n  key: k\n  value: 12345\n  in: query\n",
+    );
+    write(root, "requests/b/r.yaml", &simple("r"));
+
+    let expected = [("7", "20"), ("b", "true"), ("e", ""), ("z", "007")];
+    let urlencoded = load_one(root, "requests/a/urlencoded.yaml");
+    let Some(Body::Urlencoded { fields }) = &urlencoded.body else {
+        panic!("{:?}", urlencoded.body);
+    };
+    assert_eq!(pairs(fields), expected);
+    assert_eq!(
+        urlencoded.auth,
+        Auth::ApiKey {
+            key: "12".into(),
+            value: "12345".into(),
+            location: ApiKeyLocation::Header
+        }
+    );
+
+    let form = load_one(root, "requests/a/form.yaml");
+    let Some(Body::FormData { fields }) = &form.body else {
+        panic!("{:?}", form.body);
+    };
+    let values: Vec<(&str, Option<&str>)> = fields
+        .iter()
+        .map(|f| (f.name.as_str(), f.value.as_deref()))
+        .collect();
+    assert_eq!(values, expected.map(|(name, value)| (name, Some(value))));
+    assert_eq!(
+        form.auth,
+        Auth::Basic {
+            username: "1000".into(),
+            password: "false".into()
+        }
+    );
+
+    let text = load_one(root, "requests/a/text.yaml");
+    assert_eq!(text.body, Some(Body::Json { text: "20".into() }));
+    assert_eq!(
+        text.auth,
+        Auth::Bearer {
+            token: "12345".into()
+        }
+    );
+    let binary = load_one(root, "requests/a/binary.yaml");
+    assert_eq!(
+        binary.body,
+        Some(Body::Binary {
+            file: "2024".into()
+        })
+    );
+    let loaded = load_requests(root).unwrap();
+    let folder = loaded
+        .tree
+        .collections
+        .iter()
+        .find(|c| c.dir.ends_with("b"))
+        .unwrap();
+    assert!(!folder.broken);
+    assert!(matches!(&folder.settings.auth, Auth::ApiKey { value, .. } if value == "12345"));
+
+    // Saving writes strings.
+    save_request(
+        &project,
+        Path::new("requests/a/urlencoded.yaml"),
+        &urlencoded,
+    )
+    .unwrap();
+    let saved = fs::read_to_string(root.join("requests/a/urlencoded.yaml")).unwrap();
+    for quoted in [
+        "name: '7'",
+        "value: '20'",
+        "value: 'true'",
+        "value: ''",
+        "value: '12345'",
+    ] {
+        assert!(saved.contains(quoted), "{quoted} in {saved}");
+    }
+    assert_eq!(load_one(root, "requests/a/urlencoded.yaml"), urlencoded);
+}
