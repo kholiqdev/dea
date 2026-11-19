@@ -105,6 +105,8 @@ enum Kind {
         address: IpAddr,
         prefix: u8,
     },
+    /// A host name pattern in lower case where `*` stands for any text.
+    Glob(String),
 }
 
 impl NoProxy {
@@ -148,6 +150,7 @@ impl NoProxy {
                                     .is_some_and(|rest| rest.ends_with('.')))
                     }
                     Kind::Local => address.is_none() && !host.contains('.'),
+                    Kind::Glob(pattern) => address.is_none() && glob_matches(pattern, &host),
                     Kind::Network {
                         address: network,
                         prefix,
@@ -177,6 +180,9 @@ fn parse_rule(entry: &str) -> Option<Rule> {
         }
         _ => (entry, None),
     };
+    if text.contains('*') && !is_plain_subdomain_wildcard(text) {
+        return wildcard_rule(text, port);
+    }
     let text = text.trim_start_matches("*.").trim_start_matches('.');
     let (address, prefix) = match text.split_once('/') {
         Some((address, prefix)) => (address, Some(prefix.parse::<u8>().ok()?)),
@@ -199,6 +205,51 @@ fn parse_rule(entry: &str) -> Option<Rule> {
         return None;
     };
     Some(Rule { port, kind })
+}
+
+/// `*.example.com`: the one wildcard that means the domain and its subdomains.
+fn is_plain_subdomain_wildcard(text: &str) -> bool {
+    text.strip_prefix("*.")
+        .is_some_and(|rest| !rest.is_empty() && !rest.contains('*'))
+}
+
+/// An entry with `*` in it: `192.168.*` is a network, anything else a name
+/// pattern.
+fn wildcard_rule(text: &str, port: Option<u16>) -> Option<Rule> {
+    let numeric = |o: &str| !o.is_empty() && o.bytes().all(|b| b.is_ascii_digit());
+    let network = text.strip_suffix(".*").and_then(|head| {
+        let octets: Vec<&str> = head.split('.').collect();
+        if octets.len() > 3 || !octets.iter().all(|o| numeric(o)) {
+            return None;
+        }
+        let padded = format!("{head}{}", ".0".repeat(4 - octets.len()));
+        Some(Kind::Network {
+            address: padded.parse().ok()?,
+            prefix: u8::try_from(octets.len() * 8).ok()?,
+        })
+    });
+    let kind = network.unwrap_or_else(|| Kind::Glob(text.to_ascii_lowercase()));
+    Some(Rule { port, kind })
+}
+
+/// `pattern` against `host`, where `*` stands for any text.
+fn glob_matches(pattern: &str, host: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = host.strip_prefix(first) else {
+        return false;
+    };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else {
+        return rest.is_empty();
+    };
+    for part in middle {
+        let Some(at) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[at + part.len()..];
+    }
+    rest.ends_with(last)
 }
 
 /// An IP address; for a network, `169.254/16` stands for `169.254.0.0/16`.
@@ -388,6 +439,38 @@ mod tests {
         assert!(rules.matches("intranet", 80));
         assert!(rules.matches("a.example.com", 80));
         assert!(!rules.matches("example.org", 80));
+    }
+
+    #[test]
+    fn wildcard_exception_forms() {
+        let rules = NoProxy::parse(
+            "192.168.*;10.*;172.16.*;192.168.1.*;*.corp.example.com;intranet*;*internal*;Build-*.Lab",
+        );
+        for (host, expected) in [
+            ("192.168.7.7", true),
+            ("192.169.1.1", false),
+            ("10.200.1.1", true),
+            ("11.0.0.1", false),
+            ("172.16.5.5", true),
+            ("172.17.0.1", false),
+            ("a.corp.example.com", true),
+            ("corp.example.com", true),
+            ("notcorp.example.com", false),
+            ("intranet", true),
+            ("intranet-wiki.example.org", true),
+            ("my-intranet", false),
+            ("host.internal.example.org", true),
+            ("TEAM-INTERNAL", true),
+            ("build-7.lab", true),
+            ("build-7.lab.example", false),
+            ("public.example.org", false),
+        ] {
+            assert_eq!(rules.matches(host, 80), expected, "{host}");
+        }
+        let one = NoProxy::parse("192.168.1.*");
+        assert!(one.matches("192.168.1.9", 80) && !one.matches("192.168.2.9", 80));
+        let port = NoProxy::parse("intranet*:8080");
+        assert!(port.matches("intranet2", 8080) && !port.matches("intranet2", 80));
     }
 
     #[test]
