@@ -26,6 +26,18 @@ export function activeEnvironment(
   );
 }
 
+/**
+ * The project after a change: one whose dea.yaml cannot be read keeps what
+ * the window showed, with the problem added, so drafts are not lost.
+ */
+function merged(before: ProjectInfo | null, next: ProjectInfo): ProjectInfo {
+  const manifestBroken =
+    !next.missing && next.errors.some((e) => e.path === "dea.yaml");
+  return manifestBroken && before && !before.missing
+    ? { ...before, errors: next.errors }
+    : next;
+}
+
 export class WindowProject implements ProjectApi {
   #info = $state.raw<ProjectInfo | null>(null);
   #chosen = $state<string | null>(null);
@@ -73,8 +85,26 @@ export class WindowProject implements ProjectApi {
   }
 
   apply(change: ProjectChanged): void {
-    this.#info = change.info;
+    this.#info = merged(this.#info, change.info);
     this.#changed = change.changed;
+  }
+
+  /**
+   * Reads the project again whenever the window gains focus: moving the
+   * folder away sends no change, but coming back to Dea shows it. Returns
+   * the function that stops.
+   */
+  recheckOnFocus(): () => void {
+    const recheck = () => {
+      ipc
+        .windowProject()
+        .then((info) => {
+          if (info) this.#info = merged(this.#info, info);
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("focus", recheck);
+    return () => window.removeEventListener("focus", recheck);
   }
 
   /** Follows changes on disk until the returned function is called. */

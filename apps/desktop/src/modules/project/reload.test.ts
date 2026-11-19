@@ -369,3 +369,42 @@ test("the status bar says project files are watched", () => {
     screen.queryByText("Project files are watched for changes"),
   ).toBeNull();
 });
+
+test("a vault.yaml that cannot be read is listed too", () => {
+  useProject(
+    projectWith([local], {
+      errors: [
+        {
+          path: "vault.yaml",
+          line: 3,
+          message: "did not find expected key",
+          mergeConflict: false,
+        },
+      ],
+    }),
+  );
+  open();
+  expect(screen.getByText(/line 3:/).closest("p")).toHaveTextContent(
+    "vault.yaml, line 3: did not find expected key. Dea skips the file until it is fixed.",
+  );
+});
+
+test("a dea.yaml that cannot be read is not called a newer Dea", () => {
+  useProject(
+    projectWith([], {
+      readOnly: true,
+      errors: [
+        {
+          path: "dea.yaml",
+          line: null,
+          message: "unresolved merge conflict",
+          mergeConflict: true,
+        },
+      ],
+    }),
+  );
+  open();
+  expect(screen.queryByText(/saved by a newer Dea/)).toBeNull();
+  // The window's banner names dea.yaml; the editor does not repeat it.
+  expect(screen.queryByText(/has Git conflict markers/)).toBeNull();
+});

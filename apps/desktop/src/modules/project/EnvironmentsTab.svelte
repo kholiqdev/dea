@@ -30,11 +30,14 @@
   const selected = $derived(editor.selected);
   const problems = $derived(selected ? editor.problems(selected) : []);
   const readonly = $derived(project.info?.readOnly === true);
-  const newerDea = $derived(readonly && project.info?.missing === false);
+  // The window's banner names a missing folder or a broken dea.yaml.
   const fileErrors = $derived(
-    (project.info?.errors ?? []).filter((e) =>
-      e.path.startsWith("environments/"),
-    ),
+    (project.info?.errors ?? []).filter((e) => e.path !== "dea.yaml"),
+  );
+  const newerDea = $derived(
+    readonly &&
+      project.info?.missing === false &&
+      fileErrors.length === (project.info?.errors.length ?? 0),
   );
   let deleting = $state<EnvironmentDraft | null>(null);
   let comparing = $state<EnvironmentDraft | null>(null);
