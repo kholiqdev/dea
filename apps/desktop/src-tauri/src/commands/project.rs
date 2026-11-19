@@ -501,7 +501,7 @@ pub async fn clear_local_data(app: AppHandle, window: WebviewWindow) -> Result<(
         .map(|s| s.scope.clone())
         .ok_or(crate::session::Refusal::NoProject)?;
     let store = app.state::<AppState>().store.clone();
-    Ok(spawn_blocking(move || store.clear_ui_state(&scope)).await??)
+    Ok(spawn_blocking(move || store.clear_project(&scope)).await??)
 }
 
 #[cfg(test)]
