@@ -2,13 +2,14 @@
 //! off the main thread; each command passes its arguments on.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dea_engine::projects::{
     self, OpenedProject, ProjectChanged, ProjectInfo, RecentEntry, portable_path, recent_entries,
 };
-use dea_engine::vault::VaultService;
+use dea_engine::vault::{VaultService, values_involved};
 use dea_project::{
     EnvReference, Environment, Project, ProjectChange, ProjectError, ProjectWatcher, load_project,
 };
@@ -256,16 +257,19 @@ pub async fn save_environment(
             )?;
         }
         // A rename takes the environment's Vault values along, so none stay
-        // behind under the freed name (opening the Vault reaches the
-        // keychain, so only a rename does it).
+        // behind under the freed name. Opening the Vault reaches the
+        // keychain, so it is opened only when there are values to move.
         let rename = renamed(previous.as_deref(), &environment);
+        let app_vault = &app.state::<AppState>().vault;
         let vault = match rename {
-            Some((from, to)) => {
-                let vault = app.state::<AppState>().vault.get_or_open(&app)?;
-                let has_values = vault.has_values(&project, from) || vault.has_values(&project, to);
-                refuse_locked_values(has_values, vault.status().locked, RENAME_LOCKED)?;
-                Some(vault)
-            }
+            Some((from, to)) => vault_for_values(
+                &project,
+                from,
+                Some(to),
+                |name| app_vault.has_values(&project, name),
+                || app_vault.get_or_open(&app),
+                RENAME_LOCKED,
+            )?,
             None => None,
         };
         dea_project::save_environment(&project, previous.as_deref(), &environment)?;
@@ -332,17 +336,55 @@ fn renamed<'a>(
         .map(|previous| (previous, environment.name.as_str()))
 }
 
-/// Refuses with `vaultLocked` and `message` when the Vault is locked and
-/// the environment has values to move or remove. Checked before the
-/// project is written, so a refusal changes nothing.
-fn refuse_locked_values(has_values: bool, locked: bool, message: &str) -> Result<(), IpcError> {
-    if has_values && locked {
+/// What a rename or delete needs from the Vault before the project is
+/// written. A trait so tests can stand in for the Vault.
+trait ValuesVault {
+    /// Whether the Vault is locked.
+    fn locked(&self) -> bool;
+    /// Starts the idle timer again.
+    fn record_activity(&self);
+}
+
+impl ValuesVault for VaultService {
+    fn locked(&self) -> bool {
+        self.status().locked
+    }
+
+    fn record_activity(&self) {
+        VaultService::record_activity(self);
+    }
+}
+
+/// The Vault to move or remove the values of a renamed or deleted
+/// `environment` with (`to` is the new name of a rename), or `None` when no
+/// values are involved, as [`values_involved`] decides with `has_values`.
+/// Only then is the Vault opened with `open`, so a rename or delete without
+/// secrets never reaches the keychain.
+///
+/// Refuses with `vaultLocked` and `message` while the Vault is locked.
+/// Checked before the project is written, so a refusal changes nothing.
+/// Otherwise the idle timer starts again, so the Vault cannot lock between
+/// this check and the move.
+fn vault_for_values<V: ValuesVault>(
+    project: &Project,
+    environment: &str,
+    to: Option<&str>,
+    has_values: impl Fn(&str) -> bool,
+    open: impl FnOnce() -> Result<Arc<V>, IpcError>,
+    message: &str,
+) -> Result<Option<Arc<V>>, IpcError> {
+    if !values_involved(project, environment, to, has_values) {
+        return Ok(None);
+    }
+    let vault = open()?;
+    if vault.locked() {
         return Err(IpcError {
             kind: IpcErrorKind::VaultLocked,
             message: message.into(),
         });
     }
-    Ok(())
+    vault.record_activity();
+    Ok(Some(vault))
 }
 
 /// Refuses with `reauthRequired` and `message` unless the production window
@@ -374,15 +416,21 @@ pub async fn delete_environment(
             )?;
         }
         // The environment's Vault values go with it, so none stay behind
-        // under the freed name.
-        let vault = app.state::<AppState>().vault.get_or_open(&app)?;
-        refuse_locked_values(
-            vault.has_values(&project, &name),
-            vault.status().locked,
+        // under the freed name. Opening the Vault reaches the keychain, so
+        // it is opened only when there are values to remove.
+        let app_vault = &app.state::<AppState>().vault;
+        let vault = vault_for_values(
+            &project,
+            &name,
+            None,
+            |environment| app_vault.has_values(&project, environment),
+            || app_vault.get_or_open(&app),
             DELETE_LOCKED,
         )?;
         dea_project::delete_environment(&project, &name)?;
-        vault.remove_environment(&project, &name)?;
+        if let Some(vault) = vault {
+            vault.remove_environment(&project, &name)?;
+        }
         info_of(&session)
     })
     .await?
@@ -461,6 +509,7 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::vault::{AppVault, PromptWindows, UiPrompter, VaultPromptEvent};
 
     #[test]
     fn a_broken_dea_yaml_is_a_file_problem_not_a_missing_folder() {
@@ -580,23 +629,172 @@ mod tests {
         assert_eq!(renamed(None, &env("prod")), None);
     }
 
+    /// Stands in for the Vault: locked or not, and how often activity was
+    /// recorded.
+    #[derive(Debug)]
+    struct FakeVault {
+        locked: bool,
+        activity: AtomicU32,
+    }
+
+    impl FakeVault {
+        fn new(locked: bool) -> Arc<Self> {
+            Arc::new(FakeVault {
+                locked,
+                activity: AtomicU32::new(0),
+            })
+        }
+
+        fn activity(&self) -> u32 {
+            self.activity.load(Ordering::SeqCst)
+        }
+    }
+
+    impl ValuesVault for FakeVault {
+        fn locked(&self) -> bool {
+            self.locked
+        }
+
+        fn record_activity(&self) {
+            self.activity.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// No window can show a Vault password prompt.
+    struct NoWindows;
+
+    impl PromptWindows for NoWindows {
+        fn focused(&self) -> Option<String> {
+            None
+        }
+
+        fn show(&self, _window: &str, _prompt: VaultPromptEvent) -> bool {
+            false
+        }
+    }
+
+    /// The app's Vault in `app_data`, not opened.
+    fn app_vault(app_data: &Path) -> AppVault {
+        AppVault::new(app_data.to_path_buf(), UiPrompter::new(NoWindows))
+    }
+
+    /// Opening the Vault fails the test.
+    fn never() -> Result<Arc<FakeVault>, IpcError> {
+        panic!("the Vault was opened")
+    }
+
+    /// An index the Vault cannot read: it counts as holding values.
+    fn damaged_index(app_data: &Path) {
+        fs::create_dir_all(app_data.join("vault")).unwrap();
+        fs::write(app_data.join("vault").join("index.json"), "{ not json").unwrap();
+    }
+
+    #[test]
+    fn a_rename_or_delete_without_values_leaves_the_vault_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dea_project::create_project(&dir.path().join("p"), "p").unwrap();
+        // Nothing was ever stored on this device.
+        let vault = app_vault(&dir.path().join("app-data"));
+        let has_values = |name: &str| vault.has_values(&project, name);
+
+        let kept = vault_for_values(
+            &project,
+            "staging",
+            Some("qa"),
+            has_values,
+            never,
+            RENAME_LOCKED,
+        );
+        assert!(kept.unwrap().is_none());
+        let kept = vault_for_values(&project, "staging", None, has_values, never, DELETE_LOCKED);
+        assert!(kept.unwrap().is_none());
+        assert!(vault.existing().is_none());
+    }
+
+    #[test]
+    fn an_environment_sharing_its_name_leaves_the_vault_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = dea_project::create_project(&dir.path().join("p"), "p").unwrap();
+        // As after a git merge: two files define `staging`.
+        let staging = project
+            .environments
+            .iter()
+            .find(|e| e.name == "staging")
+            .cloned()
+            .unwrap();
+        project.environments.push(staging);
+        let app_data = dir.path().join("app-data");
+        damaged_index(&app_data);
+        let vault = app_vault(&app_data);
+        let has_values = |name: &str| vault.has_values(&project, name);
+
+        let kept = vault_for_values(
+            &project,
+            "staging",
+            Some("qa"),
+            has_values,
+            never,
+            RENAME_LOCKED,
+        );
+        assert!(kept.unwrap().is_none());
+        let kept = vault_for_values(&project, "staging", None, has_values, never, DELETE_LOCKED);
+        assert!(kept.unwrap().is_none());
+    }
+
     #[test]
     fn values_to_move_or_remove_need_an_unlocked_vault() {
-        let refused = refuse_locked_values(true, true, RENAME_LOCKED).unwrap_err();
+        let dir = tempfile::tempdir().unwrap();
+        let project = dea_project::create_project(&dir.path().join("p"), "p").unwrap();
+        let app_data = dir.path().join("app-data");
+        damaged_index(&app_data);
+        let vault = app_vault(&app_data);
+        let has_values = |name: &str| vault.has_values(&project, name);
+
+        let locked = FakeVault::new(true);
+        let open_locked = || Ok(Arc::clone(&locked));
+        let refused = vault_for_values(
+            &project,
+            "staging",
+            Some("qa"),
+            has_values,
+            open_locked,
+            RENAME_LOCKED,
+        )
+        .unwrap_err();
         assert_eq!(refused.kind, IpcErrorKind::VaultLocked);
         assert_eq!(
             refused.message,
             "unlock the Vault to rename an environment that has secrets"
         );
+        let refused = vault_for_values(
+            &project,
+            "staging",
+            None,
+            has_values,
+            open_locked,
+            DELETE_LOCKED,
+        )
+        .unwrap_err();
         assert_eq!(
-            refuse_locked_values(true, true, DELETE_LOCKED)
-                .unwrap_err()
-                .message,
+            refused.message,
             "unlock the Vault to delete an environment that has secrets"
         );
-        // Unlocked, or nothing stored: the change goes ahead.
-        assert!(refuse_locked_values(true, false, RENAME_LOCKED).is_ok());
-        assert!(refuse_locked_values(false, true, DELETE_LOCKED).is_ok());
+        assert_eq!(locked.activity(), 0);
+
+        let unlocked = FakeVault::new(false);
+        let open_unlocked = || Ok(Arc::clone(&unlocked));
+        let opened = vault_for_values(
+            &project,
+            "staging",
+            None,
+            has_values,
+            open_unlocked,
+            DELETE_LOCKED,
+        );
+        assert!(opened.unwrap().is_some());
+        // The idle timer starts again, so the Vault cannot lock between this
+        // check and the move.
+        assert_eq!(unlocked.activity(), 1);
     }
 
     #[test]

@@ -80,6 +80,13 @@ impl Index {
         })
     }
 
+    /// Whether `environment` of `scope` has an entry.
+    pub fn has_values(&self, scope: &str, environment: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|e| e.scope == scope && e.environment == environment)
+    }
+
     pub fn find(&self, key: &SecretKey) -> Option<&IndexEntry> {
         self.entries.iter().find(|e| e.is(key))
     }

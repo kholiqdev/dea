@@ -39,4 +39,4 @@ pub use policy::{
     AUTO_LOCK_MINUTES, AutoLock, DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_PRODUCTION_WINDOW_MINUTES,
     PRODUCTION_WINDOW_MINUTES, Policy,
 };
-pub use store::{SecretState, SecretStatus, SecretStore};
+pub use store::{SecretState, SecretStatus, SecretStore, has_values_in};

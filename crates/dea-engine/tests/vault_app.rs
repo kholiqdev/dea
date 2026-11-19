@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use dea_engine::vault::{
     SaveSecretError, SecretInput, SecretKey, SecretString, UnlockMethod, UseError, VaultService,
-    VaultStatus, production_reason, save_secret, unlock_method, values_involved,
+    VaultStatus, app_vault_has_values, production_reason, save_secret, unlock_method,
+    values_involved,
 };
 use dea_project::{Project, ProjectError, SecretKind, SecretSpec, create_project, load_project};
 use dea_vault::{OAuthToken, SecretData};
@@ -577,6 +578,35 @@ fn a_locked_vault_keeps_an_environment_with_values_as_it_is() {
         value_in(&vault, "production", "PROD_TOKEN").as_deref(),
         Some("prod-1")
     );
+}
+
+#[test]
+fn the_app_vault_index_tells_values_without_opening_the_vault() {
+    let app_data = tempfile::tempdir().unwrap();
+    let p = project();
+    // Nothing stored yet, not even a Vault folder.
+    assert!(!app_vault_has_values(app_data.path(), &p, "staging"));
+
+    let (auth, _) = FakeAuthenticator::native(vec![]);
+    let (vault, _) = service(
+        &app_data.path().join("vault"),
+        auth,
+        FakePrompter::answering(&[]),
+        ManualClock::new(),
+    );
+    vault.unlock("unlock the Vault").unwrap();
+    store(&vault, "staging", "PROD_TOKEN", "staging-1");
+    vault.lock();
+    assert!(app_vault_has_values(app_data.path(), &p, "staging"));
+    assert!(!app_vault_has_values(app_data.path(), &p, "production"));
+
+    // A damaged index counts as holding values.
+    fs::write(
+        app_data.path().join("vault").join("index.json"),
+        "{ not json",
+    )
+    .unwrap();
+    assert!(app_vault_has_values(app_data.path(), &p, "production"));
 }
 
 #[test]

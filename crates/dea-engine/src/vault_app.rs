@@ -9,7 +9,7 @@ use std::sync::Arc;
 use dea_project::{Project, ProjectError, SecretKind, SecretSpec, save_secret_spec};
 use dea_vault::{
     AuthMethod, KdfParams, OAuthToken, Policy, SecretData, SecretKey, SecretState, SecretStatus,
-    VaultError, native_authenticator, open_native,
+    VaultError, has_values_in, native_authenticator, open_native,
 };
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,18 @@ pub fn open_app_vault(
     )?;
     vault.run_in_background()?;
     Ok(vault)
+}
+
+/// Whether `environment` of `project` has values in the one Vault of the
+/// app in `<app_data>/vault`, read from its index without opening it, so
+/// the keychain is not reached. A damaged index counts as having values.
+#[must_use]
+pub fn app_vault_has_values(app_data: &Path, project: &Project, environment: &str) -> bool {
+    has_values_in(
+        &app_data.join(VAULT_DIR),
+        &project.vault_scope(),
+        environment,
+    )
 }
 
 /// How this device unlocks the Vault, which decides the unlock button's

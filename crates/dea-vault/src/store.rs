@@ -99,10 +99,7 @@ impl SecretStore {
     /// Whether `environment` of `scope` has a value on this device. Reads
     /// only the index, so it works while the backend is locked.
     pub fn has_values(&self, scope: &str, environment: &str) -> bool {
-        self.index()
-            .entries
-            .iter()
-            .any(|e| e.scope == scope && e.environment == environment)
+        self.index().has_values(scope, environment)
     }
 
     /// Moves every value of environment `from` in `scope` to `to`, keeping
@@ -231,4 +228,13 @@ fn keys_in(index: &Index, scope: &str, environment: &str) -> Vec<SecretKey> {
             name: e.name.clone(),
         })
         .collect()
+}
+
+/// Whether `environment` of `scope` has a value, read from the index in
+/// `dir` alone: no store is opened and the backend is never reached. A
+/// missing index has none. A damaged index, or one from a newer Dea, counts
+/// as having values, so a caller never skips values on doubt.
+#[must_use]
+pub fn has_values_in(dir: &Path, scope: &str, environment: &str) -> bool {
+    Index::load(dir).map_or(true, |index| index.has_values(scope, environment))
 }
