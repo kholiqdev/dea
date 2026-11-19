@@ -10,7 +10,7 @@
   import { railIcon } from "../modules";
   import { toasts } from "../prompts/toasts.svelte";
   import { shellContext } from "../shell/context";
-  import { effectiveShortcuts } from "../shell/hotkeys.svelte";
+  import { effectiveShortcuts } from "../contributions/shortcuts";
   import type { TabRecord } from "./tabs.svelte";
 
   const ctx = shellContext();

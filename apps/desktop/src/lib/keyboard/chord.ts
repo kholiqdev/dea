@@ -99,18 +99,21 @@ export function chordToString(c: Chord): string {
     .join("+");
 }
 
+/** The keycaps of a chord: `⌘ ⇧ T` on macOS, `Ctrl Shift T` elsewhere. */
+export function chordParts(c: Chord, p: Platform): string[] {
+  const mac = p === "mac";
+  const parts = [
+    c.mod && (mac ? "⌘" : "Ctrl"),
+    c.shift && (mac ? "⇧" : "Shift"),
+    c.alt && (mac ? "⌥" : "Alt"),
+    (mac && MAC_KEYS[c.key]) || keyLabel(c.key),
+  ];
+  return parts.filter((x): x is string => Boolean(x));
+}
+
 /** A chord as shown to people: `⌘⇧T` on macOS, `Ctrl+Shift+T` elsewhere. */
 export function formatChord(c: Chord, p: Platform): string {
-  if (p === "mac")
-    return (
-      (c.mod ? "⌘" : "") +
-      (c.shift ? "⇧" : "") +
-      (c.alt ? "⌥" : "") +
-      (MAC_KEYS[c.key] ?? keyLabel(c.key))
-    );
-  return [c.mod && "Ctrl", c.shift && "Shift", c.alt && "Alt", keyLabel(c.key)]
-    .filter(Boolean)
-    .join("+");
+  return chordParts(c, p).join(p === "mac" ? "" : "+");
 }
 
 function eventKey(e: KeyboardEvent): string | null {
