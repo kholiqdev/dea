@@ -57,6 +57,7 @@ jsonschema = { version = "0.61.2", default-features = false }
 keyring-core = "1.0.1"
 libc = "0.2.191"
 notify = "8.2.2"
+percent-encoding = "2.3.2"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSWorkspace"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [

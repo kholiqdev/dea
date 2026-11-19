@@ -15,7 +15,9 @@ ts = ["dep:ts-rs"]
 workspace = true
 
 [dependencies]
+base64.workspace = true
 notify.workspace = true
+percent-encoding.workspace = true
 rand.workspace = true
 regex.workspace = true
 schemars.workspace = true
@@ -30,5 +32,6 @@ ts-rs = { workspace = true, optional = true }
 uuid.workspace = true
 
 [dev-dependencies]
+dea-testkit.workspace = true
 jsonschema.workspace = true
 time = { workspace = true, features = ["macros"] }
