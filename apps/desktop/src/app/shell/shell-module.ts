@@ -12,6 +12,8 @@ interface ShellCommand {
   id: string;
   title: string;
   chord?: string;
+  /** Hidden on Welcome, where there is no project. */
+  scope?: "project";
   run: () => unknown;
 }
 
@@ -39,6 +41,7 @@ export function shellModule(
       id: "shell.chooseEnvironment",
       title: "Choose the environment for requests",
       chord: "Mod+E",
+      scope: "project",
       run: () => {
         if (project.info) menus.environment = true;
       },
@@ -46,6 +49,7 @@ export function shellModule(
     {
       id: "shell.clearLocalData",
       title: "Clear local data…",
+      scope: "project",
       run: () => {
         if (project.info) menus.clearLocalData = true;
       },
@@ -60,24 +64,28 @@ export function shellModule(
       id: "shell.closeTab",
       title: "Close tab",
       chord: "Mod+W",
+      scope: "project",
       run: () => (tabs.active ? tabs.close(tabs.active.id) : undefined),
     },
     {
       id: "shell.reopenTab",
       title: "Reopen closed tab",
       chord: "Mod+Shift+T",
+      scope: "project",
       run: () => tabs.reopenLast(),
     },
     {
       id: "shell.moveTabLeft",
       title: "Move tab left",
       chord: "Mod+Shift+PageUp",
+      scope: "project",
       run: () => tabs.moveActive(-1),
     },
     {
       id: "shell.moveTabRight",
       title: "Move tab right",
       chord: "Mod+Shift+PageDown",
+      scope: "project",
       run: () => tabs.moveActive(1),
     },
   ];
@@ -90,6 +98,7 @@ export function shellModule(
       id: c.id,
       title: c.title,
       action: action(c.id),
+      ...(c.scope ? { scope: c.scope } : {}),
     })),
     shortcuts: commands.flatMap((c) =>
       c.chord ? [{ command: c.id, chord: c.chord }] : [],

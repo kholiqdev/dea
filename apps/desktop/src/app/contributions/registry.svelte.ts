@@ -103,7 +103,9 @@ export class Registry {
   }
 
   get commands(): Command[] {
-    return flatten(this.#active, (m) => m.commands);
+    return flatten(this.#active, (m) => m.commands).filter(
+      (c) => c.scope !== "project" || this.#projectOpen,
+    );
   }
 
   get shortcuts(): FromModule<ShortcutData>[] {

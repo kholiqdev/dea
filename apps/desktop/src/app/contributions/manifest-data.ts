@@ -35,6 +35,11 @@ export interface CommandData {
   id: ContributionId;
   title: string;
   action: Action;
+  /**
+   * `project`: the command needs the window's project, so it is hidden
+   * while the window shows Welcome, even in an app-wide module.
+   */
+  scope?: "project";
 }
 
 export interface ShortcutData {
