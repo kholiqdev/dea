@@ -1,6 +1,7 @@
 //! Opening a connection: DNS, TCP connect, TLS and the HTTP handshake,
 //! each phase timed.
 
+use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -260,29 +261,105 @@ async fn resolve(host: &Host<String>, port: u16) -> Result<Vec<SocketAddr>, Http
     Ok(addrs)
 }
 
-/// Tries each address in order and reports the last failure.
+/// How long an attempt to connect runs alone before the next address is
+/// tried beside it, as RFC 8305 recommends.
+const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+/// Connects to whichever of `addrs` answers first.
 async fn connect(addrs: &[SocketAddr]) -> Result<TcpStream, HttpError> {
-    let mut failure = HttpError::InvalidRequest("no address to connect to".into());
-    for &addr in addrs {
-        match TcpStream::connect(addr).await {
-            Ok(stream) => {
-                // Requests are written in more than one piece; without
-                // this, Nagle's algorithm holds the last one back.
-                let _ = stream.set_nodelay(true);
-                return Ok(stream);
-            }
-            Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
-                failure = HttpError::ConnectionRefused { addr };
-            }
-            Err(e) => {
-                failure = HttpError::Connect {
-                    addr,
-                    message: e.to_string(),
-                };
+    let stream = race(addrs, TcpStream::connect).await?;
+    // Requests are written in more than one piece; without this, Nagle's
+    // algorithm holds the last one back.
+    let _ = stream.set_nodelay(true);
+    Ok(stream)
+}
+
+/// Happy Eyeballs (RFC 8305): the address families take turns, each
+/// attempt runs alone for [`ATTEMPT_DELAY`] or until it fails before the
+/// next one starts beside it, and the first connection wins. The other
+/// attempts are dropped. On Windows `localhost` gives `::1` first, which
+/// takes about two seconds to refuse; an IPv6 address that never answers
+/// would take the whole timeout.
+///
+/// When every attempt fails: `ConnectionRefused` if all were refused,
+/// otherwise `Connect` with the last other failure.
+async fn race<F, A>(addrs: &[SocketAddr], attempt: F) -> Result<TcpStream, HttpError>
+where
+    F: Fn(SocketAddr) -> A,
+    A: Future<Output = io::Result<TcpStream>> + Send,
+{
+    let mut waiting = interleave(addrs).into_iter();
+    let mut running: Vec<(SocketAddr, Pin<Box<A>>)> = Vec::new();
+    let mut next_start = tokio::time::Instant::now();
+    let mut refused = None;
+    let mut failed = None;
+    loop {
+        if running.is_empty() || tokio::time::Instant::now() >= next_start {
+            match waiting.next() {
+                Some(addr) => {
+                    running.push((addr, Box::pin(attempt(addr))));
+                    next_start = tokio::time::Instant::now() + ATTEMPT_DELAY;
+                }
+                None if running.is_empty() => break,
+                None => {}
             }
         }
+        let more = waiting.len() > 0;
+        tokio::select! {
+            (addr, result) = first_done(&mut running) => match result {
+                Ok(stream) => return Ok(stream),
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::ConnectionRefused {
+                        refused = Some(addr);
+                    } else {
+                        failed = Some((addr, e.to_string()));
+                    }
+                    // The next address need not wait its turn.
+                    next_start = tokio::time::Instant::now();
+                }
+            },
+            () = tokio::time::sleep_until(next_start), if more => {}
+        }
     }
-    Err(failure)
+    Err(match (failed, refused) {
+        (Some((addr, message)), _) => HttpError::Connect { addr, message },
+        (None, Some(addr)) => HttpError::ConnectionRefused { addr },
+        (None, None) => HttpError::InvalidRequest("no address to connect to".into()),
+    })
+}
+
+/// Waits for the first of `running` to finish and takes it out.
+async fn first_done<A>(running: &mut Vec<(SocketAddr, Pin<Box<A>>)>) -> (SocketAddr, A::Output)
+where
+    A: Future,
+{
+    std::future::poll_fn(|cx| {
+        for i in 0..running.len() {
+            if let Poll::Ready(output) = running[i].1.as_mut().poll(cx) {
+                let (addr, _) = running.swap_remove(i);
+                return Poll::Ready((addr, output));
+            }
+        }
+        Poll::Pending
+    })
+    .await
+}
+
+/// `addrs` with the families taking turns, starting with the family of the
+/// first address; within a family the order stays.
+fn interleave(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    let Some(first) = addrs.first() else {
+        return Vec::new();
+    };
+    let (mut same, mut other): (VecDeque<SocketAddr>, VecDeque<SocketAddr>) = addrs
+        .iter()
+        .partition(|addr| addr.is_ipv4() == first.is_ipv4());
+    let mut turns = Vec::with_capacity(addrs.len());
+    while !same.is_empty() || !other.is_empty() {
+        turns.extend(same.pop_front());
+        turns.extend(other.pop_front());
+    }
+    turns
 }
 
 /// Starts HTTP/1.1 or HTTP/2 over `stream` and spawns the task that drives
@@ -371,5 +448,142 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Counted<S> {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::pending;
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    /// An address nothing listens on.
+    fn refused() -> SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap()
+    }
+
+    /// Sets its flag when dropped.
+    struct Dropped(Arc<AtomicBool>);
+
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Connects for real, except to `silent`, which never answers, and to
+    /// `failing`, which fails at once with `kind`.
+    fn attempts(
+        silent: SocketAddr,
+        failing: Option<(SocketAddr, io::ErrorKind)>,
+        dropped: &Arc<AtomicBool>,
+    ) -> impl Fn(SocketAddr) -> Pin<Box<dyn Future<Output = io::Result<TcpStream>> + Send>> {
+        let dropped = Arc::clone(dropped);
+        move |addr| {
+            let dropped = Arc::clone(&dropped);
+            Box::pin(async move {
+                if addr == silent {
+                    let _dropped = Dropped(dropped);
+                    pending::<()>().await;
+                }
+                if let Some((failing, kind)) = failing
+                    && addr == failing
+                {
+                    return Err(io::Error::from(kind));
+                }
+                TcpStream::connect(addr).await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_silent_address_gives_way_to_the_next() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let working = listener.local_addr().unwrap();
+        let silent: SocketAddr = "[::1]:9".parse().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+
+        let addrs = [silent, working];
+        let started = Instant::now();
+        let raced = race(&addrs, attempts(silent, None, &dropped));
+        let stream = tokio::time::timeout(Duration::from_secs(2), raced)
+            .await
+            .expect("the next address was never tried")
+            .unwrap();
+
+        assert_eq!(stream.peer_addr().unwrap(), working);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= ATTEMPT_DELAY && elapsed < Duration::from_secs(1),
+            "{elapsed:?}"
+        );
+        // The losing attempt was dropped, not left running.
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_failed_attempt_starts_the_next_at_once() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let working = listener.local_addr().unwrap();
+        let failing: SocketAddr = "[::1]:9".parse().unwrap();
+        let unused: SocketAddr = "[::1]:7".parse().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let failure = Some((failing, io::ErrorKind::ConnectionRefused));
+
+        let started = Instant::now();
+        let stream = race(&[failing, working], attempts(unused, failure, &dropped))
+            .await
+            .unwrap();
+
+        assert_eq!(stream.peer_addr().unwrap(), working);
+        assert!(started.elapsed() < ATTEMPT_DELAY, "{:?}", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn a_refused_address_gives_way_to_the_next() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let working = listener.local_addr().unwrap();
+        let started = Instant::now();
+        let stream = connect(&[refused(), working]).await.unwrap();
+        assert_eq!(stream.peer_addr().unwrap(), working);
+        // Windows takes about two seconds to report a refused connection.
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn every_address_refused_is_connection_refused() {
+        let result = connect(&[refused(), refused()]).await;
+        assert!(
+            matches!(result, Err(HttpError::ConnectionRefused { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn any_other_failure_is_a_connect_error() {
+        let (timed_out, refused) = (refused(), refused());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let unused: SocketAddr = "[::1]:7".parse().unwrap();
+        let failure = Some((timed_out, io::ErrorKind::TimedOut));
+        for addrs in [[timed_out, refused], [refused, timed_out]] {
+            let result = race(&addrs, attempts(unused, failure, &dropped)).await;
+            assert!(
+                matches!(result, Err(HttpError::Connect { addr, .. }) if addr == timed_out),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn address_families_take_turns() {
+        let addr = |text: &str| text.parse::<SocketAddr>().unwrap();
+        let (a6, b6, c6) = (addr("[::1]:1"), addr("[::2]:1"), addr("[::3]:1"));
+        let (a4, b4) = (addr("10.0.0.1:1"), addr("10.0.0.2:1"));
+        assert_eq!(interleave(&[a6, b6, c6, a4, b4]), [a6, a4, b6, b4, c6]);
+        assert_eq!(interleave(&[a4, a6, b6]), [a4, a6, b6]);
+        assert_eq!(interleave(&[a4, b4]), [a4, b4]);
+        assert!(interleave(&[]).is_empty());
     }
 }
