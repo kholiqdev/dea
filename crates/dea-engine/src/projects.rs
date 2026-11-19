@@ -152,6 +152,18 @@ impl ProjectInfo {
             missing: true,
         }
     }
+
+    /// The info of a project whose `dea.yaml` cannot be read, for example
+    /// after a merge that left conflict markers. Nothing else is loaded;
+    /// the window keeps what it showed before and names the problem.
+    #[must_use]
+    pub fn unreadable(root: &Path, scope: &str, slot: u8, error: &FileError) -> ProjectInfo {
+        ProjectInfo {
+            missing: false,
+            errors: vec![file_error_info(error)],
+            ..ProjectInfo::missing(root, scope, slot)
+        }
+    }
 }
 
 /// Sent to a window when files of its project changed on disk.

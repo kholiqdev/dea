@@ -48,6 +48,7 @@ export async function start(
   if (isE2e()) exposeE2eApi();
   if (info) {
     thisProject.listen().catch(() => {});
+    thisProject.recheckOnFocus();
     setActiveEnvironment(thisProject.environment?.name ?? null).catch(() => {});
   }
   if (saved?.activeModule && registry.module(saved.activeModule))

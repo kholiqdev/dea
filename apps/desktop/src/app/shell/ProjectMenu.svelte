@@ -7,7 +7,9 @@
   import ClearLocalData from "../prompts/ClearLocalData.svelte";
   import { clearLocalData } from "../prompts/clear-local-data";
   import { toasts } from "../prompts/toasts.svelte";
+  import { blockedByUnsaved } from "../prompts/unsaved";
   import { shellContext } from "./context";
+  import { windowReload } from "./window-reload";
 
   const ctx = shellContext();
   const info = $derived(ctx.project.info);
@@ -47,9 +49,10 @@
       label: "Close project",
       onselect: () =>
         attempt(async () => {
+          if (blockedByUnsaved(ctx.tabs)) return;
           await closeProject();
           // A fresh start shows Welcome with nothing left of the project.
-          location.reload();
+          windowReload.run();
         }),
     },
   ]);

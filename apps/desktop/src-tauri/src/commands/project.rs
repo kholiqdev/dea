@@ -8,7 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use dea_engine::projects::{
     self, OpenedProject, ProjectChanged, ProjectInfo, RecentEntry, portable_path, recent_entries,
 };
-use dea_project::{EnvReference, Environment, ProjectChange, ProjectWatcher, load_project};
+use dea_project::{
+    EnvReference, Environment, ProjectChange, ProjectError, ProjectWatcher, load_project,
+};
 use tauri::async_runtime::spawn_blocking;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
@@ -34,7 +36,18 @@ fn info_of(session: &Session) -> Result<ProjectInfo, IpcError> {
             session.slot,
         ));
     }
-    let loaded = load_project(&session.root)?;
+    let loaded = match load_project(&session.root) {
+        Ok(loaded) => loaded,
+        Err(ProjectError::InvalidManifest(e)) => {
+            return Ok(ProjectInfo::unreadable(
+                &session.root,
+                &session.scope,
+                session.slot,
+                &e,
+            ));
+        }
+        Err(e) => return Err(e.into()),
+    };
     let opened = OpenedProject {
         project: loaded.project,
         errors: loaded.errors,
@@ -115,14 +128,23 @@ pub async fn window_project(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<Option<ProjectInfo>, IpcError> {
-    let session = app
-        .state::<AppState>()
-        .sessions()
-        .get(window.label())
-        .cloned();
+    let state = app.state::<AppState>();
+    let (session, came_back) = {
+        let mut sessions = state.sessions();
+        let was_missing = sessions.get(window.label()).is_some_and(|s| s.missing);
+        let missing = sessions.refresh_missing(window.label());
+        (
+            sessions.get(window.label()).cloned(),
+            was_missing && !missing,
+        )
+    };
     let Some(session) = session else {
         return Ok(None);
     };
+    // A folder that came back is watched again.
+    if came_back {
+        state.set_watcher(window.label(), watch(&app, window.label(), &session.root));
+    }
     Ok(Some(spawn_blocking(move || info_of(&session)).await??))
 }
 
@@ -301,4 +323,36 @@ pub async fn clear_local_data(app: AppHandle, window: WebviewWindow) -> Result<(
         .ok_or(crate::session::Refusal::NoProject)?;
     let store = app.state::<AppState>().store.clone();
     Ok(spawn_blocking(move || store.clear_ui_state(&scope)).await??)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn a_broken_dea_yaml_is_a_file_problem_not_a_missing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("p");
+        dea_project::create_project(&root, "p").unwrap();
+        fs::write(
+            root.join("dea.yaml"),
+            "<<<<<<< HEAD\nname: p\n=======\nname: q\n>>>>>>> other\n",
+        )
+        .unwrap();
+        let session = Session {
+            root,
+            scope: "p".into(),
+            slot: 1,
+            active_environment: None,
+            missing: false,
+        };
+        let info = info_of(&session).unwrap();
+        assert!(!info.missing);
+        assert_eq!(info.slot, 1);
+        assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+        assert_eq!(info.errors[0].path, "dea.yaml");
+        assert!(info.errors[0].merge_conflict);
+    }
 }

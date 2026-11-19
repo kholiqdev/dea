@@ -16,6 +16,13 @@
   function reason(e: FileErrorInfo): string {
     return e.message.replace(/ at line \d+ column \d+$/, "");
   }
+
+  /** What the broken file means for the project. */
+  function effect(e: FileErrorInfo): string {
+    return e.path.startsWith("environments/")
+      ? "The environment is not loaded until the file is fixed."
+      : "Dea skips the file until it is fixed.";
+  }
 </script>
 
 {#if unreadable.length > 0}
@@ -27,7 +34,7 @@
         <p>
           <code>{e.path}</code>{#if e.line !== null}, line {e.line}{/if}: {reason(
             e,
-          )}. The environment is not loaded until the file is fixed.
+          )}. {effect(e)}
         </p>
       </div>
     {/each}

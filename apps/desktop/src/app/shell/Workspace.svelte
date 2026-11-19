@@ -2,6 +2,7 @@
   import TabBar from "../tabs/TabBar.svelte";
   import { shellContext } from "./context";
   import LazyView from "./LazyView.svelte";
+  import ProjectBanner from "./ProjectBanner.svelte";
 
   const ctx = shellContext();
   // A derived, not an {@const}: a component taken from {@const} keeps its
@@ -29,6 +30,7 @@
 </script>
 
 <main class="main" tabindex="-1" {@attach keepFocus}>
+  <ProjectBanner />
   {#if ctx.project.info}<TabBar />{/if}
   <div class="content">
     {#if tab && tabType}

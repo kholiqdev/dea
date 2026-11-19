@@ -24,6 +24,8 @@ export interface FakeIpcOptions {
   uiState?: UiState;
   /** How long clear_local_data takes, in milliseconds. */
   clearTakes?: number;
+  /** What pick_folder returns. */
+  picked?: string | null;
 }
 
 export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
@@ -43,6 +45,9 @@ export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
       });
       return null;
     }
+    if (cmd === "pick_folder") return opts.picked ?? null;
+    if (cmd === "open_project") return projectInfo({ root: a.root as string });
+    if (cmd === "close_project") return null;
     if (cmd === "clear_local_data")
       return new Promise((resolve) =>
         setTimeout(() => resolve(null), opts.clearTakes ?? 0),

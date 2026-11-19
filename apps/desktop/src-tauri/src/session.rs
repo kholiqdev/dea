@@ -88,13 +88,16 @@ impl Sessions {
         s.missing
     }
 
-    /// The window's session, when its project can be written to.
-    pub fn writable(&self, window: &str) -> Result<&Session, Refusal> {
-        match self.by_window.get(window) {
-            None => Err(Refusal::NoProject),
-            Some(s) if s.missing => Err(Refusal::Missing),
-            Some(s) => Ok(s),
+    /// The window's session, when its project can be written to. The
+    /// folder is checked again: a move sends no event for the root.
+    pub fn writable(&mut self, window: &str) -> Result<&Session, Refusal> {
+        if !self.by_window.contains_key(window) {
+            return Err(Refusal::NoProject);
         }
+        if self.refresh_missing(window) {
+            return Err(Refusal::Missing);
+        }
+        self.by_window.get(window).ok_or(Refusal::NoProject)
     }
 }
 
@@ -157,5 +160,23 @@ mod tests {
         assert!(s.refresh_missing("main"));
         assert_eq!(s.writable("main"), Err(Refusal::Missing));
         assert_eq!(s.writable("other"), Err(Refusal::NoProject));
+    }
+
+    #[test]
+    fn writable_notices_a_folder_that_went_away_and_came_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("p");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("dea.yaml"), "name: p\nschemaVersion: 1\n").unwrap();
+        let mut s = Sessions::default();
+        s.bind("main", root.clone(), "p".into());
+
+        // Moved away (Finder sends no event for the watched root).
+        let moved = dir.path().join("moved");
+        fs::rename(&root, &moved).unwrap();
+        assert_eq!(s.writable("main").err(), Some(Refusal::Missing));
+
+        fs::rename(&moved, &root).unwrap();
+        assert!(s.writable("main").is_ok());
     }
 }

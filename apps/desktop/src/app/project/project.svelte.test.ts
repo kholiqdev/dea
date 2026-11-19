@@ -64,3 +64,54 @@ test("a change from disk replaces the project and lists the files", async () => 
   // staging is gone: back to the default environment.
   expect(p.environment?.name).toBe("local");
 });
+
+test("a dea.yaml that cannot be read keeps what the window showed", async () => {
+  const p = new WindowProject();
+  await p.load();
+  p.restoreEnvironment("staging");
+  const broken = projectInfo({
+    environments: [],
+    environmentFiles: {},
+    readOnly: true,
+    errors: [
+      {
+        path: "dea.yaml",
+        line: null,
+        message:
+          "unresolved merge conflict: resolve the conflict markers and save",
+        mergeConflict: true,
+      },
+    ],
+  });
+  p.apply({ info: broken, changed: ["dea.yaml"] });
+  flushSync();
+  expect(p.info?.environments.map((e) => e.name)).toEqual([
+    "local",
+    "staging",
+    "production",
+  ]);
+  expect(p.environment?.name).toBe("staging");
+  expect(p.info?.errors).toEqual(broken.errors);
+
+  // Fixed: the next change carries the whole project again.
+  p.apply({ info: projectInfo(), changed: ["dea.yaml"] });
+  expect(p.info?.errors).toEqual([]);
+});
+
+test("a window that gains focus reads its project again", async () => {
+  const p = new WindowProject();
+  await p.load();
+  const stop = p.recheckOnFocus();
+  info = projectInfo({ missing: true, environments: [] });
+  window.dispatchEvent(new Event("focus"));
+  await expect.poll(() => p.info?.missing).toBe(true);
+  stop();
+  // A failed read keeps what the window has.
+  clearMocks();
+  mockIPC(() => {
+    throw new Error("gone");
+  });
+  window.dispatchEvent(new Event("focus"));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(p.info?.missing).toBe(true);
+});
