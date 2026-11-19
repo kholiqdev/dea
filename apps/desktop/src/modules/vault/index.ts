@@ -5,6 +5,14 @@ export const manifest: ModuleManifest = {
   title: "Vault",
   rail: { icon: "key-round", group: "bottom", order: 1 },
   view: () => import("./VaultView.svelte"),
+  statusItems: [
+    {
+      id: "vault.status",
+      align: "end",
+      order: 0,
+      view: () => import("./components/VaultStatusItem.svelte"),
+    },
+  ],
   commands: [
     {
       id: "vault.open",
