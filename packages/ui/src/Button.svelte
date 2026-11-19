@@ -16,7 +16,7 @@
   } = $props();
 </script>
 
-<button {type} class="btn {variant}" class:small={size === "small"} {...rest}>
+<button {type} class={["btn", variant, { small: size === "small" }]} {...rest}>
   {@render children?.()}
 </button>
 

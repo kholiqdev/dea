@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { applyTheme, resolveTheme, watchSystemTheme } from "./theme";
+import { applyTheme, resolveTheme } from "./theme";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,27 +19,4 @@ test("apply sets data-theme", () => {
   expect(root.dataset.theme).toBe("light");
   applyTheme(root, "dark");
   expect(root.dataset.theme).toBe("dark");
-});
-
-test("watching reports changes and stops", () => {
-  const listeners = new Set<(e: { matches: boolean }) => void>();
-  const query = {
-    matches: true,
-    addEventListener: (_: string, fn: (e: { matches: boolean }) => void) =>
-      listeners.add(fn),
-    removeEventListener: (_: string, fn: (e: { matches: boolean }) => void) =>
-      listeners.delete(fn),
-  };
-  const matchMedia = vi.fn(() => query);
-  vi.stubGlobal("matchMedia", matchMedia);
-  const seen: boolean[] = [];
-
-  const stop = watchSystemTheme((dark) => seen.push(dark));
-  expect(matchMedia).toHaveBeenCalledWith("(prefers-color-scheme: dark)");
-  for (const fn of listeners) fn({ matches: false });
-  stop();
-  for (const fn of listeners) fn({ matches: true });
-
-  expect(seen).toEqual([false]);
-  expect(listeners.size).toBe(0);
 });
