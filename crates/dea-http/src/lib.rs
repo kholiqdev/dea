@@ -6,6 +6,7 @@ mod client;
 mod connect;
 mod error;
 mod pool;
+mod redirect;
 mod request;
 mod response;
 mod timing;

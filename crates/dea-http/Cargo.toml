@@ -20,7 +20,7 @@ rustls-platform-verifier.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 url.workspace = true
@@ -28,4 +28,4 @@ zeroize.workspace = true
 
 [dev-dependencies]
 dea-testkit = { workspace = true, features = ["http"] }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

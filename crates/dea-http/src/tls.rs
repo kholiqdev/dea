@@ -3,9 +3,12 @@
 
 use std::sync::Arc;
 
-use rustls::ClientConfig;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::pem::PemObject as _;
 use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::pki_types::{PrivateKeyDer, UnixTime};
+use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 use sha2::{Digest as _, Sha256};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -60,8 +63,9 @@ pub(crate) async fn handshake(
     stream: TcpStream,
     host: &Host<String>,
     config: &TlsConfig,
+    verify: bool,
 ) -> Result<(TlsStream<TcpStream>, bool), HttpError> {
-    let connector = TlsConnector::from(Arc::new(client_config(config)?));
+    let connector = TlsConnector::from(Arc::new(client_config(config, verify)?));
     let server_name = match host {
         Host::Domain(name) => ServerName::try_from(name.clone())
             .map_err(|_| HttpError::Tls(format!("{name} is not a valid TLS server name")))?,
@@ -76,8 +80,43 @@ pub(crate) async fn handshake(
     Ok((stream, h2))
 }
 
-fn client_config(config: &TlsConfig) -> Result<ClientConfig, HttpError> {
+fn client_config(config: &TlsConfig, verify: bool) -> Result<ClientConfig, HttpError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier: Arc<dyn ServerCertVerifier> = if verify {
+        Arc::new(platform_verifier(config, &provider)?)
+    } else {
+        Arc::new(AcceptAny(provider.signature_verification_algorithms))
+    };
+    let builder = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| HttpError::Tls(describe(&e)))?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier);
+    let mut client = match &config.client_identity {
+        Some(identity) => {
+            let certs = CertificateDer::pem_slice_iter(&identity.certificate_pem)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    HttpError::Tls(format!("could not read the client certificate: {e}"))
+                })?;
+            // The key's own error text stays out of the message.
+            let key = PrivateKeyDer::from_pem_slice(&identity.key_pem)
+                .map_err(|_| HttpError::Tls("could not read the client private key".into()))?;
+            builder
+                .with_client_auth_cert(certs, key)
+                .map_err(|e| HttpError::Tls(format!("the client certificate is not usable: {e}")))?
+        }
+        None => builder.with_no_client_auth(),
+    };
+    client.alpn_protocols = ALPN.iter().map(|p| p.to_vec()).collect();
+    Ok(client)
+}
+
+/// Trusts the operating system's roots plus the request's extra CAs.
+fn platform_verifier(
+    config: &TlsConfig,
+    provider: &Arc<rustls::crypto::CryptoProvider>,
+) -> Result<rustls_platform_verifier::Verifier, HttpError> {
     let mut roots = Vec::new();
     for pem in &config.extra_roots_pem {
         for cert in CertificateDer::pem_slice_iter(pem) {
@@ -86,15 +125,47 @@ fn client_config(config: &TlsConfig) -> Result<ClientConfig, HttpError> {
             })?);
         }
     }
-    let verifier =
-        rustls_platform_verifier::Verifier::new_with_extra_roots(roots, Arc::clone(&provider))
-            .map_err(|e| HttpError::Tls(describe(&e)))?;
-    let mut client = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|e| HttpError::Tls(describe(&e)))?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(verifier))
-        .with_no_client_auth();
-    client.alpn_protocols = ALPN.iter().map(|p| p.to_vec()).collect();
-    Ok(client)
+    rustls_platform_verifier::Verifier::new_with_extra_roots(roots, Arc::clone(provider))
+        .map_err(|e| HttpError::Tls(describe(&e)))
+}
+
+/// The verifier for `verify_tls: false`: any certificate and any host name
+/// pass. The handshake signatures are still checked, so the peer must own
+/// the key of the certificate it shows.
+#[derive(Debug)]
+struct AcceptAny(WebPkiSupportedAlgorithms);
+
+impl ServerCertVerifier for AcceptAny {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, cert, dss, &self.0)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, cert, dss, &self.0)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.supported_schemes()
+    }
 }
