@@ -11,7 +11,7 @@ import type { Shell } from "./shell-state.svelte";
 interface ShellCommand {
   id: string;
   title: string;
-  chord: string;
+  chord?: string;
   run: () => unknown;
 }
 
@@ -35,6 +35,13 @@ export function shellModule(
       chord: "Mod+E",
       run: () => {
         if (project.info) menus.environment = true;
+      },
+    },
+    {
+      id: "shell.clearLocalData",
+      title: "Clear local data…",
+      run: () => {
+        if (project.info) menus.clearLocalData = true;
       },
     },
     {
@@ -78,7 +85,9 @@ export function shellModule(
       title: c.title,
       action: action(c.id),
     })),
-    shortcuts: commands.map((c) => ({ command: c.id, chord: c.chord })),
+    shortcuts: commands.flatMap((c) =>
+      c.chord ? [{ command: c.id, chord: c.chord }] : [],
+    ),
     intents: commands.map((c) => ({
       intent: c.id,
       handler: () => Promise.resolve({ default: c.run }),

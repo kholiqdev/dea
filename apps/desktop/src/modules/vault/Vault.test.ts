@@ -117,6 +117,7 @@ beforeEach(() => {
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
     toast: (text) => toasts.push(text),
+    runCommand: () => Promise.resolve(),
   });
   clearMocks();
   mockIPC((cmd, raw) => {
