@@ -67,3 +67,18 @@ test("every view loads", async () => {
     expect(loaded.default, m.id).toBeTypeOf("function");
   }
 });
+
+test("the e2e tab type is registered only when the debug flag is set", () => {
+  const plain = createRegistry();
+  registerBuiltInModules(plain);
+  expect(plain.tabType("e2e.tab")).toBeUndefined();
+
+  window.__DEA_E2E__ = true;
+  try {
+    const flagged = createRegistry();
+    registerBuiltInModules(flagged);
+    expect(flagged.tabType("e2e.tab")?.module).toBe("e2e");
+  } finally {
+    delete window.__DEA_E2E__;
+  }
+});

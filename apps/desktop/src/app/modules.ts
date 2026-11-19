@@ -10,7 +10,9 @@ import Smartphone from "@lucide/svelte/icons/smartphone";
 import SquareTerminal from "@lucide/svelte/icons/square-terminal";
 import type { Registry } from "./contributions/registry.svelte";
 import type { ModuleManifest } from "./contributions/types";
+import { isE2e } from "./e2e";
 import { manifest as database } from "../modules/database";
+import { manifest as e2e } from "../modules/e2e";
 import { manifest as mobile } from "../modules/mobile";
 import { manifest as project } from "../modules/project";
 import { manifest as requests } from "../modules/requests";
@@ -46,4 +48,5 @@ export function railIcon(name: string): Icon | undefined {
 
 export function registerBuiltInModules(r: Registry): void {
   for (const m of BUILT_IN_MODULES) r.register(m);
+  if (isE2e()) r.register(e2e);
 }

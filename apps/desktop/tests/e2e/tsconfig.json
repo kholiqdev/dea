@@ -1,0 +1,10 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node", "@wdio/globals/types", "@wdio/mocha-framework"],
+    "skipLibCheck": true
+  },
+  "include": ["./**/*.ts"]
+}

@@ -4,5 +4,11 @@ packages:
   - sdks/*
   - website
 allowBuilds:
+  # WebdriverIO's browser drivers are not used: E2E drives the app through
+  # tauri-driver, and CI installs the matching msedgedriver itself.
+  edgedriver: false
+  # esbuild runs from its platform package; no install script is needed.
+  esbuild: false
+  geckodriver: false
   # Git hooks are installed by the root "prepare" script instead.
   lefthook: false

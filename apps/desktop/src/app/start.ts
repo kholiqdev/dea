@@ -7,6 +7,7 @@ import { getUiState } from "$lib/ipc/settings";
 import { settings } from "$lib/settings/settings.svelte";
 import App from "./App.svelte";
 import { registry } from "./contributions/registry.svelte";
+import { exposeE2eApi, isE2e } from "./e2e";
 import { registerBuiltInModules } from "./modules";
 import { applyAppearance } from "./shell/appearance";
 import { NO_PROJECT, shell } from "./shell/shell-state.svelte";
@@ -37,6 +38,7 @@ export async function start(
   );
 
   const app = mount(App, { target });
+  if (isE2e()) exposeE2eApi();
   if (saved?.activeModule) await shell.openModule(saved.activeModule);
   if (!shell.activeModule) await shell.openModule(WELCOME);
   return app;

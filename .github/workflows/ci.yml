@@ -135,6 +135,60 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter desktop tauri build --debug --no-bundle
 
+  # macOS has no WebDriver for WKWebView, so the end-to-end tests run on
+  # Linux and Windows only.
+  e2e:
+    name: e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            webkit2gtk-driver xvfb
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+      - name: Install the msedgedriver that matches WebView2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).pv
+          if (-not $version) {
+            $version = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe').VersionInfo.ProductVersion
+          }
+          Write-Host "WebView2 $version"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $dir
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - run: pnpm --filter desktop tauri build --debug --no-bundle
+      - name: Run the end-to-end tests
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm --filter desktop e2e
+      - name: Run the end-to-end tests
+        if: runner.os == 'Windows'
+        run: pnpm --filter desktop e2e
+
   arch:
     name: architecture
     runs-on: ubuntu-22.04
