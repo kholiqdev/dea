@@ -170,20 +170,20 @@ async fn head<F: Future>(
     let Some(deadline) = deadline else {
         return Ok(future.await);
     };
+    let due = || match progress.last() {
+        Some(last) => tokio::time::Instant::from_std(last)
+            .checked_add(deadline.timeout)
+            .map_or(deadline.at, |moved| moved.max(deadline.at)),
+        None => deadline.at,
+    };
     let mut future = pin!(future);
     loop {
-        let at = match progress.last() {
-            Some(last) => tokio::time::Instant::from_std(last)
-                .checked_add(deadline.timeout)
-                .map_or(deadline.at, |moved| moved.max(deadline.at)),
-            None => deadline.at,
-        };
-        if tokio::time::Instant::now() >= at {
-            return Err(HttpError::Timeout(deadline.timeout));
-        }
-        // On time out, look again: the body may have moved on meanwhile.
-        if let Ok(output) = tokio::time::timeout_at(at, future.as_mut()).await {
+        if let Ok(output) = tokio::time::timeout_at(due(), future.as_mut()).await {
             return Ok(output);
+        }
+        // The body may have moved on while the wait ran out.
+        if due() <= tokio::time::Instant::now() {
+            return Err(HttpError::Timeout(deadline.timeout));
         }
     }
 }
