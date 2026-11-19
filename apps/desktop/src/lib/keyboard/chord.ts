@@ -116,6 +116,18 @@ export function formatChord(c: Chord, p: Platform): string {
   return chordParts(c, p).join(p === "mac" ? "" : "+");
 }
 
+/**
+ * Chord text as shown to people, or null when it is not a chord this Dea
+ * understands (a typo, or a key a newer Dea knows).
+ */
+export function formatChordText(text: string, p: Platform): string | null {
+  try {
+    return formatChord(parseChord(text), p);
+  } catch {
+    return null;
+  }
+}
+
 function eventKey(e: KeyboardEvent): string | null {
   const digit = /^(?:Digit|Numpad)(\d)$/.exec(e.code)?.[1];
   if (digit) return digit;

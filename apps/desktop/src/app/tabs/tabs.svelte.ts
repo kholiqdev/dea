@@ -214,7 +214,13 @@ export class Tabs {
 }
 
 function toState(t: TabRecord): TabState {
-  return { id: t.id, tabType: t.tabType, title: t.title, params: t.params };
+  // JSON drops undefined, and the store needs params to be present.
+  return {
+    id: t.id,
+    tabType: t.tabType,
+    title: t.title,
+    params: t.params ?? null,
+  };
 }
 
 /** The tab of `module` closest to `index`, looking right first. */

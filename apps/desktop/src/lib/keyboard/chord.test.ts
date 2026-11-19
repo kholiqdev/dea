@@ -4,6 +4,7 @@ import {
   chordParts,
   chordToString,
   formatChord,
+  formatChordText,
   parseChord,
   sameChord,
 } from "./chord";
@@ -110,4 +111,9 @@ test("splits a chord into keycaps", () => {
     "T",
   ]);
   expect(chordParts(parseChord("Alt+Enter"), "mac")).toEqual(["⌥", "↩"]);
+});
+
+test("chord text that cannot be read formats to null", () => {
+  expect(formatChordText("Mod+Shift+T", "other")).toBe("Ctrl+Shift+T");
+  expect(formatChordText("Mod+Backquote", "other")).toBeNull();
 });

@@ -7,14 +7,16 @@ import ShellView from "../shell/Shell.svelte";
 import { Shell } from "../shell/shell-state.svelte";
 import { shellModule } from "../shell/shell-module";
 import { fakeIpc, railModule, registryWith, view } from "../shell/test-support";
+import { settings } from "$lib/settings/settings.svelte";
 import { Tabs } from "./tabs.svelte";
 
 beforeEach(() => {
   fakeIpc();
 });
 
-function setup() {
+function setup(...extra: Parameters<typeof registryWith>) {
   const registry = registryWith(
+    ...extra,
     railModule("requests", 1, {
       rail: { icon: "arrow-left-right", group: "main", order: 1 },
       tabTypes: [
@@ -217,4 +219,98 @@ test("a production tab shows the production marker", () => {
   expect(prod.querySelector(".env-prod")).toHaveTextContent("production");
   expect(staging.querySelector(".env-prod")).toBeNull();
   expect(staging.querySelector(".tab-env")).toHaveTextContent("staging");
+});
+
+test("a tab of a module with no main view shows its content", async () => {
+  const { tabs, shell } = setup({
+    id: "tool",
+    title: "Tool",
+    tabTypes: [
+      { id: "tool.page", title: "Page", icon: "x", view: view("tool page") },
+    ],
+  });
+  tabs.open("tool.page", "T", null);
+  expect(await screen.findByText("tool page")).toBeInTheDocument();
+  expect(shell.activeModule).toBe("tool");
+});
+
+test("pressing a tab leaves the click to it until a drag starts", () => {
+  const { tabs } = setup();
+  tabs.open("requests.request", "A", null);
+  tabs.open("requests.request", "B", null);
+  flushSync();
+  const el = bar().querySelectorAll<HTMLElement>("[data-tab]")[1]!;
+  const capture = vi.fn();
+  el.setPointerCapture = capture;
+  const pointer = { pointerId: 7, button: 0, bubbles: true };
+  el.dispatchEvent(
+    new PointerEvent("pointerdown", { ...pointer, clientX: 150 }),
+  );
+  // Chromium (WebView2) sends the click to the element holding the
+  // capture, so capturing on press would keep the tab from activating.
+  expect(capture).not.toHaveBeenCalled();
+  el.dispatchEvent(
+    new PointerEvent("pointermove", { ...pointer, clientX: 152 }),
+  );
+  expect(capture).not.toHaveBeenCalled();
+  el.dispatchEvent(
+    new PointerEvent("pointermove", { ...pointer, clientX: 170 }),
+  );
+  expect(capture).toHaveBeenCalledWith(7);
+});
+
+test("a shortcut the app cannot read does not break the title bar or tab bar", async () => {
+  const { tabs, shell } = setup(
+    railModule("notes", 3, { sidebar: view("notes sidebar") }),
+  );
+  await settings.update({
+    shortcuts: {
+      "shell.toggleSidebar": "Mod+Backquote",
+      "shell.closeTab": "Mod+Nope",
+    },
+  });
+  try {
+    await shell.openModule("notes");
+    tabs.open("requests.request", "A", null);
+    flushSync();
+    expect(screen.getByRole("button", { name: "Close A" })).toHaveAttribute(
+      "title",
+      "Close A",
+    );
+    await shell.openModule("notes");
+    flushSync();
+    expect(
+      screen.getByRole("button", { name: "Hide sidebar" }),
+    ).toHaveAttribute("title", "Hide sidebar");
+  } finally {
+    await settings.update({ shortcuts: {} });
+  }
+});
+
+test("the active tab is scrolled into view", () => {
+  const scrolled: Element[] = [];
+  const original = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "scrollIntoView",
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value(this: Element) {
+      scrolled.push(this);
+    },
+  });
+  try {
+    const { tabs } = setup();
+    const a = tabs.open("requests.request", "A", null);
+    tabs.open("requests.request", "B", null);
+    flushSync();
+    scrolled.length = 0;
+    tabs.activate(a);
+    flushSync();
+    expect(scrolled.some((el) => el.closest(`[data-tab="${a}"]`))).toBe(true);
+  } finally {
+    if (original)
+      Object.defineProperty(Element.prototype, "scrollIntoView", original);
+    else delete (Element.prototype as Partial<Element>).scrollIntoView;
+  }
 });

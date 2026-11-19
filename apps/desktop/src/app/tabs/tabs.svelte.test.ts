@@ -203,3 +203,9 @@ test("rail navigation shows the module's last tab", async () => {
   expect(tabs.active?.id).toBe(a);
   stop();
 });
+
+test("a tab opened without params is saved with null params", () => {
+  const { tabs } = setup();
+  tabs.open("requests.request", "A", undefined);
+  expect(tabs.snapshot().tabs[0]?.params).toBeNull();
+});

@@ -1,10 +1,6 @@
 <script lang="ts">
   import X from "@lucide/svelte/icons/x";
-  import {
-    currentPlatform,
-    formatChord,
-    parseChord,
-  } from "$lib/keyboard/chord";
+  import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
   import { settings } from "$lib/settings/settings.svelte";
   import { errorMessage } from "$lib/ipc/errors";
   import { railIcon } from "../modules";
@@ -20,7 +16,7 @@
     const b = effectiveShortcuts(ctx.registry, settings.shortcuts).find(
       (s) => s.command === "shell.closeTab",
     );
-    return b ? formatChord(parseChord(b.chord), currentPlatform()) : null;
+    return b ? formatChordText(b.chord, currentPlatform()) : null;
   });
 
   function iconOf(tab: TabRecord) {
@@ -59,7 +55,9 @@
     focusTab(target.id);
   }
 
-  // Reordering by drag: pointer events, no library.
+  // Reordering by drag: pointer events, no library. The pointer is only
+  // captured once a drag starts: Chromium (WebView2) sends the click to the
+  // capturing element, so capturing on press would stop the tab's click.
   const DRAG_START = 4;
   let press: { id: string; x: number; dragging: boolean } | null = null;
   let dragging = $state<string | null>(null);
@@ -67,13 +65,15 @@
   function onpointerdown(e: PointerEvent, tab: TabRecord): void {
     if (e.button !== 0 || (e.target as Element).closest(".close")) return;
     press = { id: tab.id, x: e.clientX, dragging: false };
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   }
 
   function onpointermove(e: PointerEvent): void {
     if (!press) return;
-    if (!press.dragging && Math.abs(e.clientX - press.x) < DRAG_START) return;
-    press.dragging = true;
+    if (!press.dragging) {
+      if (Math.abs(e.clientX - press.x) < DRAG_START) return;
+      press.dragging = true;
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    }
     dragging = press.id;
   }
 
@@ -88,6 +88,21 @@
     return index < 0 ? others.length : index;
   }
 
+  // The bar scrolls sideways when the tabs do not fit; keep the active tab
+  // in view, and let a vertical wheel scroll it.
+  $effect(() => {
+    const id = activeId;
+    if (!id || !bar) return;
+    bar
+      .querySelector<HTMLElement>(`[data-tab="${CSS.escape(id)}"]`)
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  });
+
+  function onwheel(e: WheelEvent): void {
+    if (!bar || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    bar.scrollLeft += e.deltaY;
+  }
+
   function onpointerup(e: PointerEvent): void {
     if (press?.dragging)
       ctx.tabs.move(press.id, dropIndex(e.clientX, press.id));
@@ -97,7 +112,13 @@
 </script>
 
 {#if tabs.length > 0}
-  <div class="tabbar" role="tablist" aria-label="Open tabs" bind:this={bar}>
+  <div
+    class="tabbar"
+    role="tablist"
+    aria-label="Open tabs"
+    bind:this={bar}
+    {onwheel}
+  >
     {#each tabs as tab, index (tab.id)}
       {@const Icon = iconOf(tab)}
       {@const active = tab.id === activeId}
@@ -158,7 +179,9 @@
     align-items: stretch;
     background: var(--bg-0);
     box-shadow: inset 0 -1px 0 var(--line);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
 
   .tab {
@@ -168,7 +191,8 @@
     padding: 0 6px 0 var(--s-3);
     border-right: 1px solid var(--line);
     color: var(--text-2);
-    min-width: 0;
+    flex: none;
+    max-width: 240px;
     touch-action: none;
   }
 
