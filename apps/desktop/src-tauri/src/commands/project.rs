@@ -176,6 +176,9 @@ pub fn close_project(app: AppHandle, window: WebviewWindow) {
 
 #[tauri::command]
 pub async fn pick_folder(window: WebviewWindow) -> Result<Option<String>, IpcError> {
+    if let Some(path) = crate::state::e2e_picked_folder() {
+        return Ok(Some(path));
+    }
     let picked = spawn_blocking(move || {
         window
             .dialog()
