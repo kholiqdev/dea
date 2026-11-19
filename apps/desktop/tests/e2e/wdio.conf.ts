@@ -4,6 +4,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
+import { connect } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -21,15 +22,43 @@ const tauriDriver = join(
   windows ? "tauri-driver.exe" : "tauri-driver",
 );
 
-// One driver and one empty app data folder per run. A restart inside a
-// spec (browser.reloadSession) keeps both, so saved state survives it.
+// One driver and one empty app data folder per run. Both are made in
+// onPrepare and removed in onComplete, which run in the launcher process
+// (beforeSession runs in a worker, so its handles never reach onComplete).
+// A restart inside a spec (browser.reloadSession) keeps both, so saved
+// state survives it.
 let driver: ChildProcess | undefined;
 let dataDir: string | undefined;
+
+const DRIVER_PORT = 4444;
+
+function portOpen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect(port, "127.0.0.1");
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
+  });
+}
+
+/** Waits until tauri-driver accepts connections; a fresh exe can be slow. */
+async function waitForDriver(timeoutMs: number): Promise<void> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    if (driver?.exitCode != null)
+      throw new Error("tauri-driver exited at start");
+    if (await portOpen(DRIVER_PORT)) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`tauri-driver did not listen on ${DRIVER_PORT}`);
+}
 
 export const config: WebdriverIO.Config = {
   runner: "local",
   hostname: "127.0.0.1",
-  port: 4444,
+  port: DRIVER_PORT,
   specs: ["./**/*.e2e.ts"],
   maxInstances: 1,
   capabilities: [
@@ -46,13 +75,17 @@ export const config: WebdriverIO.Config = {
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,
 
-  beforeSession() {
-    if (driver) return;
+  async onPrepare() {
+    if (await portOpen(DRIVER_PORT))
+      throw new Error(
+        `Port ${DRIVER_PORT} is in use: stop the tauri-driver left from another run`,
+      );
     dataDir = mkdtempSync(join(tmpdir(), "dea-e2e-"));
     driver = spawn(tauriDriver, [], {
       stdio: ["ignore", "inherit", "inherit"],
       env: { ...process.env, DEA_E2E: "1", DEA_APP_DATA_DIR: dataDir },
     });
+    await waitForDriver(60_000);
   },
 
   onComplete() {
