@@ -4,6 +4,7 @@
 
 import { projectApi } from "$app/contributions/project-api";
 import type { Environment } from "$lib/ipc/bindings/Environment";
+import type { FileErrorInfo } from "$lib/ipc/bindings/FileErrorInfo";
 import type { ProjectInfo } from "$lib/ipc/bindings/ProjectInfo";
 import { errorMessage } from "$lib/ipc/errors";
 import {
@@ -49,6 +50,50 @@ export function vaultReferences(value: string): string[] {
   );
 }
 
+/** One line of Compare: a field or variable that differs. */
+export interface Difference {
+  field: string;
+  /** Null when this side does not have it. */
+  mine: string | null;
+  theirs: string | null;
+}
+
+function variableLines(env: Environment): Record<string, string> {
+  return Object.fromEntries(
+    (env.variables ?? []).map((v) => [
+      v.name,
+      v.description ? `${v.value}  # ${v.description}` : v.value,
+    ]),
+  );
+}
+
+/** What differs between the draft and the file on disk, for Compare. */
+export function differences(
+  mine: Environment,
+  theirs: Environment,
+): Difference[] {
+  const rows: Difference[] = [];
+  const add = (field: string, a: string | null, b: string | null) => {
+    if (a !== b) rows.push({ field, mine: a, theirs: b });
+  };
+  add("name", mine.name, theirs.name);
+  add("production", String(mine.production), String(theirs.production));
+  add("color", mine.color ?? "slate", theirs.color ?? "slate");
+  const m = variableLines(mine);
+  const t = variableLines(theirs);
+  const names = [...Object.keys(m), ...Object.keys(t)].filter(
+    (name, i, all) => all.indexOf(name) === i,
+  );
+  for (const name of names) add(name, m[name] ?? null, t[name] ?? null);
+  return rows;
+}
+
+/** What happened to a draft's file outside Dea while it had edits. */
+export type Outside =
+  | { kind: "changed"; theirs: Environment }
+  | { kind: "deleted" }
+  | { kind: "unreadable"; error: FileErrorInfo };
+
 function normalized(env: Environment): string {
   return JSON.stringify({
     name: env.name,
@@ -69,18 +114,29 @@ function copy(env: Environment): Environment {
   };
 }
 
+function same(a: Environment, b: Environment): boolean {
+  return normalized(a) === normalized(b);
+}
+
 /** One environment as on disk, and as edited. */
 export class EnvironmentDraft {
   #saved = $state.raw<Environment | null>(null);
   draft = $state<Environment>({ name: "", production: false });
-  dirty = $derived(
-    !this.#saved || normalized(this.draft) !== normalized(this.#saved),
-  );
+  dirty = $derived(!this.#saved || !same(this.draft, this.#saved));
+  /** The file it was read from, relative to the project. */
+  file = $state<string | null>(null);
+  /** Set while a change outside Dea waits for a decision. */
+  outside = $state.raw<Outside | null>(null);
 
   /** `saved` is null for an environment not on disk yet. */
-  constructor(saved: Environment | null, draft?: Environment) {
+  constructor(
+    saved: Environment | null,
+    draft?: Environment,
+    file: string | null = null,
+  ) {
     this.#saved = saved;
     this.draft = copy(draft ?? saved ?? { name: "", production: false });
+    this.file = file;
   }
 
   get saved(): Environment | null {
@@ -99,6 +155,33 @@ export class EnvironmentDraft {
   reset(saved: Environment): void {
     this.#saved = saved;
     this.draft = copy(saved);
+    this.outside = null;
+  }
+
+  /** Drops the edits for the version on disk that changed ("Take theirs"). */
+  takeTheirs(): void {
+    if (this.outside?.kind === "changed") this.reset(this.outside.theirs);
+  }
+
+  /** Keeps the edits; the next save writes them over the disk version. */
+  keepMine(): void {
+    if (this.outside?.kind === "changed") this.#saved = this.outside.theirs;
+    this.outside = null;
+  }
+
+  /** Writes the draft as a new file next time ("Save it again"). */
+  saveAgain(): void {
+    this.#saved = null;
+    this.file = null;
+    this.outside = null;
+  }
+
+  /** Follows the version on disk: quietly without edits, else it asks. */
+  ondisk(theirs: Environment, file: string | null): void {
+    this.file = file;
+    if (this.#saved && same(theirs, this.#saved)) this.outside = null;
+    else if (!this.dirty || same(theirs, this.draft)) this.reset(theirs);
+    else this.outside = { kind: "changed", theirs };
   }
 
   setName(name: string): void {
@@ -120,12 +203,48 @@ export class EnvironmentsEditor {
 
   /** Starts over from the project as on disk. */
   load(info: ProjectInfo | null): void {
-    const keep = this.selected?.draft.name;
-    this.drafts = (info?.environments ?? []).map(
-      (env) => new EnvironmentDraft(env),
+    const files = info?.environmentFiles ?? {};
+    this.#use(
+      (info?.environments ?? []).map(
+        (env) => new EnvironmentDraft(env, undefined, files[env.name] ?? null),
+      ),
     );
+  }
+
+  /**
+   * Takes a change from disk (F1-FON-05): environments without edits follow
+   * it quietly; one with edits keeps them and says what happened.
+   */
+  sync(info: ProjectInfo): void {
+    const files = info.environmentFiles;
+    const matched: EnvironmentDraft[] = [];
+    const next = info.environments.map((env) => {
+      const d = this.drafts.find((x) => x.saved?.name === env.name);
+      if (!d)
+        return new EnvironmentDraft(env, undefined, files[env.name] ?? null);
+      matched.push(d);
+      d.ondisk(env, files[env.name] ?? null);
+      return d;
+    });
+    for (const d of this.drafts) {
+      if (matched.includes(d) || (d.saved && !d.dirty)) continue;
+      if (d.saved) {
+        const error = info.errors.find((e) => e.path === d.file);
+        d.outside = error ? { kind: "unreadable", error } : { kind: "deleted" };
+      }
+      next.push(d);
+    }
+    this.#use(next);
+  }
+
+  #use(drafts: EnvironmentDraft[]): void {
+    const keep = this.selected;
+    this.drafts = drafts;
     this.selected =
-      this.drafts.find((d) => d.draft.name === keep) ?? this.drafts[0] ?? null;
+      (keep && drafts.includes(keep) ? keep : undefined) ??
+      drafts.find((d) => d.draft.name === keep?.draft.name) ??
+      drafts[0] ??
+      null;
   }
 
   problems(d: EnvironmentDraft): string[] {
@@ -133,10 +252,13 @@ export class EnvironmentsEditor {
     return problemsOf(d.draft, others);
   }
 
+  /** Nothing is saved while a change from disk waits for a decision. */
   get canSave(): boolean {
     return (
       this.dirty &&
-      this.drafts.every((d) => !d.dirty || this.problems(d).length === 0)
+      this.drafts.every(
+        (d) => !d.outside && (!d.dirty || this.problems(d).length === 0),
+      )
     );
   }
 
@@ -176,6 +298,11 @@ export class EnvironmentsEditor {
     const info = await duplicateEnvironment(d.saved.name);
     projectApi().refresh(info);
     this.load(info);
+  }
+
+  /** Drops a draft whose file is gone, leaving the disk alone. */
+  discard(d: EnvironmentDraft): void {
+    this.#use(this.drafts.filter((x) => x !== d));
   }
 
   async remove(d: EnvironmentDraft): Promise<void> {
