@@ -198,6 +198,8 @@ pub struct UiPrompter {
 
 struct Waiting {
     window: String,
+    /// What was sent, to send again to a page that missed it.
+    event: VaultPromptEvent,
     answer: Sender<Option<SecretString>>,
 }
 
@@ -248,6 +250,24 @@ impl UiPrompter {
         }
     }
 
+    /// Sends `window` every prompt still waiting for it again. A page that
+    /// starts listening calls this, as a prompt sent while it loaded is
+    /// lost and would keep its asker waiting. A window that is gone has its
+    /// prompts cancelled.
+    pub fn resend(&self, window: &str) {
+        let events: Vec<VaultPromptEvent> = guard(&self.waiting)
+            .values()
+            .filter(|waiting| waiting.window == window)
+            .map(|waiting| waiting.event.clone())
+            .collect();
+        for event in events {
+            let id = event.id;
+            if !self.windows.show(window, event) {
+                guard(&self.waiting).remove(&id);
+            }
+        }
+    }
+
     fn ask(&self, kind: VaultPromptKind, prompt: &PasswordPrompt) -> Option<SecretString> {
         let requester = guard(&self.requesters)
             .get(&thread::current().id())
@@ -257,19 +277,20 @@ impl UiPrompter {
             .unwrap_or_else(|| MAIN_WINDOW.to_string());
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (answer, answered) = mpsc::channel();
-        guard(&self.waiting).insert(
-            id,
-            Waiting {
-                window: window.clone(),
-                answer,
-            },
-        );
         let event = VaultPromptEvent {
             id,
             kind,
             reason: prompt.reason.clone(),
             problem: prompt.problem.as_ref().map(VaultPromptProblem::from),
         };
+        guard(&self.waiting).insert(
+            id,
+            Waiting {
+                window: window.clone(),
+                event: event.clone(),
+                answer,
+            },
+        );
         if !self.windows.show(&window, event) {
             guard(&self.waiting).remove(&id);
             return None;
@@ -464,6 +485,36 @@ mod tests {
         shown.recv_timeout(WAIT).unwrap();
         prompter.page_load("project-1", PageLoadEvent::Started);
         assert!(!second.got_password());
+    }
+
+    #[test]
+    fn a_new_page_gets_the_prompts_still_waiting_for_its_window() {
+        let (prompter, shown) = windows_with(&["main", "project-1"], None);
+        let in_project = ask_from(&prompter, "project-1", None);
+        let (_, first) = shown.recv_timeout(WAIT).unwrap();
+        let in_main = ask_from(&prompter, "main", None);
+        let (window, main_prompt) = shown.recv_timeout(WAIT).unwrap();
+        assert_eq!(window, "main");
+
+        // The page of project-1 started listening after its prompt was
+        // sent, so it asks again: only its own prompt comes, unchanged.
+        prompter.resend("project-1");
+        let (window, again) = shown.recv_timeout(WAIT).unwrap();
+        assert_eq!(window, "project-1");
+        assert_eq!(again, first);
+        assert!(shown.try_recv().is_err(), "only project-1's prompt");
+
+        // A window with nothing waiting gets nothing.
+        prompter.resend("project-9");
+        assert!(shown.try_recv().is_err());
+
+        prompter.answer(first.id, Some("correct horse".into()));
+        assert!(in_project.got_password());
+        // An answered prompt is not sent again.
+        prompter.resend("project-1");
+        assert!(shown.try_recv().is_err());
+        prompter.answer(main_prompt.id, None);
+        assert!(!in_main.got_password());
     }
 
     #[test]

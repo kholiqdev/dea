@@ -186,3 +186,28 @@ test("a failed answer is shown, not swallowed", async () => {
     .toContain("Channel closed");
   for (const t of toasts.items) toasts.dismiss(t.id);
 });
+
+test("once it listens, a page asks again for prompts it missed", async () => {
+  const steps: string[] = [];
+  let send: (p: VaultPromptEvent) => void = () => {};
+  await prompts.listen(
+    (handler) => {
+      steps.push("subscribe");
+      send = handler;
+      return Promise.resolve(() => {});
+    },
+    () => {
+      steps.push("resend");
+      // The prompt that was sent while the page loaded comes again.
+      send({
+        id: 7,
+        kind: "password",
+        reason: "unlock the Vault",
+        problem: null,
+      });
+      return Promise.resolve();
+    },
+  );
+  expect(steps).toEqual(["subscribe", "resend"]);
+  expect(prompts.current?.id).toBe(7);
+});

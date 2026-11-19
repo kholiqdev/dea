@@ -56,6 +56,14 @@ export function vaultAnswerPrompt(
   return invoke<void>("vault_answer_prompt", { id, password });
 }
 
+/**
+ * Sends this window again every Vault password prompt still waiting for it,
+ * as `vault-prompt`. One sent while the page loaded was lost.
+ */
+export function vaultResendPrompts(): Promise<void> {
+  return invoke<void>("vault_resend_prompts");
+}
+
 /** Calls `handler` each time the Vault locks or unlocks. */
 export function onVaultStatus(
   handler: (status: VaultStatus) => void,

@@ -41,9 +41,18 @@ export class VaultPrompts {
     return outcome;
   }
 
-  /** Shows the prompts of this window until the returned function is called. */
-  async listen(subscribe = ipc.onVaultPrompt): Promise<() => void> {
-    return await subscribe((prompt) => this.show(prompt));
+  /**
+   * Shows the prompts of this window until the returned function is called.
+   * Once listening, asks for the prompts sent before, while the page loaded:
+   * they were lost, and Dea waits for their answer.
+   */
+  async listen(
+    subscribe = ipc.onVaultPrompt,
+    resend = ipc.vaultResendPrompts,
+  ): Promise<() => void> {
+    const stop = await subscribe((prompt) => this.show(prompt));
+    await resend();
+    return stop;
   }
 }
 
