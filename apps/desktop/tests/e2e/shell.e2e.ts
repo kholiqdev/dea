@@ -24,7 +24,12 @@ describe("the shell", () => {
   it("opens each module from the rail and with Mod+1 to Mod+4", async () => {
     const project = $("header .project");
     await expect(project).toBeDisplayed();
-    await expect(project).toHaveText("No project open");
+    // WebKitWebDriver reads this span's text as empty although it is drawn
+    // (seen in a CI screenshot), so read the text from the page itself.
+    const text = await browser.execute(
+      () => document.querySelector("header .project")?.textContent,
+    );
+    expect(text).toBe("No project open");
     for (const [id, title] of [
       ...MAIN,
       ["vault", "Vault"],
