@@ -1,10 +1,13 @@
 <script lang="ts">
   import PanelLeft from "@lucide/svelte/icons/panel-left";
+  import SearchIcon from "@lucide/svelte/icons/search";
   import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
   import { settings } from "$lib/settings/settings.svelte";
   import { shellContext } from "./context";
   import { effectiveShortcuts } from "../contributions/shortcuts";
+  import { PALETTE_COMMAND } from "../palette/palette-search.svelte";
   import EnvironmentPicker from "./EnvironmentPicker.svelte";
+  import { menus } from "./menus.svelte";
   import ProjectMenu from "./ProjectMenu.svelte";
 
   const ctx = shellContext();
@@ -19,6 +22,12 @@
   const toggleChord = $derived.by(() => {
     const b = effectiveShortcuts(ctx.registry, settings.shortcuts).find(
       (s) => s.command === "shell.toggleSidebar",
+    );
+    return b ? formatChordText(b.chord, currentPlatform()) : null;
+  });
+  const paletteChord = $derived.by(() => {
+    const b = effectiveShortcuts(ctx.registry, settings.shortcuts).find(
+      (s) => s.command === PALETTE_COMMAND,
     );
     return b ? formatChordText(b.chord, currentPlatform()) : null;
   });
@@ -59,6 +68,16 @@
       {/if}
     {/if}
   </div>
+  <button
+    type="button"
+    class="search"
+    data-shell-control
+    onclick={() => (menus.palette = true)}
+  >
+    <SearchIcon size={14} strokeWidth={1.5} />
+    <span class="search-label">Search</span>
+    {#if paletteChord}<kbd class="kc">{paletteChord}</kbd>{/if}
+  </button>
 </header>
 
 <style>
@@ -70,6 +89,36 @@
     padding: 0 var(--s-3) 0 var(--s-4);
     background: var(--bg-0);
     border-bottom: 1px solid var(--line);
+  }
+
+  .search {
+    margin: 0 auto;
+    width: min(320px, 40%);
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: 0 var(--s-2);
+    border: 0;
+    border-radius: var(--r-small);
+    background: var(--bg-2);
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--text-3);
+    font: inherit;
+  }
+
+  .search:hover {
+    color: var(--text-2);
+  }
+
+  .search-label {
+    flex: 1;
+    text-align: left;
+  }
+
+  .kc {
+    font: 500 11px/1 var(--font-mono);
+    color: var(--text-3);
   }
 
   .start {

@@ -3,6 +3,7 @@
   import { settings } from "$lib/settings/settings.svelte";
   import type { ProjectApi } from "../contributions/project-api";
   import type { Registry } from "../contributions/registry.svelte";
+  import Palette from "../palette/Palette.svelte";
   import ConfirmClose from "../prompts/ConfirmClose.svelte";
   import { closeQuestion } from "../prompts/confirm-close.svelte";
   import VaultPrompt from "../prompts/VaultPrompt.svelte";
@@ -11,6 +12,7 @@
   import type { Tabs } from "../tabs/tabs.svelte";
   import { setShellContext } from "./context";
   import { createHotkeyHandler } from "./hotkeys.svelte";
+  import { menus } from "./menus.svelte";
   import Rail from "./Rail.svelte";
   import type { Shell } from "./shell-state.svelte";
   import Sidebar from "./Sidebar.svelte";
@@ -68,6 +70,7 @@
   <StatusBar />
 </div>
 <ConfirmClose question={closeQuestion} />
+{#if menus.palette}<Palette />{/if}
 <VaultPrompt prompts={vaultPrompts} />
 <ToastStack />
 

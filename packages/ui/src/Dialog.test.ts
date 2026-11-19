@@ -50,3 +50,18 @@ test("the rest of the page is inert while the dialog is open", async () => {
   expect(outside).not.toHaveAttribute("inert");
   expect(screen.getByRole("button", { name: "Open" })).toHaveFocus();
 });
+
+test("a hidden title still names the dialog", async () => {
+  const { createRawSnippet } = await import("svelte");
+  const { default: Dialog } = await import("./Dialog.svelte");
+  render(Dialog, {
+    title: "Search",
+    hideTitle: true,
+    oncancel: () => {},
+    children: createRawSnippet(() => ({ render: () => "<p>Body</p>" })),
+  });
+  expect(screen.getByRole("dialog", { name: "Search" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Search" })).toHaveClass(
+    "visually-hidden",
+  );
+});

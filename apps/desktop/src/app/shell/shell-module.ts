@@ -22,6 +22,12 @@ export function shellModule(
 ): ModuleManifest {
   const commands: ShellCommand[] = [
     {
+      id: "shell.palette",
+      title: "Open the command palette",
+      chord: "Mod+K",
+      run: () => (menus.palette = !menus.palette),
+    },
+    {
       id: "shell.toggleSidebar",
       title: "Show or hide the sidebar",
       chord: "Mod+B",
@@ -92,5 +98,13 @@ export function shellModule(
       intent: c.id,
       handler: () => Promise.resolve({ default: c.run }),
     })),
+    statusItems: [
+      {
+        id: "shell.commands",
+        align: "end",
+        order: 100,
+        view: () => import("./CommandsStatus.svelte"),
+      },
+    ],
   };
 }

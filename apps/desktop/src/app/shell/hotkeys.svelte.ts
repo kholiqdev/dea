@@ -22,8 +22,15 @@ export async function runAction(
   switch (action.type) {
     case "openModule":
       return ctx.shell.openModule(action.module);
-    case "openSettings":
-      return ctx.shell.openModule("settings");
+    case "openSettings": {
+      await ctx.shell.openModule("settings");
+      // The Settings module shows the section; the shell does not know it.
+      const result = await ctx.registry.invoke("settings.openSection", {
+        section: action.section,
+      });
+      if (!result.ok) toasts.show(result.message);
+      return;
+    }
     case "intent": {
       const result = await ctx.registry.invoke(action.intent, action.args);
       if (!result.ok) toasts.show(result.message);
