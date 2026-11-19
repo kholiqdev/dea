@@ -8,10 +8,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use dea_engine::requests::{PreparedRequest, RequestService, SendError};
+use dea_engine::requests::{PreparedRequest, RequestService, SendError, Sent};
 use dea_engine::store::Store;
 use dea_engine::{PasswordPrompt, Prompter, SendAnswer, SendConfirmation, VaultService};
-use dea_http::{CancellationToken, Client, ClientConfig, Event, ProxyConfig, Response};
+use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
     Auth, Environment, KeyValue, Project, RequestFile, RequestTree, SecretKind, SendOptions,
     Variable, create_project, load_requests, save_request,
@@ -224,10 +224,30 @@ impl Fixture {
             .prepare(&self.project, &self.tree, path, environment)
     }
 
+    /// Sends `prepared` and checks its cookies were saved.
     async fn send_prepared(&self, prepared: PreparedRequest) -> Response {
-        let cancel = CancellationToken::new();
-        let sent = self.service.send(prepared, &cancel, None);
-        is_send(sent).await.unwrap()
+        let sent = self.try_send(prepared, &CancellationToken::new()).await;
+        let sent = sent.unwrap();
+        assert!(sent.cookies_not_saved.is_none(), "{sent:?}");
+        sent.response
+    }
+
+    async fn try_send(
+        &self,
+        prepared: PreparedRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Sent, SendError> {
+        is_send(self.service.send(prepared, cancel, None)).await
+    }
+
+    /// The `staging` cookies saved on disk, by name.
+    fn saved_cookies(&self) -> Vec<String> {
+        Store::new(self.app_data.path())
+            .load_cookies(&self.project.vault_scope(), "staging")
+            .list()
+            .into_iter()
+            .map(|c| c.name)
+            .collect()
     }
 
     /// Sends `GET {{baseUrl}}<route>` in `environment`.
@@ -400,12 +420,12 @@ async fn sends_a_request_from_the_project() {
     let mut events = Vec::new();
     let mut record = |event: Event| events.push(event);
     let cancel = CancellationToken::new();
-    let response = f
+    let sent = f
         .service
         .send(prepared, &cancel, Some(&mut record))
         .await
         .unwrap();
-    assert_eq!(response.status, 200);
+    assert_eq!(sent.response.status, 200);
     assert!(
         matches!(events.first(), Some(Event::Head { status: 200, .. })),
         "{events:?}"
@@ -575,4 +595,70 @@ async fn cookies_persist_and_clear_with_local_data() {
     f.restart();
     f.send("staging", "/echo").await;
     assert_eq!(f.last_request().header("cookie"), None);
+}
+
+/// A regular file where the `cookies` folder belongs: every cookie save
+/// fails, on every OS.
+fn block_cookie_saves(app_data: &Path) {
+    fs::write(app_data.join("cookies"), "").unwrap();
+}
+
+fn unblock_cookie_saves(app_data: &Path) {
+    fs::remove_file(app_data.join("cookies")).unwrap();
+}
+
+#[tokio::test]
+async fn a_failed_cookie_save_keeps_the_response() {
+    let mut f = Fixture::new().await;
+    block_cookie_saves(f.app_data.path());
+    let path = f.add("set", request("GET", "{{baseUrl}}/cookies/set?session=s1"));
+
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let sent = f.try_send(prepared, &CancellationToken::new()).await;
+
+    let sent = sent.expect("the exchange went through, so its response is kept");
+    assert_eq!(sent.response.status, 200);
+    assert!(sent.cookies_not_saved.is_some(), "{sent:?}");
+    // The cookie is still used, and the save is tried again.
+    let prepared = f.prepare(Path::new(LIST), Some("staging")).unwrap();
+    let sent = f.try_send(prepared, &CancellationToken::new()).await;
+    assert!(sent.unwrap().cookies_not_saved.is_some());
+    assert_eq!(f.last_request().header("cookie"), Some("session=s1"));
+
+    // Once the disk works again, the next send saves the jar, though its
+    // response sets no cookie.
+    unblock_cookie_saves(f.app_data.path());
+    let response = f.send("staging", "/echo").await;
+    assert_eq!(response.status, 200);
+    assert_eq!(f.saved_cookies(), ["session"]);
+}
+
+#[tokio::test]
+async fn unsaved_cookies_are_saved_after_a_failed_exchange() {
+    let mut f = Fixture::new().await;
+    block_cookie_saves(f.app_data.path());
+    let set = f.add("set", request("GET", "{{baseUrl}}/cookies/set?session=s1"));
+    let prepared = f.prepare(&set, Some("staging")).unwrap();
+    let sent = f.try_send(prepared, &CancellationToken::new()).await;
+    assert!(sent.unwrap().cookies_not_saved.is_some());
+
+    // A failed exchange reports its own error, not the save's.
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    let prepared = f.prepare(Path::new(LIST), Some("staging")).unwrap();
+    let result = f.try_send(prepared, &cancelled).await;
+    assert!(
+        matches!(result, Err(SendError::Http(HttpError::Cancelled))),
+        "{result:?}"
+    );
+
+    // It still saves what an earlier send could not.
+    unblock_cookie_saves(f.app_data.path());
+    let prepared = f.prepare(Path::new(LIST), Some("staging")).unwrap();
+    let result = f.try_send(prepared, &cancelled).await;
+    assert!(
+        matches!(result, Err(SendError::Http(HttpError::Cancelled))),
+        "{result:?}"
+    );
+    assert_eq!(f.saved_cookies(), ["session"]);
 }

@@ -63,9 +63,15 @@ pub enum SendError {
     File { path: PathBuf, message: String },
     #[error(transparent)]
     Http(#[from] HttpError),
-    /// The response arrived, but its cookies could not be saved.
-    #[error(transparent)]
-    Store(#[from] StoreError),
+}
+
+/// What a send that reached the server gives back.
+#[derive(Debug)]
+pub struct Sent {
+    pub response: Response,
+    /// Cookies from this exchange that could not be saved; they stay in
+    /// memory and are saved again with the next send.
+    pub cookies_not_saved: Option<StoreError>,
 }
 
 /// A request resolved, confirmed and authorized, ready for
@@ -106,6 +112,8 @@ pub struct RequestService {
     skip: Mutex<HashSet<Key>>,
     /// The jars loaded so far.
     jars: Mutex<HashMap<Key, Arc<CookieJar>>>,
+    /// Jars whose last save failed, saved again after the next send.
+    unsaved: Mutex<HashSet<Key>>,
     /// Held while a jar is written, so the newest save is the last one.
     saving: Arc<Mutex<()>>,
 }
@@ -125,6 +133,7 @@ impl RequestService {
             prompter,
             skip: Mutex::default(),
             jars: Mutex::default(),
+            unsaved: Mutex::default(),
             saving: Arc::default(),
         }
     }
@@ -203,20 +212,22 @@ impl RequestService {
     }
 
     /// Sends a prepared request with the cookies of its environment, then
-    /// saves the jar if the response changed it. `events` hears the
-    /// response as it arrives.
+    /// saves the jar if the response changed it or an earlier save failed.
+    /// `events` hears the response as it arrives.
+    ///
+    /// A response is never lost to a failed save: it comes back with
+    /// [`Sent::cookies_not_saved`] set, and the cookies stay in use.
     ///
     /// # Errors
     ///
-    /// [`SendError::Http`] when the exchange fails. [`SendError::Store`]
-    /// when the response arrived but the jar could not be saved; the
-    /// cookies are still used until Dea quits.
+    /// [`SendError::Http`] when the exchange fails. A save that fails then
+    /// is not reported; it is tried again after the next send.
     pub async fn send(
         &self,
         prepared: PreparedRequest,
         cancel: &CancellationToken,
         events: Option<&mut (dyn FnMut(Event) + Send)>,
-    ) -> Result<Response, SendError> {
+    ) -> Result<Sent, SendError> {
         let PreparedRequest {
             request, jar: key, ..
         } = prepared;
@@ -238,14 +249,14 @@ impl RequestService {
             ctx = ctx.cookies(jar);
         }
         let result = self.client.send(request, ctx).await;
-        let saved = match (key, jar) {
-            (Some(key), Some(jar)) if jar.take_changed() => self.save(key, jar).await,
-            _ => Ok(()),
+        let cookies_not_saved = match (key, jar) {
+            (Some(key), Some(jar)) => self.save_pending(key, jar).await,
+            _ => None,
         };
-        // A failed exchange matters more than a failed save.
-        let response = result?;
-        saved?;
-        Ok(response)
+        Ok(Sent {
+            response: result?,
+            cookies_not_saved,
+        })
     }
 
     /// The cookie jar of `environment` of `project`, for the cookie
@@ -254,12 +265,13 @@ impl RequestService {
         self.jar(&project.vault_scope(), environment.unwrap_or_default())
     }
 
-    /// Forgets the loaded jars and the production choices of project
-    /// `scope`, after its local data was cleared with
-    /// [`Store::clear_project`]. A send still running then does not save
-    /// its jar again.
+    /// Forgets the loaded jars, the unsaved ones included, and the
+    /// production choices of project `scope`, after its local data was
+    /// cleared with [`Store::clear_project`]. A send still running then
+    /// does not save its jar again.
     pub fn forget_project(&self, scope: &str) {
         guard(&self.jars).retain(|(s, _), _| s != scope);
+        guard(&self.unsaved).retain(|(s, _)| s != scope);
         guard(&self.skip).retain(|(s, _)| s != scope);
     }
 
@@ -307,10 +319,29 @@ impl RequestService {
         Arc::clone(guard(&self.jars).entry(key).or_insert(loaded))
     }
 
+    /// Saves `jar` when the exchange changed it or its last save failed,
+    /// and remembers a failure so the next send tries again. `take_changed`
+    /// cannot be undone, hence the set.
+    async fn save_pending(&self, key: Key, jar: Arc<CookieJar>) -> Option<StoreError> {
+        if !jar.take_changed() && !guard(&self.unsaved).contains(&key) {
+            return None;
+        }
+        match self.save(key.clone(), jar).await {
+            Ok(()) => {
+                guard(&self.unsaved).remove(&key);
+                None
+            }
+            Err(e) => {
+                guard(&self.unsaved).insert(key);
+                Some(e)
+            }
+        }
+    }
+
     /// Writes `jar`, unless its project's local data was cleared since it
     /// was loaded. The write waits for the disk, so it runs on a blocking
     /// thread.
-    async fn save(&self, key: Key, jar: Arc<CookieJar>) -> Result<(), SendError> {
+    async fn save(&self, key: Key, jar: Arc<CookieJar>) -> Result<(), StoreError> {
         let current = guard(&self.jars)
             .get(&key)
             .is_some_and(|cached| Arc::ptr_eq(cached, &jar));
@@ -324,7 +355,7 @@ impl RequestService {
             store.save_cookies(&key.0, &key.1, &jar)
         });
         match task.await {
-            Ok(saved) => Ok(saved?),
+            Ok(saved) => saved,
             Err(e) => match e.try_into_panic() {
                 Ok(panic) => std::panic::resume_unwind(panic),
                 // The runtime is shutting down: Dea is quitting.

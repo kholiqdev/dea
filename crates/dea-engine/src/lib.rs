@@ -17,7 +17,7 @@ pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
 pub use clock::{Clock, SystemClock};
 pub use error::UseError;
 pub use prompt::{PasswordPrompt, PromptProblem, Prompter, SendAnswer, SendConfirmation};
-pub use requests::{PreparedRequest, RequestService, SendError};
+pub use requests::{PreparedRequest, RequestService, SendError, Sent};
 pub use vault::{
     PASSWORD_FILE, TICK, VaultBackground, VaultLookup, VaultService, VaultStatus, production_reason,
 };
