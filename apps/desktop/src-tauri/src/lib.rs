@@ -42,9 +42,18 @@ pub fn run() {
     if probe {
         probe_print("DEA_MARK process started");
     }
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    if state::e2e() {
+        // Lets the UI register the test-only tab type (debug builds only).
+        builder = builder.plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("dea-e2e")
+                .js_init_script("window.__DEA_E2E__ = true;".to_string())
+                .build(),
+        );
+    }
+    builder
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
+            let dir = state::app_data_dir(app.handle())?;
             app.manage(AppState::new(&dir));
             Ok(())
         })

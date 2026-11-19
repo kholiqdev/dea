@@ -1,7 +1,7 @@
 // Tabs from every module in one bar (F1-FON-02). The active tab decides
 // the active module; picking a module on the rail shows its last tab.
 
-import { untrack } from "svelte";
+import { tick, untrack } from "svelte";
 import type { TabState } from "$lib/ipc/bindings/TabState";
 import type { UiState } from "$lib/ipc/bindings/UiState";
 import { registry, type Registry } from "../contributions/registry.svelte";
@@ -84,6 +84,12 @@ export class Tabs {
   activate(id: string): void {
     const tab = this.#tabs.find((t) => t.id === id);
     if (!tab) return;
+    // Timed for the end-to-end check of F1-FON-02 #5 (switch ≤ 50 ms).
+    const start = `tab-switch-start:${id}`;
+    if (typeof performance.mark === "function") {
+      performance.mark(start);
+      void tick().then(() => performance.measure(`tab-switch:${id}`, start));
+    }
     this.#activeId = id;
     this.#lastActive[tab.module] = id;
     if (this.#shell.activeModule !== tab.module)
