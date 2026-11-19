@@ -68,6 +68,15 @@ jobs:
         run: |
           env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR=/nonexistent \
             cargo test -p dea-vault --test detect
+      - name: Check the IPC bindings are up to date
+        if: runner.os == 'Linux'
+        run: |
+          cargo test -p dea-engine --features ts export_bindings
+          git add -N apps/desktop/src/lib/ipc/bindings
+          git diff --exit-code apps/desktop/src/lib/ipc/bindings || {
+            echo "::error::Run cargo test -p dea-engine --features ts export_bindings and commit the result"
+            exit 1
+          }
       - name: Install cargo-deny
         if: runner.os == 'Linux'
         uses: taiki-e/install-action@v2

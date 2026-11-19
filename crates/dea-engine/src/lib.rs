@@ -1,11 +1,12 @@
 //! Puts the Dea feature crates together for the desktop app and, later, the
 //! CLI. Owns the gates that ask the person something: Vault unlock and
-//! production authentication.
+//! production authentication. Keeps settings and UI state.
 
 mod clipboard;
 mod clock;
 mod error;
 mod prompt;
+pub mod store;
 mod vault;
 
 pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
