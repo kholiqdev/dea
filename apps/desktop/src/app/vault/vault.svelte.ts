@@ -5,6 +5,10 @@ import type { VaultStatus } from "$lib/ipc/bindings/VaultStatus";
 import { errorMessage, isIpcError } from "$lib/ipc/errors";
 import * as ipc from "$lib/ipc/vault";
 import type { VaultApi } from "../contributions/vault-api";
+import {
+  vaultPrompts,
+  type VaultPrompts,
+} from "../prompts/vault-prompt.svelte";
 import { toasts } from "../prompts/toasts.svelte";
 
 /** The Vault locks after idle time; activity is told at most this often. */
@@ -14,6 +18,11 @@ export class WindowVault implements VaultApi {
   #locked = $state(true);
   #method = $state<UnlockMethod>("vaultPassword");
   #lastActivity = -Infinity;
+  readonly #prompts: VaultPrompts;
+
+  constructor(prompts: VaultPrompts = vaultPrompts) {
+    this.#prompts = prompts;
+  }
 
   get locked(): boolean {
     return this.#locked;
@@ -79,14 +88,23 @@ export class WindowVault implements VaultApi {
     }
   }
 
-  /** True when `ask` went through; a cancel is silent, a failure a toast. */
-  async #asked(ask: () => Promise<void>): Promise<boolean> {
+  /**
+   * True when `ask` went through; a cancel is silent, a failure a toast. After
+   * a wait that was sat out, `ask` runs once more, as the person expects.
+   */
+  async #asked(ask: () => Promise<void>, retry = true): Promise<boolean> {
+    this.#prompts.takeWaitOutcome();
     try {
       await ask();
       return true;
     } catch (e) {
-      if (!(isIpcError(e) && e.kind === "cancelled"))
-        toasts.show(errorMessage(e));
+      if (isIpcError(e) && e.kind === "cancelled") return false;
+      if (isIpcError(e) && e.kind === "retryAfter") {
+        const outcome = this.#prompts.takeWaitOutcome();
+        if (outcome === "cancelled") return false;
+        if (outcome === "waited" && retry) return this.#asked(ask, false);
+      }
+      toasts.show(errorMessage(e));
       return false;
     }
   }

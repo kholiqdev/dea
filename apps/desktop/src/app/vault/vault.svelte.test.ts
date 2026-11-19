@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { VaultStatus } from "$lib/ipc/bindings/VaultStatus";
 import { toasts } from "../prompts/toasts.svelte";
 import { methodPhrase, unlockLabel } from "../contributions/vault-api";
+import { VaultPrompts } from "../prompts/vault-prompt.svelte";
 import { WindowVault } from "./vault.svelte";
 
 let calls: { cmd: string; args: unknown }[];
@@ -132,4 +133,57 @@ test("the unlock label and phrase follow the way to unlock", () => {
   expect(methodPhrase("windowsHello")).toBe("Windows Hello");
   expect(methodPhrase("windowsPassword")).toBe("your Windows password");
   expect(methodPhrase("vaultPassword")).toBe("your Vault password");
+});
+
+const wait = {
+  id: 1,
+  kind: "password" as const,
+  reason: "unlock the Vault",
+  problem: { kind: "retryAfter" as const, seconds: 30 },
+};
+const tooMany = { kind: "retryAfter", message: "try again in 30 s" };
+
+function unlockAfter(
+  prompts: VaultPrompts,
+  how: "wait" | "cancel",
+  then: "ok" | "again",
+): WindowVault {
+  let n = 0;
+  clearMocks();
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd !== "vault_unlock") return null;
+    n++;
+    if (n > 1) {
+      if (then === "ok") return null;
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- commands reject with { kind, message }
+      throw tooMany;
+    }
+    prompts.show(wait);
+    prompts.answer(how === "wait" ? "" : null);
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- commands reject with { kind, message }
+    throw tooMany;
+  });
+  return new WindowVault(prompts);
+}
+
+test("a wait that was sat out retries the unlock once, without a toast", async () => {
+  const v = unlockAfter(new VaultPrompts(), "wait", "ok");
+  expect(await v.unlock()).toBe(true);
+  expect(calls.filter((c) => c.cmd === "vault_unlock")).toHaveLength(2);
+  expect(toasts.items).toEqual([]);
+});
+
+test("the retry happens once; a second wait is shown", async () => {
+  const v = unlockAfter(new VaultPrompts(), "wait", "again");
+  expect(await v.unlock()).toBe(false);
+  expect(calls.filter((c) => c.cmd === "vault_unlock")).toHaveLength(2);
+  expect(toasts.items).toHaveLength(1);
+});
+
+test("cancelling the wait is silent", async () => {
+  const v = unlockAfter(new VaultPrompts(), "cancel", "ok");
+  expect(await v.unlock()).toBe(false);
+  expect(calls.filter((c) => c.cmd === "vault_unlock")).toHaveLength(1);
+  expect(toasts.items).toEqual([]);
 });
