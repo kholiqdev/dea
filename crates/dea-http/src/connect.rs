@@ -24,7 +24,7 @@ use crate::proxy;
 use crate::request::TlsConfig;
 use crate::response::HttpVersion;
 use crate::timing::Marks;
-use crate::tls;
+use crate::tls::{self, TlsConfigs};
 
 /// How often an HTTP/2 connection is pinged, and how long the answer may
 /// take, so a connection that died silently (sleep, VPN switch) is closed
@@ -126,6 +126,7 @@ pub(crate) async fn open(
     proxy: Option<&Url>,
     tls: &TlsConfig,
     verify: bool,
+    configs: &TlsConfigs,
 ) -> Result<(Connection, Marks), HttpError> {
     let start = Instant::now();
     let host = url
@@ -163,7 +164,8 @@ pub(crate) async fn open(
     }
     let connected = Instant::now();
     let (connection, secured) = if url.scheme() == "https" {
-        let (stream, h2) = tls::handshake(stream, &host, tls, verify).await?;
+        let config = configs.get(tls, verify)?;
+        let (stream, h2) = tls::handshake(stream, &host, config).await?;
         let secured = Instant::now();
         (handshake(stream, h2).await?, secured)
     } else {
