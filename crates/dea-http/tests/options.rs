@@ -36,7 +36,7 @@ fn get(url: &str) -> Request {
 
 fn with_timeout(ms: u64) -> Options {
     Options {
-        timeout: Duration::from_millis(ms),
+        timeout: Some(Duration::from_millis(ms)),
         ..Options::default()
     }
 }
@@ -240,6 +240,30 @@ async fn timeout_counts_until_the_response_head() {
         elapsed >= Duration::from_millis(290) && elapsed <= Duration::from_millis(400),
         "{elapsed:?}"
     );
+}
+
+#[tokio::test]
+async fn no_timeout_waits_as_long_as_it_takes() {
+    assert_eq!(Options::default().timeout, Some(Duration::from_secs(30)));
+    let server = TestServer::start(Tls::None).await;
+    let options = Options {
+        timeout: None,
+        ..Options::default()
+    };
+    let response = send(
+        &client(),
+        request("GET", &server.url("/delay/300"), options.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status, 200);
+    let response = send(
+        &client(),
+        request("GET", &server.url("/drip/2/300"), options),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.body.read_all().unwrap(), b"xx");
 }
 
 #[tokio::test]

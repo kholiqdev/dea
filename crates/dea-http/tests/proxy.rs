@@ -265,7 +265,7 @@ async fn no_proxy_entry_skips_the_proxy() {
     let proxy = TestProxy::start().await;
     let client = via(&proxy.url(), "dea-target.test");
     let options = Options {
-        timeout: Duration::from_secs(2),
+        timeout: Some(Duration::from_secs(2)),
         ..Options::default()
     };
     let url = format!("http://dea-target.test:{}/status/204", server.port());
@@ -279,7 +279,7 @@ async fn use_system_proxy_off_goes_direct() {
     let proxy = TestProxy::start().await;
     let options = Options {
         use_system_proxy: false,
-        timeout: Duration::from_secs(2),
+        timeout: Some(Duration::from_secs(2)),
         ..Options::default()
     };
     let _ = send(
@@ -299,7 +299,7 @@ async fn proxy_config_none_goes_direct() {
     })
     .unwrap();
     let options = Options {
-        timeout: Duration::from_secs(2),
+        timeout: Some(Duration::from_secs(2)),
         ..Options::default()
     };
     let _ = send(&client, get("http://dea-target.test:9/", options)).await;
@@ -328,7 +328,7 @@ async fn timeout_covers_the_connect_exchange() {
     let hold = dea_testkit::http::HoldServer::start().await;
     let client = via(hold.url().trim_end_matches('/'), "");
     let options = Options {
-        timeout: Duration::from_millis(300),
+        timeout: Some(Duration::from_millis(300)),
         ..Options::default()
     };
     let result = send(&client, get("https://dea-target.test:443/", options)).await;

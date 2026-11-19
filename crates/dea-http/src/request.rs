@@ -67,7 +67,9 @@ impl fmt::Debug for Request {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
-    pub timeout: Duration,
+    /// The longest wait for the response head, then between two pieces of
+    /// the body. `None` waits as long as it takes.
+    pub timeout: Option<Duration>,
     pub follow_redirects: bool,
     pub max_redirects: u32,
     pub verify_tls: bool,
@@ -78,7 +80,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            timeout: Duration::from_secs(30),
+            timeout: Some(Duration::from_secs(30)),
             follow_redirects: true,
             max_redirects: 10,
             verify_tls: true,

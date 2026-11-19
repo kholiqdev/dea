@@ -122,8 +122,8 @@ struct Attempt<'a> {
     /// The request carries an `Accept-Encoding` header.
     asked_for_encoding: bool,
     run: Run<'a>,
-    /// When the response head must have arrived.
-    head_deadline: tokio::time::Instant,
+    /// When the response head must have arrived; `None` without a timeout.
+    head_deadline: Option<Deadline>,
 }
 
 /// The first non-empty value of header `name`.
@@ -134,11 +134,34 @@ fn header<'h>(headers: &'h [(String, String)], name: &str) -> Option<&'h str> {
         .map(|(_, value)| value.as_str())
 }
 
-/// `timeout` from now; effectively never for a timeout too big to add.
-fn deadline(timeout: Duration) -> tokio::time::Instant {
-    let now = tokio::time::Instant::now();
-    now.checked_add(timeout)
-        .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365 * 30))
+/// A moment something must have happened by, and the timeout it came from.
+#[derive(Clone, Copy)]
+struct Deadline {
+    at: tokio::time::Instant,
+    timeout: Duration,
+}
+
+impl Deadline {
+    /// `timeout` from now; effectively never for a timeout too big to add.
+    /// `None` without a timeout.
+    fn after(timeout: Option<Duration>) -> Option<Deadline> {
+        let timeout = timeout?;
+        let now = tokio::time::Instant::now();
+        let at = now
+            .checked_add(timeout)
+            .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365 * 30));
+        Some(Deadline { at, timeout })
+    }
+}
+
+/// Waits for `future` until `deadline`, or as long as it takes without one.
+async fn before<F: Future>(deadline: Option<Deadline>, future: F) -> Result<F::Output, HttpError> {
+    match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline.at, future)
+            .await
+            .map_err(|_| HttpError::Timeout(deadline.timeout)),
+        None => Ok(future.await),
+    }
 }
 
 /// Opens a connection in its own task, which is stopped if this future is
@@ -149,7 +172,7 @@ fn deadline(timeout: Duration) -> tokio::time::Instant {
 async fn open(
     request: &Request,
     proxy: Option<&Url>,
-    deadline: tokio::time::Instant,
+    deadline: Option<Deadline>,
 ) -> Result<(Connection, Marks), HttpError> {
     let (url, proxy, tls, verify) = (
         request.url.clone(),
@@ -159,10 +182,9 @@ async fn open(
     );
     let task = tokio::spawn(async move { connect::open(&url, proxy.as_ref(), &tls, verify).await });
     let _stop = StopOnDrop(task.abort_handle());
-    match tokio::time::timeout_at(deadline, task).await {
-        Err(_) => Err(HttpError::Timeout(request.options.timeout)),
-        Ok(Ok(opened)) => opened,
-        Ok(Err(e)) => Err(HttpError::Protocol(format!(
+    match before(deadline, task).await? {
+        Ok(opened) => opened,
+        Err(e) => Err(HttpError::Protocol(format!(
             "the connection task failed: {e}"
         ))),
     }
@@ -202,7 +224,8 @@ impl Client {
     /// `Cancelled` and closes the connection in use.
     ///
     /// `Options::timeout` limits each hop until its response head arrives,
-    /// then the gap between pieces of its body (decision 9). A pooled
+    /// then the gap between pieces of its body (decision 9); `None` sets no
+    /// limit. A pooled
     /// connection that fails before any of the response arrives (the
     /// server closed it while idle) is replaced by a new one, once.
     pub async fn send(
@@ -263,7 +286,7 @@ impl Client {
     async fn proxy_for(
         &self,
         request: &Request,
-        deadline: tokio::time::Instant,
+        deadline: Option<Deadline>,
     ) -> Result<Option<Url>, HttpError> {
         if !request.options.use_system_proxy || proxy::is_loopback(&request.url) {
             return Ok(None);
@@ -273,9 +296,8 @@ impl Client {
             ProxyConfig::Fixed(settings) => settings.for_target(&request.url).cloned(),
             ProxyConfig::System => {
                 let read = tokio::task::spawn_blocking(proxy::system_proxy);
-                let settings = tokio::time::timeout_at(deadline, read)
-                    .await
-                    .map_err(|_| HttpError::Timeout(request.options.timeout))?
+                let settings = before(deadline, read)
+                    .await?
                     .map_err(|e| HttpError::Proxy(format!("could not read the settings: {e}")))?;
                 settings.for_target(&request.url).cloned()
             }
@@ -293,7 +315,7 @@ impl Client {
 
     /// One request and its response, over a pooled or a new connection.
     async fn hop(&self, request: &Request, run: Run<'_>) -> Result<Response, HttpError> {
-        let head_deadline = deadline(request.options.timeout);
+        let head_deadline = Deadline::after(request.options.timeout);
         let proxy = self.proxy_for(request, head_deadline).await?;
         let mut prepared = Prepared::new(request, &self.inner.user_agent)?;
         if let Some(proxy) = &proxy
@@ -354,23 +376,22 @@ impl Client {
             run,
             head_deadline,
         } = *attempt;
-        let timeout = options.timeout;
         let version = connection.version();
         let received_before = connection.bytes_received();
         let wire = prepared.to_wire(version).map_err(|error| Failure {
             error,
             retry: false,
         })?;
-        let sent = tokio::time::timeout_at(head_deadline, connection.send(wire)).await;
+        let sent = before(head_deadline, connection.send(wire)).await;
         let head = match sent {
-            Err(_) => {
+            Err(error) => {
                 // A silent h2 connection would otherwise be picked again
                 // and make the next request wait as long.
                 if version == HttpVersion::Http2 {
                     self.inner.pool.evict(key, &connection);
                 }
                 return Err(Failure {
-                    error: HttpError::Timeout(timeout),
+                    error,
                     retry: false,
                 });
             }
@@ -429,10 +450,10 @@ impl Client {
         });
         // From here the timeout is the longest wait for the next piece.
         while !reader.is_full() {
-            let frame = tokio::time::timeout(timeout, body.frame())
+            let frame = before(Deadline::after(options.timeout), body.frame())
                 .await
-                .map_err(|_| Failure {
-                    error: HttpError::Timeout(timeout),
+                .map_err(|error| Failure {
+                    error,
                     retry: false,
                 })?;
             match frame {

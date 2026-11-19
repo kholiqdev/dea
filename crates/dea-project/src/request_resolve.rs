@@ -103,6 +103,7 @@ pub enum ResolvedBody {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EffectiveOptions {
+    /// `0` sets no limit.
     pub timeout_ms: u64,
     pub follow_redirects: bool,
     pub max_redirects: u32,
