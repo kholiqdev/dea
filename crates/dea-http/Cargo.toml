@@ -41,3 +41,7 @@ windows-registry.workspace = true
 [dev-dependencies]
 dea-testkit = { workspace = true, features = ["http"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[[bench]]
+name = "overhead"
+harness = false
