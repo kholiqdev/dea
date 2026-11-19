@@ -60,6 +60,9 @@ pub enum Tls {
 pub struct Received {
     pub method: String,
     pub path_and_query: String,
+    /// The `:authority` of an HTTP/2 request. HTTP/1.1 requests carry a
+    /// `Host` header instead, and have `None` here.
+    pub authority: Option<String>,
     /// Header names in lower case, in the order received.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
@@ -350,6 +353,7 @@ async fn handle(
             .path_and_query()
             .map_or("/", |p| p.as_str())
             .to_owned(),
+        authority: parts.uri.authority().map(|a| a.as_str().to_owned()),
         headers: parts
             .headers
             .iter()

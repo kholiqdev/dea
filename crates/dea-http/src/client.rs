@@ -127,7 +127,11 @@ impl Client {
     ) -> Result<Response, Failure> {
         let version = connection.version();
         let received_before = connection.bytes_received();
-        let head = match connection.send(prepared.to_wire(version)).await {
+        let wire = prepared.to_wire(version).map_err(|error| Failure {
+            error,
+            retry: false,
+        })?;
+        let head = match connection.send(wire).await {
             Ok(head) => head,
             Err(e) => {
                 let nothing_arrived = connection.bytes_received() == received_before;

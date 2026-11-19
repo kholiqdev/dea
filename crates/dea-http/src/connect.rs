@@ -102,7 +102,12 @@ pub(crate) async fn open(
         .ok_or_else(|| HttpError::InvalidRequest("the URL has no port".into()))?;
 
     let addrs = resolve(&host, port).await?;
-    let resolved = Instant::now();
+    // An IP literal skips DNS, so its DNS phase is zero, not the time
+    // taken to wrap the address.
+    let resolved = match host {
+        Host::Domain(_) => Instant::now(),
+        Host::Ipv4(_) | Host::Ipv6(_) => start,
+    };
     let stream = connect(&addrs, deadline, timeout).await?;
     let connected = Instant::now();
     let (connection, secured) = if url.scheme() == "https" {
