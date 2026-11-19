@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bytes::BytesMut;
+use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::header::HeaderValue;
 use tokio_util::sync::CancellationToken;
@@ -13,9 +13,11 @@ use tokio_util::sync::CancellationToken;
 use crate::connect::{self, Connection};
 use crate::error::{HttpError, describe};
 use crate::pool::{Pool, PoolKey};
+use crate::reader::{BodyReader, Encoding, ReaderConfig};
 use crate::redirect::next_hop;
-use crate::request::{Prepared, Request};
-use crate::response::{HttpVersion, Redirect, Response, ResponseBody};
+use crate::request::{Options, Prepared, Request};
+use crate::response::{HttpVersion, Redirect, Response};
+use crate::sse::SseEvent;
 use crate::timing::Marks;
 
 #[derive(Debug, Clone)]
@@ -52,18 +54,56 @@ pub struct Client {
 
 struct Inner {
     user_agent: HeaderValue,
+    spill_dir: PathBuf,
     pool: Pool,
 }
 
 /// What a single send may use besides the request.
 pub struct SendContext<'a> {
     cancel: &'a CancellationToken,
+    events: Option<&'a EventSink<'a>>,
+}
+
+/// Receives the events of the response being read.
+pub(crate) type EventSink<'a> = dyn Fn(Event) + Send + Sync + 'a;
+
+/// What `Client::send` reports while the response of the final hop is
+/// read, ahead of the finished `Response`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// The response head arrived.
+    Head {
+        status: u16,
+        headers: Vec<(String, String)>,
+    },
+    /// One piece of the body, decoded when the body is, as it arrived.
+    Data(Bytes),
+    /// A complete event of a `text/event-stream` body.
+    Sse(SseEvent),
 }
 
 impl<'a> SendContext<'a> {
     pub fn new(cancel: &'a CancellationToken) -> Self {
-        SendContext { cancel }
+        SendContext {
+            cancel,
+            events: None,
+        }
     }
+
+    /// Calls `sink` for every event of the response. A hop that is
+    /// followed as a redirect sends none.
+    #[must_use]
+    pub fn events(mut self, sink: &'a EventSink<'a>) -> Self {
+        self.events = Some(sink);
+        self
+    }
+}
+
+/// What one send reports to, and when it began.
+#[derive(Clone, Copy)]
+struct Run<'a> {
+    events: Option<&'a EventSink<'a>>,
+    started: Instant,
 }
 
 /// What one attempt over a connection needs besides the connection.
@@ -71,17 +111,19 @@ impl<'a> SendContext<'a> {
 struct Attempt<'a> {
     prepared: &'a Prepared,
     key: &'a PoolKey,
-    timeout: Duration,
+    options: &'a Options,
+    /// The request carries an `Accept-Encoding` header.
+    asked_for_encoding: bool,
+    run: Run<'a>,
     /// When the response head must have arrived.
     head_deadline: tokio::time::Instant,
 }
 
-/// The first non-empty `Location` header.
-fn location(response: &Response) -> Option<&str> {
-    response
-        .headers
+/// The first non-empty value of header `name`.
+fn header<'h>(headers: &'h [(String, String)], name: &str) -> Option<&'h str> {
+    headers
         .iter()
-        .find(|(name, value)| name.eq_ignore_ascii_case("location") && !value.is_empty())
+        .find(|(n, value)| n.eq_ignore_ascii_case(name) && !value.is_empty())
         .map(|(_, value)| value.as_str())
 }
 
@@ -139,6 +181,7 @@ impl Client {
         Ok(Client {
             inner: Arc::new(Inner {
                 user_agent,
+                spill_dir: config.spill_dir,
                 pool: Pool::default(),
             }),
         })
@@ -160,18 +203,18 @@ impl Client {
         tokio::select! {
             biased;
             () = ctx.cancel.cancelled() => Err(HttpError::Cancelled),
-            result = self.follow(request) => result,
+            result = self.follow(request, Run { events: ctx.events, started: Instant::now() }) => result,
         }
     }
 
     /// Sends hops until one is not a redirect we follow.
-    async fn follow(&self, request: Request) -> Result<Response, HttpError> {
+    async fn follow(&self, request: Request, run: Run<'_>) -> Result<Response, HttpError> {
         let mut current = request;
         let mut redirects = Vec::new();
         loop {
-            let mut response = self.hop(&current).await?;
+            let mut response = self.hop(&current, run).await?;
             let next = if current.options.follow_redirects {
-                match location(&response) {
+                match header(&response.headers, "location") {
                     Some(location) => next_hop(&current, response.status, location)?,
                     None => None,
                 }
@@ -195,18 +238,20 @@ impl Client {
     }
 
     /// One request and its response, over a pooled or a new connection.
-    async fn hop(&self, request: &Request) -> Result<Response, HttpError> {
+    async fn hop(&self, request: &Request, run: Run<'_>) -> Result<Response, HttpError> {
         let prepared = Prepared::new(request, &self.inner.user_agent)?;
         let key = PoolKey::new(request);
-        let timeout = request.options.timeout;
-        let head_deadline = deadline(timeout);
+        let head_deadline = deadline(request.options.timeout);
+        let asked_for_encoding = header(&request.headers, "accept-encoding").is_some();
 
         if let Some(connection) = self.inner.pool.checkout(&key) {
             let marks = Marks::reused(Instant::now());
             let attempt = Attempt {
                 prepared: &prepared,
                 key: &key,
-                timeout,
+                options: &request.options,
+                asked_for_encoding,
+                run,
                 head_deadline,
             };
             match self.exchange(connection, marks, &attempt).await {
@@ -223,7 +268,9 @@ impl Client {
         let attempt = Attempt {
             prepared: &prepared,
             key: &key,
-            timeout,
+            options: &request.options,
+            asked_for_encoding,
+            run,
             head_deadline,
         };
         self.exchange(connection, marks, &attempt)
@@ -242,9 +289,12 @@ impl Client {
         let Attempt {
             prepared,
             key,
-            timeout,
+            options,
+            asked_for_encoding,
+            run,
             head_deadline,
         } = *attempt;
+        let timeout = options.timeout;
         let version = connection.version();
         let received_before = connection.bytes_received();
         let wire = prepared.to_wire(version).map_err(|error| Failure {
@@ -275,9 +325,50 @@ impl Client {
         };
         let head_at = Instant::now();
         let (parts, mut body) = head.into_parts();
-        let mut data = BytesMut::new();
+        let status = parts.status.as_u16();
+        let headers: Vec<(String, String)> = parts
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
+                (name.as_str().to_owned(), value)
+            })
+            .collect();
+
+        // A hop we follow is not the response; it reports nothing.
+        let followed = options.follow_redirects
+            && matches!(status, 301 | 302 | 303 | 307 | 308)
+            && header(&headers, "location").is_some();
+        let events = if followed { None } else { run.events };
+        if let Some(sink) = events {
+            sink(Event::Head {
+                status,
+                headers: headers.clone(),
+            });
+        }
+        let content_encoding = header(&headers, "content-encoding")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.eq_ignore_ascii_case("identity"));
+        let decode = content_encoding
+            .as_deref()
+            .and_then(Encoding::from_header)
+            .filter(|_| asked_for_encoding);
+        let sse = header(&headers, "content-type").is_some_and(|value| {
+            value
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("text/event-stream")
+        });
+        let mut reader = BodyReader::new(ReaderConfig {
+            spill_dir: &self.inner.spill_dir,
+            max_body_bytes: options.max_body_bytes,
+            decode,
+            sse,
+            events,
+            started: run.started,
+        });
         // From here the timeout is the longest wait for the next piece.
-        loop {
+        while !reader.is_full() {
             let frame = tokio::time::timeout(timeout, body.frame())
                 .await
                 .map_err(|_| Failure {
@@ -288,7 +379,10 @@ impl Client {
                 None => break,
                 Some(Ok(frame)) => {
                     if let Ok(chunk) = frame.into_data() {
-                        data.extend_from_slice(&chunk);
+                        reader.push(chunk).await.map_err(|error| Failure {
+                            error,
+                            retry: false,
+                        })?;
                     }
                 }
                 Some(Err(e)) => {
@@ -299,9 +393,16 @@ impl Client {
                 }
             }
         }
+        let (body, truncated) = reader.finish().await.map_err(|error| Failure {
+            error,
+            retry: false,
+        })?;
         let done_at = Instant::now();
+        // A half-read HTTP/1.1 connection can't carry another request.
         if version == HttpVersion::Http11 {
-            self.inner.pool.checkin(key.clone(), connection);
+            if !truncated {
+                self.inner.pool.checkin(key.clone(), connection);
+            }
         } else {
             self.inner.pool.touch(key, &connection);
         }
@@ -314,22 +415,14 @@ impl Client {
                 .unwrap_or_default()
                 .to_owned(),
         };
-        let headers = parts
-            .headers
-            .iter()
-            .map(|(name, value)| {
-                let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
-                (name.as_str().to_owned(), value)
-            })
-            .collect();
         Ok(Response {
             version,
-            status: parts.status.as_u16(),
+            status,
             reason,
             headers,
-            body: ResponseBody::Memory(data.freeze()),
-            truncated: false,
-            content_encoding: None,
+            body,
+            truncated,
+            content_encoding,
             timing: marks.finish(head_at, done_at),
             redirects: Vec::new(),
         })

@@ -6,6 +6,12 @@ use bytes::Bytes;
 
 use crate::timing::Timing;
 
+/// Bodies larger than this are written to a temporary file (decision 10).
+pub const SPILL_THRESHOLD: u64 = 10 * 1024 * 1024;
+
+/// Reading stops at this many body bytes unless the request says otherwise.
+pub const DEFAULT_MAX_BODY_BYTES: u64 = 1024 * 1024 * 1024;
+
 pub struct Response {
     pub version: HttpVersion,
     pub status: u16,
