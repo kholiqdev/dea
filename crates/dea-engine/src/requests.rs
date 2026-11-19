@@ -423,6 +423,7 @@ fn to_http(resolved: ResolvedRequest) -> Result<(Request, Vec<String>), SendErro
         method,
         url,
         headers,
+        auth_header,
         body,
         options,
         tls,
@@ -442,6 +443,15 @@ fn to_http(resolved: ResolvedRequest) -> Result<(Request, Vec<String>), SendErro
             SendError::Unresolved(unresolved)
         });
     };
+    // What auth added and whatever holds a Vault value are credentials,
+    // which a redirect to another origin leaves behind.
+    let from_vault = |part: &Resolved| part.text != part.redacted;
+    let credential_headers = headers
+        .iter()
+        .filter(|(name, value)| from_vault(name) || from_vault(value))
+        .map(|(name, _)| name.text.clone())
+        .chain(auth_header)
+        .collect();
     let request = Request {
         method,
         url: target,
@@ -449,6 +459,7 @@ fn to_http(resolved: ResolvedRequest) -> Result<(Request, Vec<String>), SendErro
             .into_iter()
             .map(|(name, value)| (name.text, value.text))
             .collect(),
+        credential_headers,
         body: to_body(body),
         options: Options {
             timeout: Duration::from_millis(options.timeout_ms),

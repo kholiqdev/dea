@@ -24,9 +24,31 @@ pub struct Request {
     pub method: String,
     pub url: Url,
     pub headers: Vec<(String, String)>,
+    /// Names of the headers that carry credentials, such as an API key
+    /// header or one whose value came from the Vault. Matched without
+    /// regard to case. `Authorization`, `Proxy-Authorization` and `Cookie`
+    /// always count. Credentials are dropped on a redirect to another
+    /// origin and kept out of HTTP/2 header compression.
+    pub credential_headers: Vec<String>,
     pub body: Body,
     pub options: Options,
     pub tls: TlsConfig,
+}
+
+/// Headers that always carry credentials.
+const ALWAYS_CREDENTIALS: [&str; 3] = ["authorization", "proxy-authorization", "cookie"];
+
+impl Request {
+    /// Whether header `name` carries credentials.
+    pub(crate) fn is_credential(&self, name: &str) -> bool {
+        ALWAYS_CREDENTIALS
+            .iter()
+            .any(|always| name.eq_ignore_ascii_case(always))
+            || self
+                .credential_headers
+                .iter()
+                .any(|marked| name.eq_ignore_ascii_case(marked))
+    }
 }
 
 /// Shows only where the request goes. Query, headers and body may hold
@@ -238,11 +260,13 @@ impl Prepared {
         for (name, value) in &request.headers {
             let header = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|_| HttpError::InvalidRequest(format!("invalid header name {name:?}")))?;
-            let value = HeaderValue::from_bytes(value.as_bytes()).map_err(|_| {
+            let mut value = HeaderValue::from_bytes(value.as_bytes()).map_err(|_| {
                 HttpError::InvalidRequest(format!(
                     "the value of header {name} has a line break or control character"
                 ))
             })?;
+            // Never indexed by HPACK, and never printed by hyper.
+            value.set_sensitive(request.is_credential(name));
             user.push((header, value));
         }
         let user_wrote = |name: &HeaderName| user.iter().any(|(n, _)| n == name);
@@ -368,6 +392,7 @@ mod tests {
                 .parse()
                 .unwrap(),
             headers: vec![("Authorization".into(), "Bearer header-secret".into())],
+            credential_headers: Vec::new(),
             body: Body::Bytes {
                 data: Bytes::from_static(b"body-secret"),
                 content_type: None,
@@ -417,6 +442,7 @@ mod tests {
                 ("host".into(), "other.example".into()),
                 ("ACCEPT".into(), "text/plain".into()),
             ],
+            credential_headers: Vec::new(),
             body: Body::Empty,
             options: Options::default(),
             tls: TlsConfig::default(),
@@ -441,6 +467,7 @@ mod tests {
             method: "GET".into(),
             url: "https://user:pw@example.com:8443/".parse().unwrap(),
             headers: Vec::new(),
+            credential_headers: Vec::new(),
             body: Body::Empty,
             options: Options::default(),
             tls: TlsConfig::default(),
@@ -462,6 +489,7 @@ mod tests {
             method: "GET".into(),
             url: "https://example.com/".parse().unwrap(),
             headers: vec![("Host".into(), "odd host/secret-path".into())],
+            credential_headers: Vec::new(),
             body: Body::Empty,
             options: Options::default(),
             tls: TlsConfig::default(),
@@ -474,5 +502,38 @@ mod tests {
         };
         assert!(message.contains("Host"), "{message}");
         assert!(!message.contains("secret-path"), "{message}");
+    }
+
+    #[test]
+    fn credential_values_are_sensitive() {
+        let request = Request {
+            method: "GET".into(),
+            url: "https://example.com/".parse().unwrap(),
+            headers: vec![
+                ("Authorization".into(), "Bearer t".into()),
+                ("Cookie".into(), "s=1".into()),
+                ("Proxy-Authorization".into(), "Basic p".into()),
+                ("X-Api-Key".into(), "k".into()),
+                ("X-Keep".into(), "1".into()),
+            ],
+            credential_headers: vec!["x-api-key".into()],
+            body: Body::Empty,
+            options: Options::default(),
+            tls: TlsConfig::default(),
+        };
+        let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
+        for version in [HttpVersion::Http11, HttpVersion::Http2] {
+            let wire = prepared.to_wire(version).unwrap();
+            let sensitive = |name: &str| wire.headers()[name].is_sensitive();
+            for name in [
+                "authorization",
+                "cookie",
+                "proxy-authorization",
+                "x-api-key",
+            ] {
+                assert!(sensitive(name), "{name}");
+            }
+            assert!(!sensitive("x-keep"));
+        }
     }
 }

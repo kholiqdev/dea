@@ -143,6 +143,9 @@ pub struct ResolvedRequest {
     pub method: String,
     pub url: Resolved,
     pub headers: Vec<(Resolved, Resolved)>,
+    /// The name of the header the auth setting added, such as
+    /// `Authorization` or an API key header. `None` when it added none.
+    pub auth_header: Option<String>,
     pub body: ResolvedBody,
     pub options: EffectiveOptions,
     pub tls: ResolvedTls,
@@ -173,6 +176,7 @@ impl fmt::Debug for ResolvedRequest {
             .field("method", &self.method)
             .field("url", &self.url)
             .field("headers", &self.headers)
+            .field("auth_header", &self.auth_header)
             .field("body", &self.body)
             .field("options", &self.options)
             .field("tls", &self.tls)
@@ -535,11 +539,13 @@ pub fn resolve_request(
             }
         }
     }
+    let mut added_auth_header = None;
     if let Some((name, value)) = auth_header
         && !headers
             .iter()
             .any(|(n, _)| n.text.eq_ignore_ascii_case(&name.text))
     {
+        added_auth_header = Some(name.text.clone());
         headers.push((name, value));
     }
 
@@ -603,6 +609,7 @@ pub fn resolve_request(
         method: request.method.clone(),
         url,
         headers,
+        auth_header: added_auth_header,
         body,
         options: effective_options(&request.options, folders),
         tls,

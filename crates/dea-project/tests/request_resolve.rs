@@ -262,6 +262,32 @@ fn explicit_header_beats_auth_and_inherited_headers() {
     assert_eq!(header(&resolved, "accept"), ["*/*"]);
     assert!(header(&resolved, "x-off").is_empty());
     assert_eq!(resolved.headers.len(), 3);
+    // The person's own Authorization is not the one auth would add.
+    assert_eq!(resolved.auth_header, None);
+}
+
+#[test]
+fn auth_header_is_named() {
+    let f = fixture(&[
+        (
+            "requests/shipping/_folder.yaml",
+            "auth:\n  type: bearer\n  token: tok\n",
+        ),
+        (
+            "requests/shipping/key.yaml",
+            "name: K\nmethod: GET\nurl: http://h\n\
+             auth:\n  type: apiKey\n  key: X-Api-Key\n  value: k\n  in: header\n",
+        ),
+        (
+            "requests/shipping/inherit.yaml",
+            "name: I\nmethod: GET\nurl: http://h\n",
+        ),
+    ]);
+    let key = run(&f, "requests/shipping/key.yaml");
+    assert_eq!(key.auth_header.as_deref(), Some("X-Api-Key"));
+    assert_eq!(header(&key, "x-api-key"), ["k"]);
+    let inherited = run(&f, "requests/shipping/inherit.yaml");
+    assert_eq!(inherited.auth_header.as_deref(), Some("Authorization"));
 }
 
 #[test]
@@ -271,7 +297,9 @@ fn api_key_in_query_is_appended() {
         "name: E\nmethod: GET\nurl: http://h/x\nparams:\n  - name: a\n    value: '1'\n\
          auth:\n  type: apiKey\n  key: key\n  value: 'v 1'\n  in: query\n",
     )]);
-    assert_eq!(run(&f, REQ).url.text, "http://h/x?a=1&key=v%201");
+    let resolved = run(&f, REQ);
+    assert_eq!(resolved.url.text, "http://h/x?a=1&key=v%201");
+    assert_eq!(resolved.auth_header, None);
 }
 
 #[test]

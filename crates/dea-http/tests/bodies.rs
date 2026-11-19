@@ -18,6 +18,7 @@ fn post(url: &str, headers: Vec<(String, String)>, body: Body) -> Request {
         method: "POST".into(),
         url: url.parse().unwrap(),
         headers,
+        credential_headers: Vec::new(),
         body,
         options: Options::default(),
         tls: TlsConfig::default(),

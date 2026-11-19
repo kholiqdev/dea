@@ -13,8 +13,8 @@ use dea_engine::store::Store;
 use dea_engine::{PasswordPrompt, Prompter, SendAnswer, SendConfirmation, VaultService};
 use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
-    Auth, Environment, KeyValue, Project, RequestFile, RequestTree, SecretKind, SendOptions,
-    Variable, create_project, load_requests, save_request,
+    ApiKeyLocation, Auth, Environment, KeyValue, Project, RequestFile, RequestTree, SecretKind,
+    SendOptions, Variable, create_project, load_requests, save_request,
 };
 use dea_testkit::http::{Received, TestServer, Tls};
 use dea_testkit::{canary, find_canary};
@@ -661,4 +661,76 @@ async fn unsaved_cookies_are_saved_after_a_failed_exchange() {
         "{result:?}"
     );
     assert_eq!(f.saved_cookies(), ["session"]);
+}
+
+fn row(name: &str, value: &str) -> KeyValue {
+    KeyValue {
+        name: name.into(),
+        value: value.into(),
+        description: None,
+        enabled: true,
+    }
+}
+
+/// `GET {{baseUrl}}<route>` signed with an API key header, a header from
+/// the Vault, a `Proxy-Authorization` the person wrote and a plain header.
+fn with_credentials(route: &str, api_key: &str) -> RequestFile {
+    RequestFile {
+        headers: vec![
+            row("X-From-Vault", "{{vault:access_token}}"),
+            row("Proxy-Authorization", "Basic cHJveHk6cHc="),
+            row("X-Keep", "1"),
+        ],
+        auth: Auth::ApiKey {
+            key: "X-Api-Key".into(),
+            value: api_key.into(),
+            location: ApiKeyLocation::Header,
+        },
+        ..request("GET", &format!("{{{{baseUrl}}}}{route}"))
+    }
+}
+
+const CREDENTIALS: [&str; 3] = ["x-api-key", "x-from-vault", "proxy-authorization"];
+
+#[tokio::test]
+async fn credentials_stay_behind_on_a_redirect_to_another_origin() {
+    let mut f = Fixture::new().await;
+    // Another port and another host name for the same machine.
+    let other = TestServer::start(Tls::None).await;
+    let target = other.url("/echo").replace("127.0.0.1", "localhost");
+    for api_key in ["{{vault:access_token}}", "literal-key"] {
+        let mut file = with_credentials("/redirect-to", api_key);
+        file.params = vec![row("url", &target)];
+        let path = f.add("away", file);
+
+        let prepared = f.prepare(&path, Some("staging")).unwrap();
+        let response = f.send_prepared(prepared).await;
+
+        assert_eq!(response.status, 200);
+        let first = f.last_request();
+        for name in CREDENTIALS {
+            assert!(first.header(name).is_some(), "{name} {api_key}");
+        }
+        let moved = other.requests().pop().expect("the redirect was followed");
+        for name in CREDENTIALS {
+            assert_eq!(moved.header(name), None, "{name} {api_key}");
+        }
+        assert_eq!(moved.header("x-keep"), Some("1"));
+    }
+
+    // Within one origin they all go along.
+    let path = f.add(
+        "same",
+        with_credentials("/redirect/1", "{{vault:access_token}}"),
+    );
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    f.send_prepared(prepared).await;
+    let last = f.last_request();
+    assert_eq!(last.path_and_query, "/redirect/0");
+    assert_eq!(last.header("x-api-key"), Some(&*f.secret));
+    assert_eq!(last.header("x-from-vault"), Some(&*f.secret));
+    assert_eq!(
+        last.header("proxy-authorization"),
+        Some("Basic cHJveHk6cHc=")
+    );
 }

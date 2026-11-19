@@ -27,6 +27,7 @@ fn request(url: &str, headers: &[(&str, &str)], options: Options) -> Request {
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into()))
             .collect(),
+        credential_headers: Vec::new(),
         body: Body::Empty,
         options,
         tls: TlsConfig::default(),
