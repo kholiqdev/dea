@@ -1,15 +1,16 @@
 //! The request to send, and its checked form ready for the wire.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body_util::Full;
 use hyper::header::{ACCEPT, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use hyper::{Method, Uri};
 use url::Url;
 use zeroize::Zeroizing;
 
+use crate::body::{Plan, WireBody};
 use crate::error::HttpError;
 use crate::response::HttpVersion;
 
@@ -97,6 +98,54 @@ pub enum Body {
         data: Bytes,
         content_type: Option<String>,
     },
+    /// A file, read again and streamed on every send.
+    File {
+        path: PathBuf,
+        content_type: Option<String>,
+    },
+    /// `application/x-www-form-urlencoded` fields.
+    Form(Vec<(String, String)>),
+    /// `multipart/form-data` parts, in order.
+    Multipart(Vec<Part>),
+}
+
+#[derive(Clone)]
+pub struct Part {
+    pub name: String,
+    pub value: PartValue,
+}
+
+#[derive(Clone)]
+pub enum PartValue {
+    Text(String),
+    File {
+        path: PathBuf,
+        content_type: Option<String>,
+    },
+}
+
+/// Leaves the value out.
+impl fmt::Debug for Part {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Part")
+            .field("name", &self.name)
+            .field("value", &self.value)
+            .finish()
+    }
+}
+
+/// Shows the size of a text, not its content.
+impl fmt::Debug for PartValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PartValue::Text(text) => f.debug_struct("Text").field("len", &text.len()).finish(),
+            PartValue::File { path, content_type } => f
+                .debug_struct("File")
+                .field("path", path)
+                .field("content_type", content_type)
+                .finish(),
+        }
+    }
 }
 
 /// Shows the size of the body, not its bytes.
@@ -109,12 +158,19 @@ impl fmt::Debug for Body {
                 .field("len", &data.len())
                 .field("content_type", content_type)
                 .finish(),
+            Body::File { path, content_type } => f
+                .debug_struct("File")
+                .field("path", path)
+                .field("content_type", content_type)
+                .finish(),
+            Body::Form(fields) => f
+                .debug_struct("Form")
+                .field("fields", &fields.len())
+                .finish(),
+            Body::Multipart(parts) => f.debug_tuple("Multipart").field(parts).finish(),
         }
     }
 }
-
-/// The body type the connections carry.
-pub(crate) type WireBody = Full<Bytes>;
 
 /// A request checked once and turned into a wire request for each attempt.
 pub(crate) struct Prepared {
@@ -128,7 +184,7 @@ pub(crate) struct Prepared {
     /// `None` when the user wrote their own `Host`.
     host: Option<HeaderValue>,
     headers: Vec<(HeaderName, HeaderValue)>,
-    body: Bytes,
+    body: Plan,
 }
 
 impl Prepared {
@@ -181,10 +237,7 @@ impl Prepared {
             None => Some(absolute_form(authority.as_bytes()).map_err(|_| not_sendable())?),
         };
 
-        let (body, content_type) = match &request.body {
-            Body::Empty => (Bytes::new(), None),
-            Body::Bytes { data, content_type } => (data.clone(), content_type.as_deref()),
-        };
+        let body = Plan::new(&request.body)?;
         let mut headers = Vec::with_capacity(user.len() + 3);
         if !user_wrote(&USER_AGENT) {
             headers.push((USER_AGENT, user_agent.clone()));
@@ -192,7 +245,7 @@ impl Prepared {
         if !user_wrote(&ACCEPT) {
             headers.push((ACCEPT, HeaderValue::from_static("*/*")));
         }
-        if let Some(content_type) = content_type
+        if let Some(content_type) = body.content_type()
             && !user_wrote(&CONTENT_TYPE)
         {
             let value = HeaderValue::from_str(content_type).map_err(|_| {
@@ -219,8 +272,8 @@ impl Prepared {
 
     /// The request for one attempt. HTTP/1.1 gets the origin form and a
     /// `Host` header; HTTP/2 gets the full URI, whose authority becomes
-    /// `:authority`, and no `Host` header. `Content-Length` is added by
-    /// hyper from the body unless the user wrote one.
+    /// `:authority`, and no `Host` header. The body's size is known, so hyper adds
+    /// `Content-Length` unless the user wrote one.
     pub(crate) fn to_wire(
         &self,
         version: HttpVersion,
@@ -245,7 +298,7 @@ impl Prepared {
             }
             headers.append(name.clone(), value.clone());
         }
-        let mut request = hyper::Request::new(Full::new(self.body.clone()));
+        let mut request = hyper::Request::new(self.body.open()?);
         *request.method_mut() = self.method.clone();
         *request.uri_mut() = uri;
         *request.headers_mut() = headers;
@@ -288,6 +341,20 @@ mod tests {
         let tls = format!("{:?} {:?}", request.tls, request.body);
         for secret in ["key-secret", "body-secret"] {
             assert!(!tls.contains(secret), "{tls}");
+        }
+    }
+
+    #[test]
+    fn debug_of_form_and_multipart_leaves_values_out() {
+        let form = Body::Form(vec![("token".into(), "form-secret".into())]);
+        let multipart = Body::Multipart(vec![Part {
+            name: "field".into(),
+            value: PartValue::Text("part-secret".into()),
+        }]);
+        let shown = format!("{form:?} {multipart:?}");
+        assert!(shown.contains("field"), "{shown}");
+        for secret in ["form-secret", "part-secret"] {
+            assert!(!shown.contains(secret), "{shown}");
         }
     }
 
