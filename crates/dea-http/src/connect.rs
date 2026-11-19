@@ -17,8 +17,9 @@ use tokio::net::TcpStream;
 use tokio::task::AbortHandle;
 use url::{Host, Url};
 
+use crate::body::WireBody;
 use crate::error::{HttpError, describe};
-use crate::request::{TlsConfig, WireBody};
+use crate::request::TlsConfig;
 use crate::response::HttpVersion;
 use crate::timing::Marks;
 use crate::tls;

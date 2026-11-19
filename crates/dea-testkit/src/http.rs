@@ -3,7 +3,8 @@
 //!
 //! Routes:
 //! - `/status/{code}` answers with that status and no body.
-//! - `/echo` answers 200 with the body it received.
+//! - `/echo` answers 200 with the body it received, or with none for
+//!   `/echo?quiet`, which also avoids a second copy of a large body.
 //! - `/delay/{ms}` sleeps, then answers 200 with `x-slept-us` set to how long
 //!   it really slept, in microseconds.
 //! - `/close` answers 200 without `Connection: close`, then closes the socket.
@@ -31,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http_body_util::combinators::UnsyncBoxBody;
-use http_body_util::{BodyExt as _, Collected, Full};
+use http_body_util::{BodyExt as _, Full};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::header::HeaderValue;
 use hyper::server::conn::{http1, http2};
@@ -154,6 +155,16 @@ impl TestServer {
     /// How many connections the server has accepted.
     pub fn connections(&self) -> usize {
         self.shared.connections.load(Ordering::SeqCst)
+    }
+
+    /// Runs `f` on the requests received so far, without copying them. For
+    /// tests with large bodies.
+    pub fn with_requests<R>(&self, f: impl FnOnce(&[Received]) -> R) -> R {
+        f(&self
+            .shared
+            .requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Every request received so far, oldest first.
@@ -362,6 +373,17 @@ where
     }
 }
 
+/// The whole request body, copied once into the vector the record keeps.
+async fn read_body(mut body: Incoming) -> Option<Vec<u8>> {
+    let mut data = Vec::new();
+    while let Some(frame) = body.frame().await {
+        if let Ok(chunk) = frame.ok()?.into_data() {
+            data.extend_from_slice(&chunk);
+        }
+    }
+    Some(data)
+}
+
 type Reply = Response<UnsyncBoxBody<Bytes, Infallible>>;
 
 async fn handle(
@@ -372,8 +394,13 @@ async fn handle(
 ) -> Result<Reply, Infallible> {
     let at = Instant::now();
     let (parts, body) = request.into_parts();
-    let Ok(body) = body.collect().await.map(Collected::to_bytes) else {
+    let Some(body) = read_body(body).await else {
         return Ok(reply(StatusCode::BAD_REQUEST, Bytes::new()));
+    };
+    let echo = if parts.uri.path() == "/echo" && parts.uri.query() != Some("quiet") {
+        Bytes::copy_from_slice(&body)
+    } else {
+        Bytes::new()
     };
     let received = Received {
         method: parts.method.to_string(),
@@ -391,7 +418,7 @@ async fn handle(
                 (name.as_str().to_owned(), value)
             })
             .collect(),
-        body: body.to_vec(),
+        body,
         client_subject,
         at,
     };
@@ -400,10 +427,10 @@ async fn handle(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .push(received);
-    Ok(route(parts.uri.path(), parts.uri.query(), body, &close).await)
+    Ok(route(parts.uri.path(), parts.uri.query(), echo, &close).await)
 }
 
-async fn route(path: &str, query: Option<&str>, body: Bytes, close: &Notify) -> Reply {
+async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> Reply {
     if let Some(n) = path.strip_prefix("/redirect/") {
         let Ok(n) = n.parse::<u32>() else {
             return reply(StatusCode::BAD_REQUEST, Bytes::new());
@@ -473,7 +500,7 @@ async fn route(path: &str, query: Option<&str>, body: Bytes, close: &Notify) -> 
         return response;
     }
     match path {
-        "/echo" => reply(StatusCode::OK, body),
+        "/echo" => reply(StatusCode::OK, echo),
         "/close" => {
             close.notify_one();
             reply(StatusCode::OK, Bytes::new())

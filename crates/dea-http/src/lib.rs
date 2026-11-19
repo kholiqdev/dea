@@ -2,6 +2,7 @@
 //! connections with its own pool, so DNS, connect, TLS, waiting and
 //! download are timed apart and reused connections are marked.
 
+mod body;
 mod client;
 mod connect;
 mod error;
@@ -14,7 +15,7 @@ mod tls;
 
 pub use client::{Client, ClientConfig, ProxyConfig, SendContext};
 pub use error::HttpError;
-pub use request::{Body, ClientIdentity, Options, Request, TlsConfig};
+pub use request::{Body, ClientIdentity, Options, Part, PartValue, Request, TlsConfig};
 pub use response::{HttpVersion, Redirect, Response, ResponseBody};
 pub use timing::Timing;
 pub use tokio_util::sync::CancellationToken;
