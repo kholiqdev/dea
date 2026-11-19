@@ -15,6 +15,12 @@
   setShellApi({
     openTab: (tabType, title, params, opts) =>
       tabs.open(tabType, title, params, opts),
+    findTab: (tabType) => tabs.tabs.find((t) => t.tabType === tabType)?.id,
+    activateTab: (id) => {
+      if (!tabs.tabs.some((t) => t.id === id)) return false;
+      tabs.activate(id);
+      return true;
+    },
     closeTab: (id) => tabs.close(id),
     setTabDirty: (id, dirty) => tabs.setDirty(id, dirty),
     setSaveHandler: (tabType, save) => tabs.setSaveHandler(tabType, save),

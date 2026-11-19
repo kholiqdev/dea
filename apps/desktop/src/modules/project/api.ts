@@ -2,10 +2,14 @@
 
 export {
   createProject,
+  deleteEnvironment,
+  duplicateEnvironment,
+  environmentReferences,
   openProject,
   pickFolder,
   recentProjects,
   removeRecent,
+  saveEnvironment,
 } from "$lib/ipc/project";
 
 /** Window actions the tests can replace. */
