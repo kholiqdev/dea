@@ -9,13 +9,13 @@ use dea_engine::projects::{
     self, OpenedProject, ProjectChanged, ProjectInfo, RecentEntry, portable_path, recent_entries,
 };
 use dea_project::{
-    EnvReference, Environment, ProjectChange, ProjectError, ProjectWatcher, load_project,
+    EnvReference, Environment, Project, ProjectChange, ProjectError, ProjectWatcher, load_project,
 };
 use tauri::async_runtime::spawn_blocking;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::error::IpcError;
+use crate::error::{IpcError, IpcErrorKind};
 use crate::session::Session;
 use crate::state::AppState;
 
@@ -28,7 +28,7 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn info_of(session: &Session) -> Result<ProjectInfo, IpcError> {
+pub(crate) fn info_of(session: &Session) -> Result<ProjectInfo, IpcError> {
     if session.missing || !session.root.join("dea.yaml").is_file() {
         return Ok(ProjectInfo::missing(
             &session.root,
@@ -114,12 +114,17 @@ pub fn reopen_last(app: &AppHandle, window: &str) {
     }
 }
 
-/// Forgets the project of a closed window.
+/// Forgets the project of a closed window and cancels its Vault password
+/// prompts.
 pub fn window_closed(app: &AppHandle, window: &str) {
+    app.state::<AppState>()
+        .vault
+        .prompter()
+        .cancel_window(window);
     unbind(app, window);
 }
 
-fn writable(app: &AppHandle, window: &str) -> Result<Session, IpcError> {
+pub(crate) fn writable(app: &AppHandle, window: &str) -> Result<Session, IpcError> {
     Ok(app.state::<AppState>().sessions().writable(window)?.clone())
 }
 
@@ -234,12 +239,37 @@ pub async fn save_environment(
     environment: Environment,
 ) -> Result<ProjectInfo, IpcError> {
     let session = writable(&app, window.label())?;
+    let vault = app.state::<AppState>().vault.existing();
     spawn_blocking(move || {
         let project = load_project(&session.root)?.project;
+        if production_turned_off(&project, previous.as_deref(), &environment)
+            && !vault.is_some_and(|v| v.production_open())
+        {
+            return Err(IpcError {
+                kind: IpcErrorKind::ReauthRequired,
+                message: "turning production off needs authentication first".into(),
+            });
+        }
         dea_project::save_environment(&project, previous.as_deref(), &environment)?;
         info_of(&session)
     })
     .await?
+}
+
+/// Whether saving `environment` over `previous` turns production off. Only
+/// allowed while the production window is open (F1-FON-07 #4).
+fn production_turned_off(
+    project: &Project,
+    previous: Option<&str>,
+    environment: &Environment,
+) -> bool {
+    !environment.production
+        && previous.is_some_and(|previous| {
+            project
+                .environments
+                .iter()
+                .any(|e| e.name == previous && e.production)
+        })
 }
 
 #[tauri::command]
@@ -354,5 +384,52 @@ mod tests {
         assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
         assert_eq!(info.errors[0].path, "dea.yaml");
         assert!(info.errors[0].merge_conflict);
+    }
+
+    #[test]
+    fn turning_production_off_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        // local, staging, and production (marked production).
+        let project = dea_project::create_project(&dir.path().join("p"), "p").unwrap();
+        let env = |name: &str, production: bool| Environment {
+            name: name.into(),
+            production,
+            color: None,
+            variables: Vec::new(),
+        };
+
+        assert!(production_turned_off(
+            &project,
+            Some("production"),
+            &env("production", false)
+        ));
+        // Renaming it at the same time does not hide the change.
+        assert!(production_turned_off(
+            &project,
+            Some("production"),
+            &env("live", false)
+        ));
+        assert!(!production_turned_off(
+            &project,
+            Some("production"),
+            &env("live", true)
+        ));
+        assert!(!production_turned_off(
+            &project,
+            Some("production"),
+            &env("production", true)
+        ));
+        // Staging was never production; a new environment has nothing to
+        // turn off.
+        assert!(!production_turned_off(
+            &project,
+            Some("staging"),
+            &env("staging", false)
+        ));
+        assert!(!production_turned_off(
+            &project,
+            None,
+            &env("production", false)
+        ));
     }
 }

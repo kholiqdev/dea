@@ -7,8 +7,10 @@ mod commands;
 mod error;
 mod session;
 mod state;
+mod vault;
 
 use state::AppState;
+use vault::UiPrompter;
 
 fn probe_enabled() -> bool {
     std::env::var_os("DEA_PERF_PROBE").is_some_and(|v| v == "1")
@@ -56,7 +58,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = state::app_data_dir(app.handle())?;
-            app.manage(AppState::new(dir));
+            let prompter = UiPrompter::new(app.handle().clone());
+            app.manage(AppState::new(dir, prompter));
             commands::project::reopen_last(app.handle(), "main");
             Ok(())
         })
@@ -86,6 +89,17 @@ pub fn run() {
             commands::project::environment_references,
             commands::project::set_active_environment,
             commands::project::clear_local_data,
+            commands::vault::vault_info,
+            commands::vault::vault_secrets,
+            commands::vault::vault_unlock,
+            commands::vault::vault_lock,
+            commands::vault::vault_activity,
+            commands::vault::vault_save_secret,
+            commands::vault::vault_delete_value,
+            commands::vault::vault_reveal,
+            commands::vault::vault_copy,
+            commands::vault::vault_authorize,
+            commands::vault::vault_answer_prompt,
         ])
         .on_page_load(move |_webview, payload| {
             if probe && payload.event() == PageLoadEvent::Finished {
