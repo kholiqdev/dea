@@ -68,9 +68,11 @@ describe("projects and environments", () => {
     await openProjectAt(gone);
     await projectMenu("Close project");
     await waitForWelcome();
-    const recent = () => textOf("ul[aria-labelledby='recent-label']");
+    const list = "ul[aria-labelledby='recent-label']";
+    const recent = () => textOf(list);
+    // The list loads after Welcome shows.
+    await waitForText(list, "gone-api");
     expect(await recent()).toContain("harbor-api");
-    expect(await recent()).toContain("gone-api");
 
     // A folder without dea.yaml.
     const plain = join(work, "plain");
