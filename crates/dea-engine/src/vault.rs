@@ -357,6 +357,57 @@ impl VaultService {
         Ok(())
     }
 
+    /// Whether `environment` of `project` has a value on this device. Reads
+    /// only the index, so it works while locked.
+    pub fn has_values(&self, project: &Project, environment: &str) -> bool {
+        self.store.has_values(&project.vault_scope(), environment)
+    }
+
+    /// Moves the values of environment `from` of `project` to `to`, for an
+    /// environment renamed on disk, so none stay behind under the freed
+    /// name. `to` ends with exactly what `from` had. Nothing to move needs
+    /// no unlock.
+    ///
+    /// # Errors
+    ///
+    /// [`UseError::Locked`] when `from` has values and the Vault is locked;
+    /// nothing is moved then. [`UseError::Vault`] when the store fails.
+    pub fn move_environment(
+        &self,
+        project: &Project,
+        from: &str,
+        to: &str,
+    ) -> Result<(), UseError> {
+        let scope = project.vault_scope();
+        if !self.store.has_values(&scope, from) && !self.store.has_values(&scope, to) {
+            return Ok(());
+        }
+        self.require_unlocked()?;
+        self.store.move_environment(&scope, from, to)?;
+        self.record_activity();
+        Ok(())
+    }
+
+    /// Removes the values of `environment` of `project`, for an environment
+    /// deleted on disk, so none stay behind under the freed name. Nothing
+    /// to remove needs no unlock.
+    ///
+    /// # Errors
+    ///
+    /// [`UseError::Locked`] when the environment has values and the Vault
+    /// is locked; nothing is removed then. [`UseError::Vault`] when the
+    /// store fails.
+    pub fn remove_environment(&self, project: &Project, environment: &str) -> Result<(), UseError> {
+        let scope = project.vault_scope();
+        if !self.store.has_values(&scope, environment) {
+            return Ok(());
+        }
+        self.require_unlocked()?;
+        self.store.delete_environment(&scope, environment)?;
+        self.record_activity();
+        Ok(())
+    }
+
     /// Every secret the project needs, per environment. Works while locked.
     pub fn statuses(&self, project: &Project) -> Vec<SecretStatus> {
         let environments: Vec<String> = project
