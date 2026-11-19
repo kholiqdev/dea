@@ -2,6 +2,7 @@
 //! list of secrets a project needs, stored as plain YAML files for git.
 
 mod create;
+mod environments;
 mod error;
 mod load;
 mod migrate;
@@ -13,6 +14,10 @@ mod watch;
 mod yaml;
 
 pub use create::create_project;
+pub use environments::{
+    ENV_COLORS, EnvReference, delete_environment, duplicate_environment, environment_references,
+    is_valid_variable_name, save_environment,
+};
 pub use error::{FileError, ProjectError};
 pub use load::{has_merge_conflict_markers, load_project};
 pub use migrate::{Migration, MigrationOutcome, migrate, migrate_with};
