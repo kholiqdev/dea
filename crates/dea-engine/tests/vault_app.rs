@@ -428,3 +428,153 @@ fn a_secret_declared_twice_is_one_row_per_environment() {
         assert_eq!(row.description.as_deref(), Some("first"), "{row:?}");
     }
 }
+
+/// Stores `value` for `name` in `environment` of `project-1`.
+fn store(vault: &VaultService, environment: &str, name: &str, value: &str) {
+    vault
+        .set_secret(
+            &key(environment, name),
+            SecretKind::Token,
+            &SecretData::Text(SecretString::from(value)),
+        )
+        .unwrap();
+}
+
+/// The value of `name` in `environment`, read from the store whatever the
+/// project says about production.
+fn value_in(vault: &VaultService, environment: &str, name: &str) -> Option<String> {
+    let mut p = project();
+    p.environments = vec![dea_project::Environment {
+        name: environment.into(),
+        production: false,
+        color: None,
+        variables: Vec::new(),
+    }];
+    vault
+        .secret(&p, environment, name)
+        .unwrap()
+        .map(|v| v.value_for_use().to_string())
+}
+
+#[test]
+fn renaming_an_environment_moves_its_values() {
+    let (vault, _dir, clock) = unlocked();
+    store(&vault, "production", "PROD_TOKEN", "prod-1");
+    store(&vault, "production", "DB_PASSWORD", "prod-2");
+    store(&vault, "staging", "PROD_TOKEN", "staging-1");
+    // A value left under the new name, from outside Dea, does not survive.
+    store(&vault, "prod", "LEFT_BEHIND", "old");
+    // The same environment name in another project is not touched.
+    let other = SecretKey {
+        scope: "project-2".into(),
+        ..key("production", "PROD_TOKEN")
+    };
+    vault
+        .set_secret(
+            &other,
+            SecretKind::Token,
+            &SecretData::Text(SecretString::from("other")),
+        )
+        .unwrap();
+    let mut p = project();
+    p.vault.secrets = vec![spec("PROD_TOKEN", SecretKind::Token)];
+    let updated = |p: &Project, environment: &str| {
+        vault
+            .rows(p)
+            .into_iter()
+            .find(|r| r.environment == environment && r.name == "PROD_TOKEN")
+            .and_then(|r| r.updated_at)
+    };
+    let before = updated(&p, "production");
+    clock.advance(MIN);
+
+    vault.move_environment(&p, "production", "prod").unwrap();
+
+    assert_eq!(
+        value_in(&vault, "prod", "PROD_TOKEN").as_deref(),
+        Some("prod-1")
+    );
+    assert_eq!(
+        value_in(&vault, "prod", "DB_PASSWORD").as_deref(),
+        Some("prod-2")
+    );
+    assert_eq!(value_in(&vault, "prod", "LEFT_BEHIND"), None);
+    assert_eq!(value_in(&vault, "production", "PROD_TOKEN"), None);
+    assert_eq!(value_in(&vault, "production", "DB_PASSWORD"), None);
+    assert_eq!(
+        value_in(&vault, "staging", "PROD_TOKEN").as_deref(),
+        Some("staging-1")
+    );
+    let mut other_project = project();
+    other_project.manifest.id = Some("project-2".into());
+    other_project.environments[2].production = false;
+    assert!(
+        vault
+            .secret(&other_project, "production", "PROD_TOKEN")
+            .unwrap()
+            .is_some()
+    );
+    assert!(!vault.has_values(&p, "production"));
+    assert!(vault.has_values(&p, "prod"));
+    // A move is not an update: the value keeps its date.
+    let mut renamed = p.clone();
+    renamed.environments[2].name = "prod".into();
+    assert_eq!(updated(&renamed, "prod"), before);
+}
+
+#[test]
+fn deleting_an_environment_removes_its_values() {
+    let (vault, _dir, _) = unlocked();
+    store(&vault, "production", "PROD_TOKEN", "prod-1");
+    store(&vault, "production", "DB_PASSWORD", "prod-2");
+    store(&vault, "staging", "PROD_TOKEN", "staging-1");
+    let p = project();
+
+    vault.remove_environment(&p, "production").unwrap();
+
+    assert!(!vault.has_values(&p, "production"));
+    assert_eq!(value_in(&vault, "production", "PROD_TOKEN"), None);
+    assert_eq!(value_in(&vault, "production", "DB_PASSWORD"), None);
+    assert_eq!(
+        value_in(&vault, "staging", "PROD_TOKEN").as_deref(),
+        Some("staging-1")
+    );
+}
+
+#[test]
+fn a_locked_vault_keeps_an_environment_with_values_as_it_is() {
+    let (vault, _dir, _) = unlocked();
+    store(&vault, "production", "PROD_TOKEN", "prod-1");
+    store(&vault, "qa", "LEFT_BEHIND", "old");
+    vault.lock();
+    let p = project();
+
+    // Read from the index, so it works while locked.
+    assert!(vault.has_values(&p, "production"));
+    assert!(!vault.has_values(&p, "local"));
+    assert!(matches!(
+        vault.move_environment(&p, "production", "prod"),
+        Err(UseError::Locked)
+    ));
+    assert!(matches!(
+        vault.remove_environment(&p, "production"),
+        Err(UseError::Locked)
+    ));
+    assert!(vault.has_values(&p, "production"));
+    assert!(!vault.has_values(&p, "prod"));
+    // Values left under the new name are removed, which needs the Vault.
+    assert!(matches!(
+        vault.move_environment(&p, "local", "qa"),
+        Err(UseError::Locked)
+    ));
+    assert!(vault.has_values(&p, "qa"));
+    // Without values there is nothing to unlock for.
+    vault.move_environment(&p, "local", "dev").unwrap();
+    vault.remove_environment(&p, "staging").unwrap();
+
+    vault.unlock("unlock the Vault").unwrap();
+    assert_eq!(
+        value_in(&vault, "production", "PROD_TOKEN").as_deref(),
+        Some("prod-1")
+    );
+}

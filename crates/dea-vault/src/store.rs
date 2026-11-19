@@ -96,6 +96,74 @@ impl SecretStore {
         Ok(())
     }
 
+    /// Whether `environment` of `scope` has a value on this device. Reads
+    /// only the index, so it works while the backend is locked.
+    pub fn has_values(&self, scope: &str, environment: &str) -> bool {
+        self.index()
+            .entries
+            .iter()
+            .any(|e| e.scope == scope && e.environment == environment)
+    }
+
+    /// Moves every value of environment `from` in `scope` to `to`, keeping
+    /// type and dates, for a renamed environment. Values `to` already had
+    /// are removed first, so `to` ends with exactly what `from` had and
+    /// gains nothing left behind by an earlier environment of that name.
+    pub fn move_environment(&self, scope: &str, from: &str, to: &str) -> Result<(), VaultError> {
+        if from == to {
+            return Ok(());
+        }
+        let mut index = self.index();
+        // The index is saved even after a failure, so it keeps matching the
+        // backend for every value handled so far.
+        let moved = self.remove_in(&mut index, scope, to).and_then(|()| {
+            let from_keys = keys_in(&index, scope, from);
+            for from_key in from_keys {
+                let to_key = SecretKey {
+                    environment: to.to_string(),
+                    ..from_key.clone()
+                };
+                if let Some(text) = self.backend.get(&from_key.account())? {
+                    self.backend.set(&to_key.account(), &text)?;
+                    if let Some(entry) = index.entries.iter_mut().find(|e| e.is(&from_key)) {
+                        entry.environment = to.to_string();
+                    }
+                } else {
+                    // Removed outside Dea: nothing to move.
+                    index.remove(&from_key);
+                }
+                self.backend.delete(&from_key.account())?;
+            }
+            Ok(())
+        });
+        let saved = index.save();
+        moved.and(saved)
+    }
+
+    /// Removes every value of `environment` in `scope`, for a deleted
+    /// environment.
+    pub fn delete_environment(&self, scope: &str, environment: &str) -> Result<(), VaultError> {
+        let mut index = self.index();
+        let removed = self.remove_in(&mut index, scope, environment);
+        let saved = index.save();
+        removed.and(saved)
+    }
+
+    /// Removes the values of `environment` from the backend and `index`,
+    /// without saving the index.
+    fn remove_in(
+        &self,
+        index: &mut Index,
+        scope: &str,
+        environment: &str,
+    ) -> Result<(), VaultError> {
+        for key in keys_in(index, scope, environment) {
+            self.backend.delete(&key.account())?;
+            index.remove(&key);
+        }
+        Ok(())
+    }
+
     /// Every secret `manifest` requires in each of `environments`, in
     /// manifest order then environment order, followed by stored values of
     /// this project that are no longer required.
@@ -149,4 +217,18 @@ impl SecretStore {
         }));
         out
     }
+}
+
+/// The keys of every value of `environment` in `scope`.
+fn keys_in(index: &Index, scope: &str, environment: &str) -> Vec<SecretKey> {
+    index
+        .entries
+        .iter()
+        .filter(|e| e.scope == scope && e.environment == environment)
+        .map(|e| SecretKey {
+            scope: e.scope.clone(),
+            environment: e.environment.clone(),
+            name: e.name.clone(),
+        })
+        .collect()
 }

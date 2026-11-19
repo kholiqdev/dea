@@ -29,7 +29,7 @@ pub(crate) struct IndexEntry {
 }
 
 impl IndexEntry {
-    fn is(&self, key: &SecretKey) -> bool {
+    pub(crate) fn is(&self, key: &SecretKey) -> bool {
         self.scope == key.scope && self.environment == key.environment && self.name == key.name
     }
 }
