@@ -4,6 +4,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { flushSync, tick } from "svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { VaultPromptEvent } from "$lib/ipc/vault";
+import { toasts } from "./toasts.svelte";
 import VaultPrompt from "./VaultPrompt.svelte";
 import { VaultPrompts } from "./vault-prompt.svelte";
 
@@ -170,4 +171,18 @@ test("a prompt replaced before it was answered is cancelled", async () => {
   ask({ id: 9 });
   await expect.poll(() => answers).toEqual([{ id: 7, password: null }]);
   expect(prompts.current?.id).toBe(9);
+});
+
+test("a failed answer is shown, not swallowed", async () => {
+  clearMocks();
+  mockIPC(() => {
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- commands reject with { kind, message }
+    throw { kind: "internal", message: "channel closed" };
+  });
+  ask();
+  prompts.answer(null);
+  await expect
+    .poll(() => toasts.items.map((t) => t.text))
+    .toContain("Channel closed");
+  for (const t of toasts.items) toasts.dismiss(t.id);
 });
