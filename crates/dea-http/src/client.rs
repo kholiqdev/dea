@@ -2,6 +2,7 @@
 //! the response.
 
 use std::path::PathBuf;
+use std::pin::pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,6 +12,7 @@ use hyper::header::HeaderValue;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use crate::body::Progress;
 use crate::connect::{self, Connection};
 use crate::cookies::CookieJar;
 use crate::error::{HttpError, describe};
@@ -151,6 +153,36 @@ impl Deadline {
             .checked_add(timeout)
             .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365 * 30));
         Some(Deadline { at, timeout })
+    }
+}
+
+/// Waits for the response head until `deadline`, or until the timeout has
+/// passed since the connection last took a piece of the body, whichever is
+/// later: an upload that keeps going is not a timeout (decision 9). Once
+/// the last piece is taken, the timeout counts from then.
+async fn head<F: Future>(
+    deadline: Option<Deadline>,
+    progress: &Progress,
+    future: F,
+) -> Result<F::Output, HttpError> {
+    let Some(deadline) = deadline else {
+        return Ok(future.await);
+    };
+    let mut future = pin!(future);
+    loop {
+        let at = match progress.last() {
+            Some(last) => tokio::time::Instant::from_std(last)
+                .checked_add(deadline.timeout)
+                .map_or(deadline.at, |moved| moved.max(deadline.at)),
+            None => deadline.at,
+        };
+        if tokio::time::Instant::now() >= at {
+            return Err(HttpError::Timeout(deadline.timeout));
+        }
+        // On time out, look again: the body may have moved on meanwhile.
+        if let Ok(output) = tokio::time::timeout_at(at, future.as_mut()).await {
+            return Ok(output);
+        }
     }
 }
 
@@ -382,7 +414,8 @@ impl Client {
             error,
             retry: false,
         })?;
-        let sent = before(head_deadline, connection.send(wire)).await;
+        let progress = wire.body().progress();
+        let sent = head(head_deadline, &progress, connection.send(wire)).await;
         let head = match sent {
             Err(error) => {
                 // A silent h2 connection would otherwise be picked again

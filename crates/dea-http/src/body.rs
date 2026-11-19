@@ -7,7 +7,10 @@ use std::collections::VecDeque;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 use bytes::{Bytes, BytesMut};
 use hyper::body::{Frame, SizeHint};
@@ -112,6 +115,7 @@ impl Plan {
         Ok(WireBody {
             queue,
             remaining: self.len,
+            progress: Progress::default(),
         })
     }
 }
@@ -200,6 +204,50 @@ enum Source {
 pub(crate) struct WireBody {
     queue: VecDeque<Source>,
     remaining: u64,
+    progress: Progress,
+}
+
+impl WireBody {
+    /// When the connection last took a piece of this body.
+    pub(crate) fn progress(&self) -> Progress {
+        self.progress.clone()
+    }
+}
+
+/// When the connection last took a piece of a body. The connection takes
+/// the next piece only once it has room for it, so while the body is sent
+/// this moves as fast as the upload does.
+#[derive(Clone)]
+pub(crate) struct Progress(Arc<Moments>);
+
+struct Moments {
+    since: Instant,
+    /// Nanoseconds after `since`, plus one; 0 before the first piece.
+    last: AtomicU64,
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Progress(Arc::new(Moments {
+            since: Instant::now(),
+            last: AtomicU64::new(0),
+        }))
+    }
+}
+
+impl Progress {
+    fn mark(&self) {
+        let nanos = u64::try_from(self.0.since.elapsed().as_nanos()).unwrap_or(u64::MAX - 1);
+        self.0.last.store(nanos + 1, Ordering::Release);
+    }
+
+    /// `None` until the first piece is taken.
+    pub(crate) fn last(&self) -> Option<Instant> {
+        match self.0.last.load(Ordering::Acquire) {
+            0 => None,
+            nanos => Some(self.0.since + std::time::Duration::from_nanos(nanos - 1)),
+        }
+    }
 }
 
 impl hyper::body::Body for WireBody {
@@ -221,6 +269,7 @@ impl hyper::body::Body for WireBody {
                         continue;
                     }
                     this.remaining -= data.len() as u64;
+                    this.progress.mark();
                     return Poll::Ready(Some(Ok(Frame::data(data))));
                 }
                 Some(Source::File { file, left }) => {
@@ -245,6 +294,7 @@ impl hyper::body::Body for WireBody {
                     buf.truncate(usize::try_from(read).unwrap_or(0));
                     *left -= read;
                     this.remaining -= read;
+                    this.progress.mark();
                     return Poll::Ready(Some(Ok(Frame::data(buf.freeze()))));
                 }
             }
