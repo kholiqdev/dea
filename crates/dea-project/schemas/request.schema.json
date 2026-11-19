@@ -1,0 +1,407 @@
+{
+  "$defs": {
+    "ApiKeyLocation": {
+      "enum": [
+        "header",
+        "query"
+      ],
+      "type": "string"
+    },
+    "Auth": {
+      "description": "How a request signs in. `inherit` takes the setting of the nearest\nfolder that has one.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "inherit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "bearer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "token"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "password": {
+              "type": "string"
+            },
+            "type": {
+              "const": "basic",
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "username",
+            "password"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "$ref": "#/$defs/ApiKeyLocation"
+            },
+            "key": {
+              "type": "string"
+            },
+            "type": {
+              "const": "apiKey",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "key",
+            "value",
+            "in"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Body": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "const": "json",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "language": {
+              "$ref": "#/$defs/RawLanguage"
+            },
+            "mode": {
+              "const": "raw",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "language",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/KeyValue"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "const": "urlencoded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "fields"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/FormField"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "const": "formData",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "fields"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "description": "Path of the file to send, relative to the project.",
+              "type": "string"
+            },
+            "mode": {
+              "const": "binary",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "file"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "FormField": {
+      "additionalProperties": false,
+      "description": "A multipart field: it has either a `value` or a `file`, never both.",
+      "properties": {
+        "contentType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "file": {
+          "description": "Path of the file to upload, relative to the project.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "KeyValue": {
+      "additionalProperties": false,
+      "description": "A parameter or header. A disabled row stays in the file but is not sent.",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "RawLanguage": {
+      "enum": [
+        "text",
+        "xml",
+        "html",
+        "javascript"
+      ],
+      "type": "string"
+    },
+    "SendOptions": {
+      "additionalProperties": false,
+      "description": "Per-request or per-folder send settings. A field left out inherits.",
+      "properties": {
+        "cookies": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "followRedirects": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "maxRedirects": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "timeoutMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "useSystemProxy": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "verifyTls": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Variable": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "description": "Plain text, or a reference to a secret such as `{{vault:access_token}}`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One request, stored in `requests/<collection>/.../<name>.yaml`.",
+  "properties": {
+    "auth": {
+      "$ref": "#/$defs/Auth"
+    },
+    "body": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Body"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "headers": {
+      "items": {
+        "$ref": "#/$defs/KeyValue"
+      },
+      "type": "array"
+    },
+    "method": {
+      "description": "An HTTP method: `GET`, `POST`, or any other token such as `PURGE`.",
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "options": {
+      "$ref": "#/$defs/SendOptions"
+    },
+    "params": {
+      "items": {
+        "$ref": "#/$defs/KeyValue"
+      },
+      "type": "array"
+    },
+    "pathVariables": {
+      "items": {
+        "$ref": "#/$defs/Variable"
+      },
+      "type": "array"
+    },
+    "url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "method",
+    "url"
+  ],
+  "title": "RequestFile",
+  "type": "object"
+}

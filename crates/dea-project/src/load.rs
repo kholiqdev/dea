@@ -244,7 +244,7 @@ pub(crate) fn parse<T: DeserializeOwned>(rel: &Path, text: &str) -> Result<T, Fi
     })
 }
 
-fn io_error(rel: &Path, e: &std::io::Error) -> FileError {
+pub(crate) fn io_error(rel: &Path, e: &std::io::Error) -> FileError {
     FileError {
         path: rel.to_path_buf(),
         line: None,

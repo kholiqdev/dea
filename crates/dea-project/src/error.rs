@@ -50,6 +50,8 @@ pub enum ProjectError {
     InvalidEnvironment(String),
     #[error("{0}")]
     InvalidSecret(String),
+    #[error("{0}")]
+    InvalidRequest(String),
     #[error("an environment called \"{0}\" already exists")]
     NameTaken(String),
 }
