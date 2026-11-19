@@ -212,3 +212,13 @@ test("a tab opened without params is saved with null params", () => {
   tabs.open("requests.request", "A", undefined);
   expect(tabs.snapshot().tabs[0]?.params).toBeNull();
 });
+
+test("marking a tab dirty again changes nothing", () => {
+  const { tabs } = setup();
+  const id = tabs.open("requests.request", "A", null);
+  tabs.setDirty(id, true);
+  const before = tabs.tabs;
+  tabs.setDirty(id, true);
+  // Views that report their state on every change rely on this to settle.
+  expect(tabs.tabs).toBe(before);
+});
