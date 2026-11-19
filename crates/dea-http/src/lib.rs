@@ -7,15 +7,20 @@ mod client;
 mod connect;
 mod error;
 mod pool;
+mod reader;
 mod redirect;
 mod request;
 mod response;
+mod sse;
 mod timing;
 mod tls;
 
-pub use client::{Client, ClientConfig, ProxyConfig, SendContext};
+pub use client::{Client, ClientConfig, Event, ProxyConfig, SendContext};
 pub use error::HttpError;
 pub use request::{Body, ClientIdentity, Options, Part, PartValue, Request, TlsConfig};
-pub use response::{HttpVersion, Redirect, Response, ResponseBody};
+pub use response::{
+    DEFAULT_MAX_BODY_BYTES, HttpVersion, Redirect, Response, ResponseBody, SPILL_THRESHOLD,
+};
+pub use sse::SseEvent;
 pub use timing::Timing;
 pub use tokio_util::sync::CancellationToken;

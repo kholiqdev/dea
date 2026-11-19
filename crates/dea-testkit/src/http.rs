@@ -14,6 +14,11 @@
 //! - `/drip/{count}/{ms}` answers 200 at once, then sends `count` one-byte
 //!   chunks, `ms` apart.
 //! - `/stall-body` answers 200, sends one byte and then nothing.
+//! - `/bytes/{n}` answers 200 with `n` bytes of `x`, generated while sending.
+//! - `/sse` answers a `text/event-stream` of three events 100 ms apart, with a
+//!   comment first; the second has two data lines and an id.
+//! - `/gzip` and `/deflate` answer a short text in that `Content-Encoding`
+//!   whatever the request asked for; `/brotli` claims `br` over plain bytes.
 //!
 //! [`HoldServer`] is a raw TCP listener for tests that need a request to
 //! hang.
@@ -472,6 +477,38 @@ async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> 
                 .collect(),
         );
     }
+    if let Some(n) = path.strip_prefix("/bytes/") {
+        let Ok(n) = n.parse::<u64>() else {
+            return reply(StatusCode::BAD_REQUEST, Bytes::new());
+        };
+        return Response::new(Generated { left: n }.boxed_unsync());
+    }
+    if path == "/sse" {
+        let part = |ms, text: &'static str| {
+            (
+                Duration::from_millis(ms),
+                Bytes::from_static(text.as_bytes()),
+            )
+        };
+        let mut response = streamed(VecDeque::from([
+            part(0, ": a comment\n"),
+            part(0, "event: tick\ndata: one\n\n"),
+            part(100, "id: 2\ndata: line one\ndata: line two\n\n"),
+            part(100, "data: three\n\n"),
+        ]));
+        response.headers_mut().insert(
+            "content-type",
+            HeaderValue::from_static("text/event-stream"),
+        );
+        return response;
+    }
+    if let Some((encoding, body)) = encoded(path) {
+        let mut response = reply(StatusCode::OK, Bytes::from_static(body));
+        response
+            .headers_mut()
+            .insert("content-encoding", HeaderValue::from_static(encoding));
+        return response;
+    }
     if path == "/stall-body" {
         return streamed(VecDeque::from([
             (Duration::ZERO, Bytes::from_static(b"x")),
@@ -509,6 +546,26 @@ async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> 
     }
 }
 
+/// The encoding and body of the `/gzip`, `/deflate` and `/brotli` routes.
+fn encoded(path: &str) -> Option<(&'static str, &'static [u8])> {
+    // "hello from gzip" and "hello from deflate" compressed offline; deflate
+    // is zlib-wrapped, as HTTP defines it.
+    const GZIP: &[u8] = &[
+        31, 139, 8, 0, 0, 0, 0, 0, 2, 19, 203, 72, 205, 201, 201, 87, 72, 43, 202, 207, 85, 72,
+        175, 202, 44, 0, 0, 100, 170, 142, 181, 15, 0, 0, 0,
+    ];
+    const DEFLATE: &[u8] = &[
+        120, 156, 203, 72, 205, 201, 201, 87, 72, 43, 202, 207, 85, 72, 73, 77, 203, 73, 44, 73, 5,
+        0, 64, 238, 6, 222,
+    ];
+    match path {
+        "/gzip" => Some(("gzip", GZIP)),
+        "/deflate" => Some(("deflate", DEFLATE)),
+        "/brotli" => Some(("br", b"not really brotli")),
+        _ => None,
+    }
+}
+
 fn reply(status: StatusCode, body: Bytes) -> Reply {
     let mut response = Response::new(Full::new(body).boxed_unsync());
     *response.status_mut() = status;
@@ -528,6 +585,29 @@ fn redirect(status: StatusCode, location: &str) -> Reply {
 
 fn streamed(schedule: VecDeque<(Duration, Bytes)>) -> Reply {
     Response::new(Paced::new(schedule).boxed_unsync())
+}
+
+/// A body of `left` bytes of `x`, made as it is polled.
+struct Generated {
+    left: u64,
+}
+
+impl Body for Generated {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        const CHUNK: usize = 64 * 1024;
+        if self.left == 0 {
+            return Poll::Ready(None);
+        }
+        let size = usize::try_from(self.left).map_or(CHUNK, |left| left.min(CHUNK));
+        self.left -= size as u64;
+        Poll::Ready(Some(Ok(Frame::data(Bytes::from(vec![b'x'; size])))))
+    }
 }
 
 /// A body that sends each chunk after its own delay.
