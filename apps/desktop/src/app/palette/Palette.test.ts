@@ -1,6 +1,12 @@
 // The command palette (F1-FON-11): Mod+K, grouped results, the keyboard.
 
-import { render, screen, waitFor, within } from "@testing-library/svelte";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { flushSync } from "svelte";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -52,7 +58,12 @@ beforeEach(() => {
 });
 
 function setup(
-  opts: { project?: boolean; failing?: boolean; items?: PaletteItem[] } = {},
+  opts: {
+    project?: boolean;
+    failing?: boolean;
+    hanging?: boolean;
+    items?: PaletteItem[];
+  } = {},
 ) {
   const sections = {
     id: "settings",
@@ -100,6 +111,16 @@ function setup(
           source: () =>
             Promise.resolve({ default: () => opts.items ?? sourceItems }),
         },
+        ...(opts.hanging
+          ? [
+              {
+                id: "requests.hanging",
+                group: "Hanging",
+                order: 5,
+                source: () => new Promise<never>(() => {}),
+              },
+            ]
+          : []),
         ...(opts.failing
           ? [
               {
@@ -285,7 +306,10 @@ test("5,000 items show the first result within 100 ms", async () => {
   performance.clearMeasures();
   const dialog = await openPalette();
   await within(dialog).findAllByRole("option");
-  const measure = performance.getEntriesByName("palette-first-result").at(-1);
+  await waitFor(() =>
+    expect(performance.getEntriesByName("palette-all-results")).toHaveLength(1),
+  );
+  const measure = performance.getEntriesByName("palette-all-results").at(-1);
   expect(measure?.duration ?? Infinity).toBeLessThan(100);
 });
 
@@ -309,4 +333,81 @@ test("the first Settings section shows the Settings shortcut", async () => {
   expect(appearance.querySelector(".shortcut")?.textContent).toMatch(/,/);
   const keys = within(dialog).getByRole("option", { name: /^Keyboard/ });
   expect(keys.querySelector(".shortcut")).toBeNull();
+});
+
+test("the active row scrolls into view", async () => {
+  const scrolled: (string | null)[] = [];
+  // jsdom has no scrollIntoView; give it one that records the row.
+  const original = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "scrollIntoView",
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value(this: Element) {
+      scrolled.push(this.querySelector(".label")?.textContent ?? null);
+    },
+  });
+  try {
+    setup();
+    await openPalette();
+    await userEvent.keyboard("{End}");
+    expect(scrolled.at(-1)).toBe("Clear local data…");
+  } finally {
+    if (original)
+      Object.defineProperty(Element.prototype, "scrollIntoView", original);
+    else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  }
+});
+
+test("while typing, Enter runs the best match, not the first group", async () => {
+  setup({ items: [item("rxexoxpxexn")] });
+  const dialog = await openPalette();
+  await userEvent.type(within(dialog).getByRole("combobox"), "reopen");
+  // Groups keep their order; the active row is the best match.
+  expect(groups(dialog).map(([g]) => g)).toEqual(["Environments", "Commands"]);
+  const box = within(dialog).getByRole("combobox");
+  const active = document.getElementById(
+    box.getAttribute("aria-activedescendant") ?? "",
+  );
+  expect(active?.querySelector(".label")?.textContent).toBe(
+    "Reopen closed tab",
+  );
+});
+
+test("Welcome leaves out commands that need a project", async () => {
+  setup({ project: false });
+  const dialog = await openPalette();
+  for (const title of ["Close tab", "Choose the environment for requests"])
+    expect(within(dialog).queryByText(title)).toBeNull();
+  expect(within(dialog).getByText("New window")).toBeInTheDocument();
+});
+
+test("Enter that ends an input-method composition opens nothing", async () => {
+  setup();
+  const dialog = await openPalette();
+  const box = within(dialog).getByRole("combobox");
+  await fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+  expect(opened).toEqual([]);
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+test("clicking the list keeps the keyboard in the search box", async () => {
+  setup();
+  const dialog = await openPalette();
+  const list = within(dialog).getByRole("listbox");
+  // A prevented mousedown leaves focus where it is.
+  expect(await fireEvent.mouseDown(list)).toBe(false);
+});
+
+test("a source that never answers does not hide the rest", async () => {
+  setup({ hanging: true });
+  const dialog = await openPalette();
+  await waitFor(() =>
+    expect(groups(dialog).map(([g]) => g)).toEqual([
+      "Environments",
+      "Settings",
+      "Commands",
+    ]),
+  );
 });

@@ -37,11 +37,25 @@
     ),
   );
 
+  // Commands and Settings show at once; module items follow as each
+  // source answers.
   performance.mark?.("palette-open");
-  void search
-    .collect(ctx.registry, (action) => runAction(action, ctx))
+  const collecting = search.collect(ctx.registry, (action) =>
+    runAction(action, ctx),
+  );
+  void tick().then(() =>
+    performance.measure?.("palette-first-result", "palette-open"),
+  );
+  void collecting
     .then(tick)
-    .then(() => performance.measure?.("palette-first-result", "palette-open"));
+    .then(() => performance.measure?.("palette-all-results", "palette-open"));
+
+  // Keep the active row visible as the keyboard moves it.
+  $effect(() => {
+    document
+      .getElementById(optionId(search.active))
+      ?.scrollIntoView?.({ block: "nearest" });
+  });
 
   function close(): void {
     menus.palette = false;
@@ -72,6 +86,8 @@
   }
 
   function onkeydown(e: KeyboardEvent): void {
+    // Keys that pick characters in an input method are not the palette's.
+    if (e.isComposing || e.keyCode === 229) return;
     const moves: Record<string, () => void> = {
       ArrowDown: () => search.move(1),
       ArrowUp: () => search.move(-1),
@@ -117,12 +133,20 @@
       spellcheck="false"
       data-autofocus
       bind:value={search.query}
-      oninput={() => (search.active = 0)}
+      oninput={() => search.followBest()}
       {onkeydown}
     />
     <kbd class="kc" aria-hidden="true">Esc</kbd>
   </div>
-  <div class="list" id={listId} role="listbox" aria-label="Results">
+  <!-- A click in the list keeps the keyboard in the search box. -->
+  <div
+    class="list"
+    id={listId}
+    role="listbox"
+    aria-label="Results"
+    tabindex="-1"
+    onmousedown={(e) => e.preventDefault()}
+  >
     {#each search.groups as group (group.title)}
       <div class="group" role="group" aria-label={group.title}>
         <div class="side-label" aria-hidden="true">{group.title}</div>
