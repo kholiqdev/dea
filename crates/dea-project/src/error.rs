@@ -42,4 +42,10 @@ pub enum ProjectError {
     Migration(String),
     #[error("{0} has unresolved merge conflict markers; resolve them before saving")]
     MergeConflict(PathBuf),
+    #[error("this project was saved by a newer Dea and is open read-only")]
+    ReadOnly,
+    #[error("{0}")]
+    InvalidEnvironment(String),
+    #[error("an environment called \"{0}\" already exists")]
+    NameTaken(String),
 }

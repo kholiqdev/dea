@@ -168,7 +168,11 @@ mod any_version {
     }
 }
 
-fn parse_environment(rel: &Path, text: &str, read_only: bool) -> Result<Environment, FileError> {
+pub(crate) fn parse_environment(
+    rel: &Path,
+    text: &str,
+    read_only: bool,
+) -> Result<Environment, FileError> {
     if read_only {
         parse::<any_version::EnvironmentFile>(rel, text).map(Environment::from)
     } else {
@@ -185,7 +189,7 @@ fn parse_vault(text: &str, read_only: bool) -> Result<VaultManifest, FileError> 
     }
 }
 
-fn parse_manifest(text: &str) -> Result<Manifest, FileError> {
+pub(crate) fn parse_manifest(text: &str) -> Result<Manifest, FileError> {
     let rel = Path::new(MANIFEST);
     let any: ManifestAnyVersion = parse(rel, text)?;
     if any.schema_version > SCHEMA_VERSION {
@@ -241,7 +245,7 @@ fn io_error(rel: &Path, e: &std::io::Error) -> FileError {
 
 /// `*.yaml` files directly inside `dir`, sorted by file name, as paths
 /// relative to the project root. A missing folder has no files.
-fn yaml_files(root: &Path, dir: &Path) -> Result<Vec<PathBuf>, ProjectError> {
+pub(crate) fn yaml_files(root: &Path, dir: &Path) -> Result<Vec<PathBuf>, ProjectError> {
     let entries = match fs::read_dir(root.join(dir)) {
         Ok(entries) => entries,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
