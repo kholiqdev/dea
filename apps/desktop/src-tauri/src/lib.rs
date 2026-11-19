@@ -100,6 +100,7 @@ pub fn run() {
             commands::vault::vault_copy,
             commands::vault::vault_authorize,
             commands::vault::vault_answer_prompt,
+            commands::vault::vault_resend_prompts,
         ])
         .on_page_load(move |webview, payload| {
             // Before setup the state is not there yet, and nothing can wait.

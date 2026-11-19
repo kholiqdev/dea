@@ -215,3 +215,14 @@ pub fn vault_answer_prompt(app: AppHandle, id: u64, password: Option<String>) {
         .prompter()
         .answer(id, password);
 }
+
+/// Sends the calling window every Vault password prompt still waiting for
+/// it. A page calls this once it listens for prompts: one sent while it
+/// loaded is lost, and its asker would wait for good.
+#[tauri::command]
+pub fn vault_resend_prompts(app: AppHandle, window: WebviewWindow) {
+    app.state::<AppState>()
+        .vault
+        .prompter()
+        .resend(window.label());
+}
