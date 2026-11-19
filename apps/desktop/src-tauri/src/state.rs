@@ -9,18 +9,24 @@ use dea_project::ProjectWatcher;
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::session::Sessions;
+use crate::vault::{AppVault, UiPrompter};
 
 pub struct AppState {
     pub store: Store,
+    /// The one Vault of the app, shared by every window.
+    pub vault: AppVault,
     sessions: Mutex<Sessions>,
     // One watcher per window with a project, by window label.
     watchers: Mutex<HashMap<String, ProjectWatcher>>,
 }
 
 impl AppState {
-    pub fn new(app_data: PathBuf) -> Self {
+    /// State kept in `app_data`; the Vault asks for passwords with
+    /// `prompter`.
+    pub fn new(app_data: PathBuf, prompter: UiPrompter) -> Self {
         Self {
-            store: Store::new(app_data),
+            store: Store::new(app_data.clone()),
+            vault: AppVault::new(app_data, prompter),
             sessions: Mutex::new(Sessions::default()),
             watchers: Mutex::new(HashMap::new()),
         }

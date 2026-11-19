@@ -5,6 +5,7 @@ use std::fmt::Write;
 
 use dea_engine::projects::OpenError;
 use dea_engine::store::StoreError;
+use dea_engine::vault::{SaveSecretError, UseError, VaultError};
 use dea_project::ProjectError;
 use serde::Serialize;
 
@@ -30,6 +31,19 @@ pub enum IpcErrorKind {
     MergeConflict,
     /// The project folder is gone.
     Missing,
+    /// The Vault is locked.
+    VaultLocked,
+    /// Production secrets, or turning production off, need authentication
+    /// again.
+    ReauthRequired,
+    /// The person cancelled the authentication dialog.
+    Cancelled,
+    /// Too many failed attempts; the message says how long to wait.
+    RetryAfter,
+    /// Authentication failed.
+    AuthFailed,
+    /// The secret has no value on this device.
+    SecretMissing,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +109,54 @@ impl From<OpenError> for IpcError {
             OpenError::NotAFolder { .. }
             | OpenError::EmptyName
             | OpenError::RelativeLocation { .. } => Self::new(IpcErrorKind::Invalid, &e),
+        }
+    }
+}
+
+impl From<UseError> for IpcError {
+    fn from(e: UseError) -> Self {
+        let kind = match &e {
+            UseError::Locked => IpcErrorKind::VaultLocked,
+            UseError::ReauthRequired => IpcErrorKind::ReauthRequired,
+            UseError::Cancelled => IpcErrorKind::Cancelled,
+            UseError::RetryAfter(_) => IpcErrorKind::RetryAfter,
+            UseError::AuthFailed => IpcErrorKind::AuthFailed,
+            UseError::Missing => IpcErrorKind::SecretMissing,
+            UseError::Vault(e) => vault_kind(e),
+        };
+        Self::new(kind, &e)
+    }
+}
+
+impl From<VaultError> for IpcError {
+    fn from(e: VaultError) -> Self {
+        Self::new(vault_kind(&e), &e)
+    }
+}
+
+fn vault_kind(e: &VaultError) -> IpcErrorKind {
+    match e {
+        VaultError::Locked => IpcErrorKind::VaultLocked,
+        VaultError::WrongPassword => IpcErrorKind::AuthFailed,
+        VaultError::PasswordTooShort { .. } | VaultError::InvalidSetting(_) => {
+            IpcErrorKind::Invalid
+        }
+        VaultError::Io { .. } => IpcErrorKind::Io,
+        VaultError::NoPassword | VaultError::Corrupt(_) | VaultError::Backend(_) => {
+            IpcErrorKind::Internal
+        }
+    }
+}
+
+impl From<SaveSecretError> for IpcError {
+    fn from(e: SaveSecretError) -> Self {
+        match e {
+            SaveSecretError::Project(e) => e.into(),
+            SaveSecretError::Use(e) => e.into(),
+            SaveSecretError::Invalid(message) => Self {
+                kind: IpcErrorKind::Invalid,
+                message,
+            },
         }
     }
 }
@@ -175,6 +237,50 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&e).unwrap(),
             json!({ "kind": "invalid", "message": "Font size must be 11 to 20" })
+        );
+    }
+
+    #[test]
+    fn use_errors_map_to_their_kinds() {
+        use std::time::Duration;
+
+        use dea_engine::vault::{UseError, VaultError};
+
+        let json = |e: UseError| serde_json::to_value(IpcError::from(e)).unwrap();
+        let kind = |e: UseError| json(e)["kind"].clone();
+        assert_eq!(kind(UseError::Locked), json!("vaultLocked"));
+        assert_eq!(kind(UseError::ReauthRequired), json!("reauthRequired"));
+        assert_eq!(kind(UseError::Cancelled), json!("cancelled"));
+        assert_eq!(kind(UseError::AuthFailed), json!("authFailed"));
+        assert_eq!(kind(UseError::Missing), json!("secretMissing"));
+        assert_eq!(
+            json(UseError::RetryAfter(Duration::from_secs(30))),
+            json!({ "kind": "retryAfter", "message": "too many failed attempts; try again in 30 s" })
+        );
+        assert_eq!(
+            json(UseError::Vault(VaultError::Backend("keychain gone".into()))),
+            json!({ "kind": "internal", "message": "the secret store failed: keychain gone" })
+        );
+    }
+
+    #[test]
+    fn save_secret_errors_keep_the_kind_of_their_cause() {
+        use dea_engine::vault::{SaveSecretError, UseError};
+
+        let kind = |e: SaveSecretError| serde_json::to_value(IpcError::from(e)).unwrap();
+        assert_eq!(
+            kind(SaveSecretError::Invalid(
+                "only an OAuth token has an expiry".into()
+            )),
+            json!({ "kind": "invalid", "message": "only an OAuth token has an expiry" })
+        );
+        assert_eq!(
+            kind(SaveSecretError::Use(UseError::Locked))["kind"],
+            json!("vaultLocked")
+        );
+        assert_eq!(
+            kind(SaveSecretError::Project(ProjectError::ReadOnly))["kind"],
+            json!("readOnly")
         );
     }
 }

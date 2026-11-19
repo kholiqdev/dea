@@ -13,10 +13,16 @@ pub async fn get_settings(app: State<'_, AppState>) -> Result<Settings, IpcError
     Ok(spawn_blocking(move || store.load_settings()).await?)
 }
 
+/// Saves the settings; an open Vault follows the new minutes at once.
 #[tauri::command]
 pub async fn save_settings(app: State<'_, AppState>, settings: Settings) -> Result<(), IpcError> {
     let store = app.store.clone();
-    Ok(spawn_blocking(move || store.save_settings(settings)).await??)
+    let security = settings.security;
+    spawn_blocking(move || store.save_settings(settings)).await??;
+    if let Some(vault) = app.vault.existing() {
+        vault.set_policy(security.policy()?);
+    }
+    Ok(())
 }
 
 #[tauri::command]
