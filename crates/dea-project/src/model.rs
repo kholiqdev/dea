@@ -77,18 +77,31 @@ pub struct VaultManifest {
     pub secrets: Vec<SecretSpec>,
 }
 
+/// One secret a project needs: its name and kind, never its value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct SecretSpec {
     pub name: String,
     #[serde(rename = "type")]
     pub kind: SecretKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub description: Option<String>,
 }
 
+/// What a secret is, which decides how the Vault presents it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub enum SecretKind {
     Token,
     Password,

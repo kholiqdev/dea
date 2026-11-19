@@ -10,6 +10,7 @@ mod model;
 mod names;
 mod resolve;
 mod schema;
+mod secrets;
 mod watch;
 mod yaml;
 
@@ -31,5 +32,6 @@ pub use resolve::{
     SecretLookupError, SystemDynamicSource, UsedVariable, ValueSource, resolve,
 };
 pub use schema::json_schemas;
+pub use secrets::save_secret_spec;
 pub use watch::{ChangeKind, ProjectChange, ProjectWatcher};
 pub use yaml::{to_yaml, write_if_changed};

@@ -80,7 +80,8 @@ impl From<ProjectError> for IpcError {
             ProjectError::InvalidManifest(_)
             | ProjectError::PathTooLong(_)
             | ProjectError::AlreadyExists(_)
-            | ProjectError::InvalidEnvironment(_) => IpcErrorKind::Invalid,
+            | ProjectError::InvalidEnvironment(_)
+            | ProjectError::InvalidSecret(_) => IpcErrorKind::Invalid,
         };
         Self::new(kind, &e)
     }
