@@ -9,11 +9,13 @@ use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::header::HeaderValue;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use crate::connect::{self, Connection};
 use crate::cookies::CookieJar;
 use crate::error::{HttpError, describe};
 use crate::pool::{Pool, PoolKey};
+use crate::proxy::{self, ProxyConfig};
 use crate::reader::{BodyReader, Encoding, ReaderConfig};
 use crate::redirect::next_hop;
 use crate::request::{Options, Prepared, Request};
@@ -34,17 +36,9 @@ impl Default for ClientConfig {
         ClientConfig {
             user_agent: concat!("Dea/", env!("CARGO_PKG_VERSION")).into(),
             spill_dir: std::env::temp_dir(),
-            proxy: ProxyConfig::None,
+            proxy: ProxyConfig::System,
         }
     }
-}
-
-/// How requests reach the network.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum ProxyConfig {
-    /// Straight to the server.
-    #[default]
-    None,
 }
 
 /// Sends requests. Cheap to clone; clones share one connection pool.
@@ -56,6 +50,7 @@ pub struct Client {
 struct Inner {
     user_agent: HeaderValue,
     spill_dir: PathBuf,
+    proxy: ProxyConfig,
     pool: Pool,
 }
 
@@ -153,14 +148,16 @@ fn deadline(timeout: Duration) -> tokio::time::Instant {
 /// and timeout able to answer from another worker.
 async fn open(
     request: &Request,
+    proxy: Option<&Url>,
     deadline: tokio::time::Instant,
 ) -> Result<(Connection, Marks), HttpError> {
-    let (url, tls, verify) = (
+    let (url, proxy, tls, verify) = (
         request.url.clone(),
+        proxy.cloned(),
         request.tls.clone(),
         request.options.verify_tls,
     );
-    let task = tokio::spawn(async move { connect::open(&url, &tls, verify).await });
+    let task = tokio::spawn(async move { connect::open(&url, proxy.as_ref(), &tls, verify).await });
     let _stop = StopOnDrop(task.abort_handle());
     match tokio::time::timeout_at(deadline, task).await {
         Err(_) => Err(HttpError::Timeout(request.options.timeout)),
@@ -194,6 +191,7 @@ impl Client {
             inner: Arc::new(Inner {
                 user_agent,
                 spill_dir: config.spill_dir,
+                proxy: config.proxy,
                 pool: Pool::default(),
             }),
         })
@@ -258,11 +256,52 @@ impl Client {
         }
     }
 
+    /// The proxy `request` goes through, if any. The system settings are
+    /// read again for every hop, off the async threads: the first read of
+    /// the operating system's can take seconds. It counts against the
+    /// hop's deadline, and the caller's cancel ends it.
+    async fn proxy_for(
+        &self,
+        request: &Request,
+        deadline: tokio::time::Instant,
+    ) -> Result<Option<Url>, HttpError> {
+        if !request.options.use_system_proxy || proxy::is_loopback(&request.url) {
+            return Ok(None);
+        }
+        let proxy = match &self.inner.proxy {
+            ProxyConfig::None => return Ok(None),
+            ProxyConfig::Fixed(settings) => settings.for_target(&request.url).cloned(),
+            ProxyConfig::System => {
+                let read = tokio::task::spawn_blocking(proxy::system_proxy);
+                let settings = tokio::time::timeout_at(deadline, read)
+                    .await
+                    .map_err(|_| HttpError::Timeout(request.options.timeout))?
+                    .map_err(|e| HttpError::Proxy(format!("could not read the settings: {e}")))?;
+                settings.for_target(&request.url).cloned()
+            }
+        };
+        if let Some(proxy) = &proxy
+            && proxy.scheme() != "http"
+        {
+            return Err(HttpError::Proxy(format!(
+                "unsupported proxy scheme in {}, only http proxies work",
+                proxy::shown(proxy)
+            )));
+        }
+        Ok(proxy)
+    }
+
     /// One request and its response, over a pooled or a new connection.
     async fn hop(&self, request: &Request, run: Run<'_>) -> Result<Response, HttpError> {
-        let prepared = Prepared::new(request, &self.inner.user_agent)?;
-        let key = PoolKey::new(request);
         let head_deadline = deadline(request.options.timeout);
+        let proxy = self.proxy_for(request, head_deadline).await?;
+        let mut prepared = Prepared::new(request, &self.inner.user_agent)?;
+        if let Some(proxy) = &proxy
+            && request.url.scheme() == "http"
+        {
+            prepared = prepared.through_http_proxy(proxy::authorization(proxy));
+        }
+        let key = PoolKey::new(request, proxy.as_ref());
         let asked_for_encoding = header(&request.headers, "accept-encoding").is_some();
 
         if let Some(connection) = self.inner.pool.checkout(&key) {
@@ -282,7 +321,7 @@ impl Client {
             }
         }
 
-        let (connection, marks) = open(request, head_deadline).await?;
+        let (connection, marks) = open(request, proxy.as_ref(), head_deadline).await?;
         if let Some(shared) = connection.share() {
             self.inner.pool.checkin(key.clone(), shared);
         }

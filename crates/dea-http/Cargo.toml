@@ -11,6 +11,7 @@ publish = false
 workspace = true
 
 [dependencies]
+base64.workspace = true
 bytes.workspace = true
 cookie_store.workspace = true
 flate2.workspace = true
@@ -27,8 +28,15 @@ time.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "time"] }
 tokio-rustls.workspace = true
 tokio-util = { workspace = true, features = ["io"] }
+percent-encoding.workspace = true
 url.workspace = true
 zeroize.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-registry.workspace = true
 
 [dev-dependencies]
 dea-testkit = { workspace = true, features = ["http"] }

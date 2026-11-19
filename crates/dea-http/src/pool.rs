@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use url::Url;
+
 use crate::connect::Connection;
+use crate::proxy::ProxyKey;
 use crate::request::Request;
 use crate::tls::TlsFingerprint;
 
@@ -21,10 +24,12 @@ pub(crate) struct PoolKey {
     port: u16,
     /// `None` for plain HTTP, where TLS settings don't matter.
     tls: Option<TlsFingerprint>,
+    /// `None` for a direct connection.
+    proxy: Option<ProxyKey>,
 }
 
 impl PoolKey {
-    pub(crate) fn new(request: &Request) -> Self {
+    pub(crate) fn new(request: &Request, proxy: Option<&Url>) -> Self {
         let url = &request.url;
         let tls = (url.scheme() == "https")
             .then(|| TlsFingerprint::new(&request.tls, request.options.verify_tls));
@@ -33,6 +38,7 @@ impl PoolKey {
             host: url.host_str().unwrap_or_default().to_owned(),
             port: url.port_or_known_default().unwrap_or_default(),
             tls,
+            proxy: proxy.map(ProxyKey::new),
         }
     }
 }

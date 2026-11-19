@@ -23,6 +23,8 @@
 //! - `/gzip` and `/deflate` answer a short text in that `Content-Encoding`
 //!   whatever the request asked for; `/brotli` claims `br` over plain bytes.
 //!
+//! [`TestProxy`] is a forward proxy that records what it is asked for.
+//!
 //! [`HoldServer`] is a raw TCP listener for tests that need a request to
 //! hang.
 //! - Anything else is a 404.
@@ -55,7 +57,7 @@ use rustls::RootCertStore;
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::{ServerConfig, WebPkiClientVerifier};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Notify, watch};
 use tokio::task::AbortHandle;
@@ -158,6 +160,11 @@ impl TestServer {
     /// The test CA certificate, the same for every server in this process.
     pub fn ca_pem(&self) -> Vec<u8> {
         ca().pem.as_bytes().to_vec()
+    }
+
+    /// The port the server listens on, on loopback.
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     /// How many connections the server has accepted.
@@ -809,4 +816,250 @@ impl Drop for HoldServer {
     fn drop(&mut self) {
         self.accepting.abort();
     }
+}
+
+/// The host name [`TestProxy`] maps to 127.0.0.1, so tests can reach a local
+/// server by a name that is not loopback. The test certificate covers it.
+pub const PROXY_TARGET_HOST: &str = "dea-target.test";
+
+/// What a [`TestProxy`] was asked for: a `CONNECT` or an absolute-form request.
+#[derive(Debug, Clone)]
+pub struct ProxyRequest {
+    pub method: String,
+    /// `host:port` for `CONNECT`, the full URL otherwise.
+    pub target: String,
+    /// Header names in lower case, in the order received.
+    pub headers: Vec<(String, String)>,
+}
+
+impl ProxyRequest {
+    /// The first value of header `name`, matched without regard to case.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+#[derive(Default)]
+struct ProxyShared {
+    refuse_connect: bool,
+    seen: Mutex<Vec<ProxyRequest>>,
+}
+
+/// An HTTP proxy on a free loopback port. `CONNECT` opens a tunnel and an
+/// absolute-form request is forwarded, both to `dea-target.test:<port>` as
+/// 127.0.0.1:<port>. It closes the connection after each forwarded request.
+pub struct TestProxy {
+    port: u16,
+    shared: Arc<ProxyShared>,
+    accepting: AbortHandle,
+}
+
+impl TestProxy {
+    /// Must run inside a Tokio runtime.
+    pub async fn start() -> TestProxy {
+        Self::start_with(false).await
+    }
+
+    /// A proxy that answers every `CONNECT` with 403.
+    pub async fn refusing_connect() -> TestProxy {
+        Self::start_with(true).await
+    }
+
+    async fn start_with(refuse_connect: bool) -> TestProxy {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind 127.0.0.1");
+        let port = listener.local_addr().expect("listener address").port();
+        let shared = Arc::new(ProxyShared {
+            refuse_connect,
+            ..ProxyShared::default()
+        });
+        let state = Arc::clone(&shared);
+        let accepting = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                let _ = stream.set_nodelay(true);
+                tokio::spawn(proxy_connection(stream, Arc::clone(&state)));
+            }
+        })
+        .abort_handle();
+        TestProxy {
+            port,
+            shared,
+            accepting,
+        }
+    }
+
+    /// `http://127.0.0.1:<port>`.
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// `http://<userinfo>@127.0.0.1:<port>`.
+    pub fn url_with_userinfo(&self, userinfo: &str) -> String {
+        format!("http://{userinfo}@127.0.0.1:{}", self.port)
+    }
+
+    /// The target of every `CONNECT` received, oldest first.
+    pub fn connects(&self) -> Vec<String> {
+        self.requests("CONNECT")
+    }
+
+    /// The URL of every absolute-form request received, oldest first.
+    pub fn forwarded(&self) -> Vec<String> {
+        self.seen()
+            .into_iter()
+            .filter(|r| r.method != "CONNECT")
+            .map(|r| r.target)
+            .collect()
+    }
+
+    /// Everything received, oldest first.
+    pub fn seen(&self) -> Vec<ProxyRequest> {
+        self.shared
+            .seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn requests(&self, method: &str) -> Vec<String> {
+        self.seen()
+            .into_iter()
+            .filter(|r| r.method == method)
+            .map(|r| r.target)
+            .collect()
+    }
+}
+
+impl Drop for TestProxy {
+    fn drop(&mut self) {
+        self.accepting.abort();
+    }
+}
+
+/// The request head, read byte by byte so nothing of a tunnel is consumed.
+async fn read_head(stream: &mut TcpStream) -> Option<String> {
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() > 16 * 1024 || stream.read(&mut byte).await.ok()? == 0 {
+            return None;
+        }
+        head.push(byte[0]);
+    }
+    String::from_utf8(head).ok()
+}
+
+/// `host:port` with the test name mapped to loopback.
+fn upstream(host: &str, port: u16) -> (String, u16) {
+    if host.eq_ignore_ascii_case(PROXY_TARGET_HOST) {
+        ("127.0.0.1".into(), port)
+    } else {
+        (host.into(), port)
+    }
+}
+
+async fn proxy_connection(mut client: TcpStream, shared: Arc<ProxyShared>) {
+    let Some(head) = read_head(&mut client).await else {
+        return;
+    };
+    let mut lines = head.split("\r\n");
+    let mut request_line = lines.next().unwrap_or_default().split(' ');
+    let (method, target) = (
+        request_line.next().unwrap_or_default().to_owned(),
+        request_line.next().unwrap_or_default().to_owned(),
+    );
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|line| line.split_once(':'))
+        .map(|(n, v)| (n.trim().to_ascii_lowercase(), v.trim().to_owned()))
+        .collect();
+    shared
+        .seen
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(ProxyRequest {
+            method: method.clone(),
+            target: target.clone(),
+            headers: headers.clone(),
+        });
+
+    if method == "CONNECT" {
+        if shared.refuse_connect {
+            let _ = client
+                .write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            return;
+        }
+        let Some((host, port)) = target
+            .rsplit_once(':')
+            .and_then(|(h, p)| Some((h, p.parse::<u16>().ok()?)))
+        else {
+            return;
+        };
+        let Ok(mut server) = TcpStream::connect(upstream(host, port)).await else {
+            let _ = client
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            return;
+        };
+        if client
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+        return;
+    }
+
+    // An absolute-form request: forward it in origin form and relay the
+    // answer until the server closes.
+    let Ok(url) = url::Url::parse(&target) else {
+        let _ = client
+            .write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n")
+            .await;
+        return;
+    };
+    let length = headers
+        .iter()
+        .find(|(n, _)| n == "content-length")
+        .and_then(|(_, v)| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = vec![0u8; length];
+    if client.read_exact(&mut body).await.is_err() {
+        return;
+    }
+    let host = url.host_str().unwrap_or_default();
+    let port = url.port_or_known_default().unwrap_or(80);
+    let Ok(mut server) = TcpStream::connect(upstream(host, port)).await else {
+        let _ = client
+            .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n")
+            .await;
+        return;
+    };
+    let mut path = url.path().to_owned();
+    if let Some(query) = url.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    let mut forwarded = format!("{method} {path} HTTP/1.1\r\nconnection: close\r\n");
+    for (name, value) in &headers {
+        if !name.starts_with("proxy-") && name != "connection" {
+            forwarded.push_str(&format!("{name}: {value}\r\n"));
+        }
+    }
+    forwarded.push_str("\r\n");
+    if server.write_all(forwarded.as_bytes()).await.is_err()
+        || server.write_all(&body).await.is_err()
+    {
+        return;
+    }
+    let _ = tokio::io::copy(&mut server, &mut client).await;
 }

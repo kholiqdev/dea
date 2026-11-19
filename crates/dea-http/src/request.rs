@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
-use hyper::header::{ACCEPT, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
+use hyper::header::{
+    ACCEPT, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue, PROXY_AUTHORIZATION, USER_AGENT,
+};
 use hyper::{Method, Uri};
 use url::Url;
 use zeroize::Zeroizing;
@@ -181,10 +183,21 @@ pub(crate) struct Prepared {
     /// user's `Host` when they wrote one, as curl does, otherwise the URL's
     /// without user info. `None` when the user's `Host` can't be one.
     absolute_form: Option<Uri>,
+    /// `scheme://authority/path?query` of the URL itself, for a proxy.
+    url_form: Uri,
     /// `None` when the user wrote their own `Host`.
     host: Option<HeaderValue>,
     headers: Vec<(HeaderName, HeaderValue)>,
     body: Plan,
+    /// Set when the request goes to an HTTP proxy in absolute form.
+    plain_proxy: Option<PlainProxy>,
+}
+
+/// What a request to an HTTP target sends to its proxy.
+struct PlainProxy {
+    /// `scheme://host:port/path?query` of the target, without user info.
+    target: Uri,
+    authorization: Option<HeaderValue>,
 }
 
 impl Prepared {
@@ -220,6 +233,7 @@ impl Prepared {
                 .build()
         };
 
+        let url_form = absolute_form(authority.as_bytes()).map_err(|_| not_sendable())?;
         let mut user = Vec::with_capacity(request.headers.len());
         for (name, value) in &request.headers {
             let header = HeaderName::from_bytes(name.as_bytes())
@@ -264,10 +278,35 @@ impl Prepared {
             method,
             origin_form,
             absolute_form,
+            url_form,
             host,
             headers,
             body,
+            plain_proxy: None,
         })
+    }
+
+    /// Makes the HTTP/1.1 request go to an HTTP proxy: absolute form, and
+    /// `Proxy-Authorization` unless the user wrote one. The value is marked
+    /// sensitive so hyper never prints it.
+    pub(crate) fn through_http_proxy(mut self, authorization: Option<String>) -> Self {
+        let authorization = authorization
+            .and_then(|value| HeaderValue::from_str(&value).ok())
+            .map(|mut value| {
+                value.set_sensitive(true);
+                value
+            })
+            .filter(|_| {
+                !self
+                    .headers
+                    .iter()
+                    .any(|(name, _)| name == PROXY_AUTHORIZATION)
+            });
+        self.plain_proxy = Some(PlainProxy {
+            target: self.url_form.clone(),
+            authorization,
+        });
+        self
     }
 
     /// The request for one attempt. HTTP/1.1 gets the origin form and a
@@ -284,7 +323,10 @@ impl Prepared {
                 if let Some(host) = &self.host {
                     headers.insert(HOST, host.clone());
                 }
-                self.origin_form.clone()
+                match &self.plain_proxy {
+                    Some(proxy) => proxy.target.clone(),
+                    None => self.origin_form.clone(),
+                }
             }
             HttpVersion::Http2 => self.absolute_form.clone().ok_or_else(|| {
                 HttpError::InvalidRequest(
@@ -297,6 +339,14 @@ impl Prepared {
                 continue;
             }
             headers.append(name.clone(), value.clone());
+        }
+        if let Some(value) = self
+            .plain_proxy
+            .as_ref()
+            .and_then(|proxy| proxy.authorization.clone())
+            && version == HttpVersion::Http11
+        {
+            headers.insert(PROXY_AUTHORIZATION, value);
         }
         let mut request = hyper::Request::new(self.body.open()?);
         *request.method_mut() = self.method.clone();
