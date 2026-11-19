@@ -1,0 +1,9 @@
+/* Bundled IBM Plex, Latin subset only: no font is ever fetched from the
+ * network (F1-FON-17). Licence: ../fonts/OFL.txt */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "./tokens.css";
+@import "./base.css";

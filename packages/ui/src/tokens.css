@@ -1,0 +1,174 @@
+/* Design tokens for Phase 1.
+ *
+ * Copied from the design canvas (docs/desain/tokens-fase-1.css), with its
+ * "Review fixes" block merged into each theme. Changes from the canvas:
+ * - Light --accent is #a86a12 and light --positive is #15803d, so indicator
+ *   lamps reach 3:1 on every light surface (F1-FON-16).
+ * - --w-rail-wide, --w-side-min and --w-work-min are added for the shell.
+ *
+ * This is the only file that may hold colour literals.
+ */
+
+:root {
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:
+    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 4 px grid */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+
+  --r-key: 4px;
+  --r-small: 6px;
+  --r-ctl: 8px;
+  --r-card: 12px;
+  --r-panel: 16px;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 140ms;
+  --t-menu: 180ms;
+
+  --h-titlebar: 44px;
+  --h-tabs: 40px;
+  --h-status: 28px;
+  --w-rail: 52px;
+  --w-rail-wide: 216px;
+  --w-side: 280px;
+  --w-side-min: 200px;
+  --w-work-min: 480px;
+}
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces, deepest to raised */
+  --bg-0: #0f0f10; /* title bar, rail, sidebars, inspectors */
+  --bg-1: #141415; /* page */
+  --bg-2: #19191b; /* cards, inputs, table heads */
+  --bg-3: #232325; /* selected rows, keycaps, active tabs */
+  --bg-hover: #1c1c1e;
+  --bg-stage: #111112; /* device mirror stage */
+  --bg-input-strong: #141415;
+
+  --line: rgba(237, 237, 237, 0.08);
+  --line-soft: rgba(237, 237, 237, 0.05);
+  --line-strong: rgba(237, 237, 237, 0.1);
+  --highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  /* Text roles */
+  --text-1: #ededed;
+  --text-2: #a1a1a6;
+  --text-3: #8e8e94;
+  --text-4: #5c5c61; /* decoration only: separators, wires */
+
+  /* Neutral steps for charts and idle dots */
+  --n-1: #323235;
+  --n-2: #3a3a3e;
+  --n-3: #4a4a4f;
+  --n-4: #5e5e64;
+  --n-5: #7a7a80;
+
+  /* Accent: the indicator lamp */
+  --accent: #e9a23b;
+  --on-accent: #141415;
+  --focus: #e9a23b;
+
+  /* Meaning */
+  --positive: #4cc38a;
+  --negative: #e5484d;
+  --warning: #e6b673;
+  --negative-text: #f0686c;
+  --positive-text: #4cc38a;
+  --warning-text: #e6b673;
+  --negative-solid: #d13b40;
+
+  /* Primary button is off-white on dark */
+  --primary-bg: #ededed;
+  --primary-text: #141415;
+  --primary-key-bg: rgba(20, 20, 21, 0.08);
+  --primary-key-text: #3a3a3e;
+
+  /* Syntax */
+  --syn-key: #dcdce0;
+  --syn-str: #9fc7a8;
+  --syn-num: #e6b673;
+  --syn-bool: #a3b8dc;
+  --syn-kw: #a3b8dc;
+  --syn-punct: #a1a1a6;
+
+  /* Log and chart series, told apart by hue and label */
+  --series-1: #a3b8dc;
+  --series-2: #9fc7a8;
+  --series-3: #d6b98c;
+  --series-4: #c9c9ce;
+
+  --shadow-float: 0 24px 64px rgba(0, 0, 0, 0.5);
+  --shadow-device: 0 24px 48px rgba(0, 0, 0, 0.4);
+  --scrim: rgba(8, 8, 9, 0.62);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-0: #f4f4f5;
+  --bg-1: #fafafa;
+  --bg-2: #ffffff;
+  --bg-3: #ececee;
+  --bg-hover: #efeff1;
+  --bg-stage: #ececee;
+  --bg-input-strong: #fafafa;
+
+  --line: rgba(23, 23, 23, 0.08);
+  --line-soft: rgba(23, 23, 23, 0.05);
+  --line-strong: rgba(23, 23, 23, 0.12);
+  --highlight: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+
+  --text-1: #171717;
+  --text-2: #525252;
+  --text-3: #666666;
+  --text-4: #a1a1a6;
+
+  --n-1: #e4e4e7;
+  --n-2: #d4d4d8;
+  --n-3: #bdbdc2;
+  --n-4: #a1a1a6;
+  --n-5: #85858b;
+
+  --accent: #a86a12;
+  --focus: #a86a12;
+
+  --positive: #15803d;
+  --negative: #dc2626;
+  --warning: #a16207;
+  --negative-text: #b91c1c;
+  --positive-text: #166534;
+  --warning-text: #854d0e;
+  --negative-solid: #c62f35;
+
+  --primary-bg: #171717;
+  --primary-text: #ffffff;
+  --primary-key-bg: rgba(255, 255, 255, 0.14);
+  --primary-key-text: #e4e4e7;
+
+  --syn-key: #262626;
+  --syn-str: #3f7a50;
+  --syn-num: #9a6413;
+  --syn-bool: #3d5f99;
+  --syn-kw: #3d5f99;
+  --syn-punct: #6b6b6b;
+
+  --series-1: #5a7bb0;
+  --series-2: #4f8a5e;
+  --series-3: #a07a3c;
+  --series-4: #737373;
+
+  --shadow-float: 0 24px 64px rgba(0, 0, 0, 0.16);
+  --shadow-device: 0 16px 40px rgba(0, 0, 0, 0.14);
+  --scrim: rgba(250, 250, 250, 0.7);
+}

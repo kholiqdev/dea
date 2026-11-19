@@ -118,6 +118,31 @@ export default ts.config(
     },
   },
   {
+    // The ui element: the design system stands on its own and never
+    // reaches into an app.
+    files: ["packages/ui/**/*.{ts,svelte}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "$app",
+                "$app/*",
+                "$lib",
+                "$lib/*",
+                "desktop",
+                "**/apps/**",
+              ],
+              message: "packages/ui must not import from apps/.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["apps/desktop/src/lib/**/*.{ts,svelte}"],
     rules: {
       "no-restricted-imports": [
