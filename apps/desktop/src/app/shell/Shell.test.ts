@@ -2,6 +2,8 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test } from "vitest";
 import { settings } from "$lib/settings/settings.svelte";
+import { closeQuestion } from "../prompts/confirm-close.svelte";
+import { Tabs } from "../tabs/tabs.svelte";
 import ShellView from "./Shell.svelte";
 import { Shell } from "./shell-state.svelte";
 import { fakeIpc, railModule, registryWith, view } from "./test-support";
@@ -13,8 +15,9 @@ beforeEach(() => {
 function setup(...modules: Parameters<typeof registryWith>) {
   const registry = registryWith(...modules);
   const shell = new Shell(registry);
-  render(ShellView, { registry, shell });
-  return { registry, shell };
+  const tabs = new Tabs(registry, shell, { confirmClose: closeQuestion.ask });
+  render(ShellView, { registry, shell, tabs });
+  return { registry, shell, tabs };
 }
 
 test("rail shows only registered modules and opens them", async () => {

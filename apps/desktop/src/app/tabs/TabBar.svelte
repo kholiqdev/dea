@@ -1,0 +1,246 @@
+<script lang="ts">
+  import X from "@lucide/svelte/icons/x";
+  import {
+    currentPlatform,
+    formatChord,
+    parseChord,
+  } from "$lib/keyboard/chord";
+  import { settings } from "$lib/settings/settings.svelte";
+  import { errorMessage } from "$lib/ipc/errors";
+  import { railIcon } from "../modules";
+  import { toasts } from "../prompts/toasts.svelte";
+  import { shellContext } from "../shell/context";
+  import { effectiveShortcuts } from "../shell/hotkeys.svelte";
+  import type { TabRecord } from "./tabs.svelte";
+
+  const ctx = shellContext();
+  const tabs = $derived(ctx.tabs.tabs);
+  const activeId = $derived(ctx.tabs.active?.id);
+  const closeChord = $derived.by(() => {
+    const b = effectiveShortcuts(ctx.registry, settings.shortcuts).find(
+      (s) => s.command === "shell.closeTab",
+    );
+    return b ? formatChord(parseChord(b.chord), currentPlatform()) : null;
+  });
+
+  function iconOf(tab: TabRecord) {
+    const name =
+      ctx.registry.module(tab.module)?.rail?.icon ??
+      ctx.registry.tabType(tab.tabType)?.icon ??
+      "";
+    return railIcon(name);
+  }
+
+  function close(tab: TabRecord): void {
+    ctx.tabs.close(tab.id).catch((e: unknown) => toasts.show(errorMessage(e)));
+  }
+
+  let bar = $state<HTMLElement>();
+
+  function focusTab(id: string): void {
+    bar
+      ?.querySelector<HTMLElement>(
+        `[data-tab="${CSS.escape(id)}"] [role="tab"]`,
+      )
+      ?.focus();
+  }
+
+  function onkeydown(e: KeyboardEvent, index: number): void {
+    const to: Record<string, number> = {
+      ArrowLeft: index - 1,
+      ArrowRight: index + 1,
+      Home: 0,
+      End: tabs.length - 1,
+    };
+    const target = tabs[to[e.key] ?? -1];
+    if (!target) return;
+    e.preventDefault();
+    ctx.tabs.activate(target.id);
+    focusTab(target.id);
+  }
+
+  // Reordering by drag: pointer events, no library.
+  const DRAG_START = 4;
+  let press: { id: string; x: number; dragging: boolean } | null = null;
+  let dragging = $state<string | null>(null);
+
+  function onpointerdown(e: PointerEvent, tab: TabRecord): void {
+    if (e.button !== 0 || (e.target as Element).closest(".close")) return;
+    press = { id: tab.id, x: e.clientX, dragging: false };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+
+  function onpointermove(e: PointerEvent): void {
+    if (!press) return;
+    if (!press.dragging && Math.abs(e.clientX - press.x) < DRAG_START) return;
+    press.dragging = true;
+    dragging = press.id;
+  }
+
+  function dropIndex(x: number, id: string): number {
+    const others = [
+      ...(bar?.querySelectorAll<HTMLElement>("[data-tab]") ?? []),
+    ].filter((el) => el.dataset.tab !== id);
+    const index = others.findIndex((el) => {
+      const r = el.getBoundingClientRect();
+      return x < r.left + r.width / 2;
+    });
+    return index < 0 ? others.length : index;
+  }
+
+  function onpointerup(e: PointerEvent): void {
+    if (press?.dragging)
+      ctx.tabs.move(press.id, dropIndex(e.clientX, press.id));
+    press = null;
+    dragging = null;
+  }
+</script>
+
+{#if tabs.length > 0}
+  <div class="tabbar" role="tablist" aria-label="Open tabs" bind:this={bar}>
+    {#each tabs as tab, index (tab.id)}
+      {@const Icon = iconOf(tab)}
+      {@const active = tab.id === activeId}
+      <div
+        class="tab"
+        data-tab={tab.id}
+        data-active={active}
+        data-dragging={dragging === tab.id}
+        role="presentation"
+        onpointerdown={(e) => onpointerdown(e, tab)}
+        {onpointermove}
+        {onpointerup}
+        onpointercancel={onpointerup}
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={active}
+          tabindex={active || (!activeId && index === 0) ? 0 : -1}
+          onclick={() => ctx.tabs.activate(tab.id)}
+          onkeydown={(e) => onkeydown(e, index)}
+        >
+          {#if Icon}<Icon size={16} strokeWidth={1.5} />{/if}
+          <span class="title">{tab.title}</span>
+          {#if tab.environment}
+            <span
+              class="tab-env"
+              class:env-prod={tab.environment.production}
+              data-env={tab.environment.name}>{tab.environment.name}</span
+            >
+          {/if}
+          {#if tab.dirty}
+            <span class="dirty" role="img" aria-label="Unsaved changes"></span>
+          {/if}
+        </button>
+        <button
+          type="button"
+          class="close"
+          tabindex="-1"
+          aria-label="Close {tab.title}"
+          title={closeChord
+            ? `Close ${tab.title}, ${closeChord}`
+            : `Close ${tab.title}`}
+          onclick={() => close(tab)}
+        >
+          <X size={14} strokeWidth={1.5} />
+        </button>
+      </div>
+    {/each}
+  </div>
+{/if}
+
+<style>
+  .tabbar {
+    height: var(--h-tabs);
+    flex: none;
+    display: flex;
+    align-items: stretch;
+    background: var(--bg-0);
+    box-shadow: inset 0 -1px 0 var(--line);
+    overflow: hidden;
+  }
+
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: var(--s-1);
+    padding: 0 6px 0 var(--s-3);
+    border-right: 1px solid var(--line);
+    color: var(--text-2);
+    min-width: 0;
+    touch-action: none;
+  }
+
+  .tab[data-active="true"] {
+    background: var(--bg-1);
+    color: var(--text-1);
+  }
+
+  .tab[data-dragging="true"] {
+    opacity: 0.6;
+  }
+
+  [role="tab"] {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    white-space: nowrap;
+  }
+
+  .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tab-env {
+    margin-left: 2px;
+    padding: 0 6px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 4px;
+    font: 400 11px/1 var(--font-mono);
+    color: var(--text-3);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .env-prod {
+    color: var(--negative-text);
+    background: color-mix(in srgb, var(--negative) 6%, transparent);
+    box-shadow: inset 0 0 0 1px var(--negative);
+  }
+
+  .dirty {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 3px;
+    background: var(--text-2);
+  }
+
+  .close {
+    width: 24px;
+    height: 24px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-small);
+    background: none;
+    color: var(--text-3);
+  }
+
+  .close:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+  }
+</style>

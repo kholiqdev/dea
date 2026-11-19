@@ -11,6 +11,7 @@ import {
 } from "$lib/keyboard/chord";
 import type { Registry } from "../contributions/registry.svelte";
 import type { Action } from "../contributions/types";
+import { toasts } from "../prompts/toasts.svelte";
 import type { Shell } from "./shell-state.svelte";
 
 export interface Binding {
@@ -51,7 +52,7 @@ export async function runAction(
       return ctx.shell.openModule("settings");
     case "intent": {
       const result = await ctx.registry.invoke(action.intent, action.args);
-      if (!result.ok) console.warn(result.message);
+      if (!result.ok) toasts.show(result.message);
     }
   }
 }
