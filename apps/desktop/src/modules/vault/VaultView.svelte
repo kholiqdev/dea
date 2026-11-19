@@ -39,7 +39,7 @@
   let deleting = $state<SecretRow | null>(null);
 
   const summary = $derived.by(() => {
-    const text = `${inEnvironment.length} secrets in ${info?.name}`;
+    const text = `${inEnvironment.length === 1 ? "1 secret" : `${inEnvironment.length} secrets`} in ${info?.name}`;
     if (missing === 0) return text;
     return missing === 1
       ? `${text}, 1 is missing a value`
