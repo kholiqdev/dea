@@ -20,6 +20,7 @@ http = [
   "dep:time",
   "dep:tokio",
   "dep:tokio-rustls",
+  "dep:url",
 ]
 
 [lints]
@@ -36,6 +37,7 @@ rustls = { workspace = true, optional = true }
 time = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["macros", "net", "rt", "sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
 uuid.workspace = true
 
 [dev-dependencies]

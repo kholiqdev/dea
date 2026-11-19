@@ -7,13 +7,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use hyper::body::Incoming;
 use hyper::client::conn::{http1, http2};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
+use tokio::task::AbortHandle;
 use url::{Host, Url};
 
 use crate::error::{HttpError, describe};
@@ -27,6 +28,18 @@ pub(crate) struct Connection {
     sender: Sender,
     /// Bytes read from the server so far, after TLS.
     received: Arc<AtomicU64>,
+    /// Stops the task of an HTTP/1.1 connection when it is dropped, so the
+    /// socket closes at once (a cancelled request, a timeout). `None` for
+    /// HTTP/2, whose handles share one connection.
+    task: Option<AbortHandle>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
 }
 
 enum Sender {
@@ -57,6 +70,7 @@ impl Connection {
             Sender::Http2(sender) => Some(Connection {
                 sender: Sender::Http2(sender.clone()),
                 received: Arc::clone(&self.received),
+                task: None,
             }),
         }
     }
@@ -85,14 +99,14 @@ impl Connection {
 }
 
 /// Opens a new connection to the origin of `url`. Speaks HTTP/2 only when
-/// the server picks it with ALPN.
+/// the server picks it with ALPN. It has no time limit of its own: the
+/// caller runs it as a task it can abandon.
 pub(crate) async fn open(
     url: &Url,
     tls: &TlsConfig,
-    timeout: Duration,
+    verify: bool,
 ) -> Result<(Connection, Marks), HttpError> {
     let start = Instant::now();
-    let deadline = tokio::time::Instant::from_std(start).checked_add(timeout);
     let host = url
         .host()
         .ok_or_else(|| HttpError::InvalidRequest("the URL has no host".into()))?
@@ -108,10 +122,10 @@ pub(crate) async fn open(
         Host::Domain(_) => Instant::now(),
         Host::Ipv4(_) | Host::Ipv6(_) => start,
     };
-    let stream = connect(&addrs, deadline, timeout).await?;
+    let stream = connect(&addrs).await?;
     let connected = Instant::now();
     let (connection, secured) = if url.scheme() == "https" {
-        let (stream, h2) = tls::handshake(stream, &host, tls).await?;
+        let (stream, h2) = tls::handshake(stream, &host, tls, verify).await?;
         let secured = Instant::now();
         (handshake(stream, h2).await?, secured)
     } else {
@@ -148,23 +162,11 @@ async fn resolve(host: &Host<String>, port: u16) -> Result<Vec<SocketAddr>, Http
     Ok(addrs)
 }
 
-/// Tries each address in order, each within what is left of the timeout,
-/// and reports the last failure.
-async fn connect(
-    addrs: &[SocketAddr],
-    deadline: Option<tokio::time::Instant>,
-    timeout: Duration,
-) -> Result<TcpStream, HttpError> {
+/// Tries each address in order and reports the last failure.
+async fn connect(addrs: &[SocketAddr]) -> Result<TcpStream, HttpError> {
     let mut failure = HttpError::InvalidRequest("no address to connect to".into());
     for &addr in addrs {
-        let attempt = TcpStream::connect(addr);
-        let result = match deadline {
-            Some(deadline) => tokio::time::timeout_at(deadline, attempt)
-                .await
-                .map_err(|_| HttpError::Timeout(timeout))?,
-            None => attempt.await,
-        };
-        match result {
+        match TcpStream::connect(addr).await {
             Ok(stream) => {
                 // Requests are written in more than one piece; without
                 // this, Nagle's algorithm holds the last one back.
@@ -197,18 +199,22 @@ where
         received: Arc::clone(&received),
     });
     let protocol = |e: hyper::Error| HttpError::Protocol(describe(&e));
-    let sender = if h2 {
+    let (sender, task) = if h2 {
         let (sender, conn) = http2::handshake(TokioExecutor::new(), io)
             .await
             .map_err(protocol)?;
         tokio::spawn(conn);
-        Sender::Http2(sender)
+        (Sender::Http2(sender), None)
     } else {
         let (sender, conn) = http1::handshake(io).await.map_err(protocol)?;
-        tokio::spawn(conn);
-        Sender::Http1(sender)
+        let task = tokio::spawn(conn).abort_handle();
+        (Sender::Http1(sender), Some(task))
     };
-    Ok(Connection { sender, received })
+    Ok(Connection {
+        sender,
+        received,
+        task,
+    })
 }
 
 /// Counts the bytes read, so a failed request on a pooled connection can

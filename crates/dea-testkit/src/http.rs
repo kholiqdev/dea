@@ -7,8 +7,18 @@
 //! - `/delay/{ms}` sleeps, then answers 200 with `x-slept-us` set to how long
 //!   it really slept, in microseconds.
 //! - `/close` answers 200 without `Connection: close`, then closes the socket.
+//! - `/redirect/{n}` answers 302 to `/redirect/{n-1}`, and 200 at 0.
+//! - `/redirect-to?url=&status=` answers `status` (default 302) with
+//!   `Location: url`.
+//! - `/drip/{count}/{ms}` answers 200 at once, then sends `count` one-byte
+//!   chunks, `ms` apart.
+//! - `/stall-body` answers 200, sends one byte and then nothing.
+//!
+//! [`HoldServer`] is a raw TCP listener for tests that need a request to
+//! hang.
 //! - Anything else is a 404.
 
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::future::Future;
 use std::io;
@@ -16,11 +26,13 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt as _, Collected, Full};
-use hyper::body::Incoming;
+use hyper::body::{Body, Frame, Incoming};
 use hyper::header::HeaderValue;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -34,10 +46,11 @@ use rustls::RootCertStore;
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::{ServerConfig, WebPkiClientVerifier};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 use tokio::task::AbortHandle;
+use tokio::time::Sleep;
 use tokio_rustls::TlsAcceptor;
 
 /// Names the test server certificate is valid for.
@@ -66,6 +79,9 @@ pub struct Received {
     /// Header names in lower case, in the order received.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// The subject of the client certificate a `Mutual` server was shown,
+    /// such as `CN=Dea Test Client`. `None` without one.
+    pub client_subject: Option<String>,
     /// When the request head reached the server.
     pub at: Instant,
 }
@@ -288,25 +304,37 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, shared: Ar
 
 async fn serve_tcp(stream: TcpStream, tls: Option<TlsAcceptor>, shared: Arc<Shared>) {
     match tls {
-        None => serve(stream, false, shared).await,
+        None => serve(stream, false, None, shared).await,
         Some(acceptor) => {
             let Ok(stream) = acceptor.accept(stream).await else {
                 return;
             };
-            let h2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
-            serve(stream, h2, shared).await;
+            let session = stream.get_ref().1;
+            let h2 = session.alpn_protocol() == Some(b"h2");
+            let subject = session
+                .peer_certificates()
+                .and_then(|certs| certs.first())
+                .map(subject_of);
+            serve(stream, h2, subject, shared).await;
         }
     }
 }
 
-async fn serve<S>(io: S, h2: bool, shared: Arc<Shared>)
+async fn serve<S>(io: S, h2: bool, subject: Option<String>, shared: Arc<Shared>)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let close = Arc::new(Notify::new());
     let service = {
         let close = Arc::clone(&close);
-        service_fn(move |request| handle(request, Arc::clone(&shared), Arc::clone(&close)))
+        service_fn(move |request| {
+            handle(
+                request,
+                subject.clone(),
+                Arc::clone(&shared),
+                Arc::clone(&close),
+            )
+        })
     };
     let io = TokioIo::new(io);
     if h2 {
@@ -334,10 +362,11 @@ where
     }
 }
 
-type Reply = Response<Full<Bytes>>;
+type Reply = Response<UnsyncBoxBody<Bytes, Infallible>>;
 
 async fn handle(
     request: Request<Incoming>,
+    client_subject: Option<String>,
     shared: Arc<Shared>,
     close: Arc<Notify>,
 ) -> Result<Reply, Infallible> {
@@ -363,6 +392,7 @@ async fn handle(
             })
             .collect(),
         body: body.to_vec(),
+        client_subject,
         at,
     };
     shared
@@ -370,10 +400,57 @@ async fn handle(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .push(received);
-    Ok(route(parts.uri.path(), body, &close).await)
+    Ok(route(parts.uri.path(), parts.uri.query(), body, &close).await)
 }
 
-async fn route(path: &str, body: Bytes, close: &Notify) -> Reply {
+async fn route(path: &str, query: Option<&str>, body: Bytes, close: &Notify) -> Reply {
+    if let Some(n) = path.strip_prefix("/redirect/") {
+        let Ok(n) = n.parse::<u32>() else {
+            return reply(StatusCode::BAD_REQUEST, Bytes::new());
+        };
+        if n == 0 {
+            return reply(StatusCode::OK, Bytes::new());
+        }
+        return redirect(StatusCode::FOUND, &format!("/redirect/{}", n - 1));
+    }
+    if path == "/redirect-to" {
+        let param = |name: &str| {
+            url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.into_owned())
+        };
+        let status = match param("status") {
+            Some(code) => code
+                .parse()
+                .ok()
+                .and_then(|code| StatusCode::from_u16(code).ok()),
+            None => Some(StatusCode::FOUND),
+        };
+        return match (status, param("url")) {
+            (Some(status), Some(url)) => redirect(status, &url),
+            _ => reply(StatusCode::BAD_REQUEST, Bytes::new()),
+        };
+    }
+    if let Some(rest) = path.strip_prefix("/drip/") {
+        let parsed = rest
+            .split_once('/')
+            .and_then(|(count, ms)| Some((count.parse::<usize>().ok()?, ms.parse::<u64>().ok()?)));
+        let Some((count, ms)) = parsed else {
+            return reply(StatusCode::BAD_REQUEST, Bytes::new());
+        };
+        let gap = Duration::from_millis(ms);
+        return streamed(
+            (0..count)
+                .map(|_| (gap, Bytes::from_static(b"x")))
+                .collect(),
+        );
+    }
+    if path == "/stall-body" {
+        return streamed(VecDeque::from([
+            (Duration::ZERO, Bytes::from_static(b"x")),
+            (Duration::from_secs(3600), Bytes::from_static(b"y")),
+        ]));
+    }
     if let Some(code) = path.strip_prefix("/status/") {
         let status = code
             .parse()
@@ -406,7 +483,175 @@ async fn route(path: &str, body: Bytes, close: &Notify) -> Reply {
 }
 
 fn reply(status: StatusCode, body: Bytes) -> Reply {
-    let mut response = Response::new(Full::new(body));
+    let mut response = Response::new(Full::new(body).boxed_unsync());
     *response.status_mut() = status;
     response
+}
+
+fn redirect(status: StatusCode, location: &str) -> Reply {
+    let mut response = reply(status, Bytes::new());
+    match HeaderValue::from_str(location) {
+        Ok(value) => {
+            response.headers_mut().insert("location", value);
+        }
+        Err(_) => *response.status_mut() = StatusCode::BAD_REQUEST,
+    }
+    response
+}
+
+fn streamed(schedule: VecDeque<(Duration, Bytes)>) -> Reply {
+    Response::new(Paced::new(schedule).boxed_unsync())
+}
+
+/// A body that sends each chunk after its own delay.
+struct Paced {
+    schedule: VecDeque<(Duration, Bytes)>,
+    sleep: Option<Pin<Box<Sleep>>>,
+}
+
+impl Paced {
+    fn new(schedule: VecDeque<(Duration, Bytes)>) -> Self {
+        Paced {
+            schedule,
+            sleep: None,
+        }
+    }
+}
+
+impl Body for Paced {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        let this = &mut *self;
+        let Some((delay, _)) = this.schedule.front() else {
+            return Poll::Ready(None);
+        };
+        let sleep = this
+            .sleep
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(*delay)));
+        if sleep.as_mut().poll(cx).is_pending() {
+            return Poll::Pending;
+        }
+        this.sleep = None;
+        let chunk = this.schedule.pop_front().map(|(_, chunk)| chunk);
+        Poll::Ready(chunk.map(|chunk| Ok(Frame::data(chunk))))
+    }
+}
+
+/// The subject of a client certificate this module issued. Only
+/// [`client_identity_pem`] makes client certificates, and the `Mutual`
+/// server accepts nothing else, so a match on the DER is enough.
+fn subject_of(cert: &CertificateDer<'_>) -> String {
+    if cert.as_ref() == client_identity().cert.as_ref() {
+        format!("CN={CLIENT_COMMON_NAME}")
+    } else {
+        "unknown".into()
+    }
+}
+
+const CLIENT_COMMON_NAME: &str = "Dea Test Client";
+
+struct ClientIdentity {
+    cert: CertificateDer<'static>,
+    cert_pem: String,
+    key_pem: String,
+}
+
+fn client_identity() -> &'static ClientIdentity {
+    static IDENTITY: OnceLock<ClientIdentity> = OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        let mut params = CertificateParams::default();
+        params
+            .distinguished_name
+            .push(DnType::CommonName, CLIENT_COMMON_NAME);
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        params.use_authority_key_identifier_extension = true;
+        set_validity(&mut params);
+        let key = KeyPair::generate().expect("generate the client key");
+        let cert = params
+            .signed_by(&key, &ca().issuer)
+            .expect("sign the client certificate");
+        ClientIdentity {
+            cert: cert.der().clone(),
+            cert_pem: cert.pem(),
+            key_pem: key.serialize_pem(),
+        }
+    })
+}
+
+/// A client certificate and its private key in PEM, signed by the test CA
+/// (so a `Mutual` server accepts it). The same for the whole process.
+pub fn client_identity_pem() -> (Vec<u8>, Vec<u8>) {
+    let identity = client_identity();
+    (
+        identity.cert_pem.as_bytes().to_vec(),
+        identity.key_pem.as_bytes().to_vec(),
+    )
+}
+
+/// A raw TCP listener that reads whatever the client sends and never
+/// answers, then notes when the client closes the connection.
+pub struct HoldServer {
+    port: u16,
+    closed: watch::Receiver<Option<Instant>>,
+    accepting: AbortHandle,
+}
+
+impl HoldServer {
+    /// Starts on a free 127.0.0.1 port. Must run inside a Tokio runtime.
+    pub async fn start() -> HoldServer {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind 127.0.0.1");
+        let port = listener.local_addr().expect("listener address").port();
+        let (closed_tx, closed) = watch::channel(None);
+        let accepting = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                let closed_tx = closed_tx.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    while matches!(stream.read(&mut buf).await, Ok(n) if n > 0) {}
+                    closed_tx.send_modify(|at| {
+                        at.get_or_insert_with(Instant::now);
+                    });
+                });
+            }
+        })
+        .abort_handle();
+        HoldServer {
+            port,
+            closed,
+            accepting,
+        }
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/", self.port)
+    }
+
+    /// When the client closed its connection, waiting up to `limit` for it.
+    /// `None` if it stayed open.
+    pub async fn wait_closed(&self, limit: Duration) -> Option<Instant> {
+        let mut closed = self.closed.clone();
+        tokio::time::timeout(limit, closed.wait_for(Option::is_some))
+            .await
+            .ok()?
+            .ok()?
+            .as_ref()
+            .copied()
+    }
+}
+
+impl Drop for HoldServer {
+    fn drop(&mut self) {
+        self.accepting.abort();
+    }
 }
