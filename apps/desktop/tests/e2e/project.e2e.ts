@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -175,14 +176,32 @@ describe("projects and environments", () => {
       readFileSync(join(harbor, "dea.yaml"), "utf8"),
     )?.[1];
     expect(id).toBeTruthy();
-    const folder = createHash("sha256").update(id!).digest("hex").slice(0, 16);
-    const saved = join(appDataDir(), "ui", folder, "0.json");
-    // Gone, or written again with the empty layout: either way no tabs.
-    const tabs = () =>
-      existsSync(saved)
-        ? (JSON.parse(readFileSync(saved, "utf8")) as { tabs: unknown[] }).tabs
+    const folder = join(
+      appDataDir(),
+      "ui",
+      createHash("sha256").update(id!).digest("hex").slice(0, 16),
+    );
+    // Every window slot of the project, with its saved tab count. The
+    // window under test is usually slot 0, but after the second-window
+    // case it may not be.
+    const slots = () =>
+      existsSync(folder)
+        ? readdirSync(folder)
+            .filter((f) => f.endsWith(".json"))
+            .map((f) => ({
+              file: f,
+              tabs: (
+                JSON.parse(readFileSync(join(folder, f), "utf8")) as {
+                  tabs: unknown[];
+                }
+              ).tabs.length,
+            }))
         : [];
-    expect(tabs().length).toBeGreaterThan(0);
+    const before = slots();
+    if (!before.some((s) => s.tabs > 0))
+      throw new Error(
+        `no saved tabs before clearing: ${JSON.stringify(before)}`,
+      );
 
     await projectMenu("Clear local data…");
     await $('[role="dialog"]').$("button=Clear").click();
@@ -191,6 +210,9 @@ describe("projects and environments", () => {
       async () => (await $$('[role="tab"]').length) === 0,
     );
     await browser.pause(800);
-    expect(tabs()).toEqual([]);
+    // Gone, or written again with the empty layout: either way no tabs.
+    const after = slots();
+    if (after.some((s) => s.tabs > 0))
+      throw new Error(`tabs left after clearing: ${JSON.stringify(after)}`);
   });
 });
