@@ -42,7 +42,7 @@ test("starts on Welcome when the window has no project", async () => {
     screen.queryByRole("navigation", { name: "Modules" }),
   ).not.toBeInTheDocument();
   expect(
-    await screen.findByRole("heading", { name: "Welcome" }),
+    await screen.findByRole("heading", { name: "Start a project" }),
   ).toBeInTheDocument();
   expect(screen.getByRole("banner")).toHaveTextContent("No project open");
   expect(root.dataset.theme).toBe("light");
@@ -87,6 +87,6 @@ test("Settings opens with Mod+, and Back returns to Welcome", async () => {
   ).toBeInTheDocument();
   screen.getByRole("button", { name: "Back" }).click();
   expect(
-    await screen.findByRole("heading", { name: "Welcome" }),
+    await screen.findByRole("heading", { name: "Start a project" }),
   ).toBeInTheDocument();
 });
