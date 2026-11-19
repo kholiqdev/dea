@@ -21,3 +21,17 @@ test("the published manifest schema matches the types", () => {
     "manifest.schema.json is stale: run `pnpm --filter desktop schema:manifest`",
   ).toEqual(JSON.parse(JSON.stringify(generated)));
 }, 30_000);
+
+test("the manifest schema includes searchSources", () => {
+  const published = JSON.parse(
+    readFileSync(join(here, "manifest.schema.json"), "utf8"),
+  ) as {
+    definitions: Record<string, { properties?: Record<string, unknown> }>;
+  };
+  expect(published.definitions.ManifestData?.properties).toHaveProperty(
+    "searchSources",
+  );
+  expect(published.definitions.SearchSourceData?.properties).toHaveProperty(
+    "group",
+  );
+});

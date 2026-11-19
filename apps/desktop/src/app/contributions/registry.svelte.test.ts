@@ -207,3 +207,52 @@ test("without a project only app-wide modules remain", () => {
     "settings.open",
   ]);
 });
+
+const source = (id: string, order = 1) => ({
+  id,
+  group: id,
+  order,
+  source: () => Promise.resolve({ default: () => [] }),
+});
+
+test("search sources come only from enabled modules", () => {
+  const r = createRegistry();
+  r.register(
+    manifest("vault", { searchSources: [source("vault.secrets", 70)] }),
+  );
+  r.register(
+    manifest("project", {
+      searchSources: [source("project.environments", 60)],
+    }),
+  );
+  expect(r.searchSources.map((s) => [s.id, s.module])).toEqual([
+    ["project.environments", "project"],
+    ["vault.secrets", "vault"],
+  ]);
+  r.setEnabled("vault", false);
+  expect(r.searchSources.map((s) => s.id)).toEqual(["project.environments"]);
+});
+
+test("project search sources wait for a project", () => {
+  const r = createRegistry();
+  r.register(manifest("vault", { searchSources: [source("vault.secrets")] }));
+  r.register(
+    manifest("settings", {
+      scope: "app",
+      searchSources: [source("settings.sections")],
+    }),
+  );
+  r.setProjectOpen(false);
+  expect(r.searchSources.map((s) => s.id)).toEqual(["settings.sections"]);
+});
+
+test("a duplicate search source id is refused, naming it", () => {
+  const r = createRegistry();
+  r.register(manifest("vault", { searchSources: [source("vault.secrets")] }));
+  expect(() =>
+    r.register(manifest("other", { searchSources: [source("vault.secrets")] })),
+  ).toThrow(ContributionError);
+  expect(() =>
+    r.register(manifest("third", { searchSources: [source("vault.secrets")] })),
+  ).toThrow('"vault.secrets"');
+});

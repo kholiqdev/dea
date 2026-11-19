@@ -60,6 +60,15 @@ export interface IntentData {
   intent: string;
 }
 
+/** A source of command palette items, such as a module's environments. */
+export interface SearchSourceData {
+  id: ContributionId;
+  /** The palette group its items show under, such as `Environments`. */
+  group: string;
+  /** Where the group sits in the palette: lower first. */
+  order: number;
+}
+
 export interface ManifestData {
   /** The module id, for example `requests`. */
   id: string;
@@ -77,4 +86,5 @@ export interface ManifestData {
   statusItems?: StatusItemData[];
   settings?: SettingsSectionData[];
   intents?: IntentData[];
+  searchSources?: SearchSourceData[];
 }
