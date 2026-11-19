@@ -5,6 +5,7 @@ use tauri::webview::PageLoadEvent;
 
 mod commands;
 mod error;
+mod session;
 mod state;
 
 use state::AppState;
@@ -52,10 +53,17 @@ pub fn run() {
         );
     }
     builder
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = state::app_data_dir(app.handle())?;
             app.manage(AppState::new(dir));
+            commands::project::reopen_last(app.handle(), "main");
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                commands::project::window_closed(window.app_handle(), window.label());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             perf_ready,
@@ -64,6 +72,20 @@ pub fn run() {
             commands::settings::save_settings,
             commands::settings::get_ui_state,
             commands::settings::save_ui_state,
+            commands::project::window_project,
+            commands::project::open_project,
+            commands::project::create_project,
+            commands::project::open_window,
+            commands::project::close_project,
+            commands::project::pick_folder,
+            commands::project::recent_projects,
+            commands::project::remove_recent,
+            commands::project::save_environment,
+            commands::project::delete_environment,
+            commands::project::duplicate_environment,
+            commands::project::environment_references,
+            commands::project::set_active_environment,
+            commands::project::clear_local_data,
         ])
         .on_page_load(move |_webview, payload| {
             if probe && payload.event() == PageLoadEvent::Finished {

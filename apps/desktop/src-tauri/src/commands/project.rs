@@ -1,0 +1,301 @@
+//! Projects and their environments, one project per window. File work runs
+//! off the main thread; each command passes its arguments on.
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use dea_engine::projects::{
+    self, OpenedProject, ProjectChanged, ProjectInfo, RecentEntry, portable_path, recent_entries,
+};
+use dea_project::{EnvReference, Environment, ProjectChange, ProjectWatcher, load_project};
+use tauri::async_runtime::spawn_blocking;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_dialog::DialogExt;
+
+use crate::error::IpcError;
+use crate::session::Session;
+use crate::state::AppState;
+
+/// The event a window gets when files of its project change on disk.
+pub const PROJECT_CHANGED: &str = "project-changed";
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn info_of(session: &Session) -> Result<ProjectInfo, IpcError> {
+    if session.missing || !session.root.join("dea.yaml").is_file() {
+        return Ok(ProjectInfo::missing(
+            &session.root,
+            &session.scope,
+            session.slot,
+        ));
+    }
+    let loaded = load_project(&session.root)?;
+    let opened = OpenedProject {
+        project: loaded.project,
+        errors: loaded.errors,
+        migrated: None,
+    };
+    Ok(ProjectInfo::new(&opened, session.slot))
+}
+
+/// Gives `window` the opened project: a slot, a watcher and the first place
+/// in the recent list.
+fn bind(app: &AppHandle, window: &str, opened: &OpenedProject) -> ProjectInfo {
+    let state = app.state::<AppState>();
+    let project = &opened.project;
+    let slot = state
+        .sessions()
+        .bind(window, project.root.clone(), project.vault_scope());
+    // Failing to remember the project is no reason to refuse opening it.
+    let _ = state.store.touch_recent(project, now());
+    state.set_watcher(window, watch(app, window, &project.root));
+    ProjectInfo::new(opened, slot)
+}
+
+fn unbind(app: &AppHandle, window: &str) {
+    let state = app.state::<AppState>();
+    state.set_watcher(window, None);
+    state.sessions().unbind(window);
+}
+
+fn watch(app: &AppHandle, window: &str, root: &Path) -> Option<ProjectWatcher> {
+    let app = app.clone();
+    let label = window.to_string();
+    ProjectWatcher::start(root, move |changes| on_changes(&app, &label, &changes)).ok()
+}
+
+/// One reload and one event per batch of changes, however many files.
+fn on_changes(app: &AppHandle, window: &str, changes: &[ProjectChange]) {
+    let state = app.state::<AppState>();
+    let session = {
+        let mut sessions = state.sessions();
+        sessions.refresh_missing(window);
+        sessions.get(window).cloned()
+    };
+    let Some(session) = session else {
+        return;
+    };
+    if session.missing {
+        state.set_watcher(window, None);
+    }
+    let info = info_of(&session)
+        .unwrap_or_else(|_| ProjectInfo::missing(&session.root, &session.scope, session.slot));
+    let changed = changes.iter().map(|c| portable_path(&c.path)).collect();
+    let _ = app.emit_to(window, PROJECT_CHANGED, ProjectChanged { info, changed });
+}
+
+/// Opens the most recent project in the first window, when its folder is
+/// still there.
+pub fn reopen_last(app: &AppHandle, window: &str) {
+    let state = app.state::<AppState>();
+    let Some(last) = state.store.load_recent().into_iter().next() else {
+        return;
+    };
+    if let Ok(opened) = projects::open_project(&last.root) {
+        bind(app, window, &opened);
+    }
+}
+
+/// Forgets the project of a closed window.
+pub fn window_closed(app: &AppHandle, window: &str) {
+    unbind(app, window);
+}
+
+fn writable(app: &AppHandle, window: &str) -> Result<Session, IpcError> {
+    Ok(app.state::<AppState>().sessions().writable(window)?.clone())
+}
+
+#[tauri::command]
+pub async fn window_project(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<Option<ProjectInfo>, IpcError> {
+    let session = app
+        .state::<AppState>()
+        .sessions()
+        .get(window.label())
+        .cloned();
+    let Some(session) = session else {
+        return Ok(None);
+    };
+    Ok(Some(spawn_blocking(move || info_of(&session)).await??))
+}
+
+#[tauri::command]
+pub async fn open_project(
+    app: AppHandle,
+    window: WebviewWindow,
+    root: String,
+) -> Result<ProjectInfo, IpcError> {
+    let opened = spawn_blocking(move || projects::open_project(Path::new(&root))).await??;
+    Ok(bind(&app, window.label(), &opened))
+}
+
+#[tauri::command]
+pub async fn create_project(
+    app: AppHandle,
+    window: WebviewWindow,
+    location: String,
+    name: String,
+) -> Result<ProjectInfo, IpcError> {
+    let opened =
+        spawn_blocking(move || projects::new_project(Path::new(&location), &name)).await??;
+    Ok(bind(&app, window.label(), &opened))
+}
+
+/// Opens a new window: on the project at `root`, or on Welcome.
+#[tauri::command]
+pub async fn open_window(app: AppHandle, root: Option<String>) -> Result<(), IpcError> {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    let label = format!("project-{}", NEXT.fetch_add(1, Ordering::Relaxed));
+    if let Some(root) = root {
+        let opened = spawn_blocking(move || projects::open_project(Path::new(&root))).await??;
+        bind(&app, &label, &opened);
+    }
+    let built = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+        .title("Dea")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(1024.0, 640.0)
+        .build();
+    if let Err(e) = built {
+        unbind(&app, &label);
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_project(app: AppHandle, window: WebviewWindow) {
+    unbind(&app, window.label());
+}
+
+#[tauri::command]
+pub async fn pick_folder(window: WebviewWindow) -> Result<Option<String>, IpcError> {
+    let picked = spawn_blocking(move || {
+        window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .blocking_pick_folder()
+    })
+    .await?;
+    Ok(picked
+        .and_then(|p| p.into_path().ok())
+        .map(|p: PathBuf| p.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+pub async fn recent_projects(app: AppHandle) -> Result<Vec<RecentEntry>, IpcError> {
+    let store = app.state::<AppState>().store.clone();
+    Ok(spawn_blocking(move || recent_entries(&store.load_recent())).await?)
+}
+
+#[tauri::command]
+pub async fn remove_recent(app: AppHandle, root: String) -> Result<(), IpcError> {
+    let store = app.state::<AppState>().store.clone();
+    Ok(spawn_blocking(move || store.remove_recent(Path::new(&root))).await??)
+}
+
+#[tauri::command]
+pub async fn save_environment(
+    app: AppHandle,
+    window: WebviewWindow,
+    previous: Option<String>,
+    environment: Environment,
+) -> Result<ProjectInfo, IpcError> {
+    let session = writable(&app, window.label())?;
+    spawn_blocking(move || {
+        let project = load_project(&session.root)?.project;
+        dea_project::save_environment(&project, previous.as_deref(), &environment)?;
+        info_of(&session)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn delete_environment(
+    app: AppHandle,
+    window: WebviewWindow,
+    name: String,
+) -> Result<ProjectInfo, IpcError> {
+    let session = writable(&app, window.label())?;
+    spawn_blocking(move || {
+        let project = load_project(&session.root)?.project;
+        dea_project::delete_environment(&project, &name)?;
+        info_of(&session)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn duplicate_environment(
+    app: AppHandle,
+    window: WebviewWindow,
+    name: String,
+) -> Result<ProjectInfo, IpcError> {
+    let session = writable(&app, window.label())?;
+    spawn_blocking(move || {
+        let project = load_project(&session.root)?.project;
+        dea_project::duplicate_environment(&project, &name)?;
+        info_of(&session)
+    })
+    .await?
+}
+
+/// What uses the environment: project files, and other windows that have
+/// it active.
+#[tauri::command]
+pub async fn environment_references(
+    app: AppHandle,
+    window: WebviewWindow,
+    name: String,
+) -> Result<Vec<EnvReference>, IpcError> {
+    let session = writable(&app, window.label())?;
+    let others = {
+        let state = app.state::<AppState>();
+        let all = state.sessions().windows_using(&session.scope, &name);
+        let this = u32::from(session.active_environment.as_deref() == Some(name.as_str()));
+        all - this
+    };
+    spawn_blocking(move || {
+        let project = load_project(&session.root)?.project;
+        let mut refs = dea_project::environment_references(&project, &name);
+        if others > 0 {
+            refs.push(EnvReference {
+                label: if others == 1 {
+                    "Open in 1 other window".into()
+                } else {
+                    format!("Open in {others} other windows")
+                },
+                count: others,
+            });
+        }
+        Ok(refs)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub fn set_active_environment(app: AppHandle, window: WebviewWindow, name: Option<String>) {
+    app.state::<AppState>()
+        .sessions()
+        .set_environment(window.label(), name);
+}
+
+#[tauri::command]
+pub async fn clear_local_data(app: AppHandle, window: WebviewWindow) -> Result<(), IpcError> {
+    // Local data can be cleared even when the project folder is gone.
+    let scope = app
+        .state::<AppState>()
+        .sessions()
+        .get(window.label())
+        .map(|s| s.scope.clone())
+        .ok_or(crate::session::Refusal::NoProject)?;
+    let store = app.state::<AppState>().store.clone();
+    Ok(spawn_blocking(move || store.clear_ui_state(&scope)).await??)
+}

@@ -72,9 +72,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo test -p dea-engine --features ts export_bindings
+          cargo test -p dea-project --features ts export_bindings
           git add -N apps/desktop/src/lib/ipc/bindings
           git diff --exit-code apps/desktop/src/lib/ipc/bindings || {
-            echo "::error::Run cargo test -p dea-engine --features ts export_bindings and commit the result"
+            echo "::error::Run cargo test -p dea-engine -p dea-project --features ts export_bindings and commit the result"
             exit 1
           }
       - name: Install cargo-deny
