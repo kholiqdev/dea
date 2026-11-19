@@ -64,6 +64,7 @@ beforeEach(() => {
     setTabDirty: (id, d) => (dirty[id] = d),
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
+    toast: () => {},
   });
   clearMocks();
   mockIPC((cmd, raw) => {

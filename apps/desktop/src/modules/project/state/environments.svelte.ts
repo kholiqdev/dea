@@ -43,13 +43,6 @@ export function problemsOf(env: Environment, others: string[]): string[] {
   return problems;
 }
 
-/** Secret names a value refers to with `{{vault:name}}`. */
-export function vaultReferences(value: string): string[] {
-  return [...value.matchAll(/\{\{\s*vault:\s*([^}\s]+)\s*\}\}/g)].map(
-    (m) => m[1] ?? "",
-  );
-}
-
 /** One line of Compare: a field or variable that differs. */
 export interface Difference {
   field: string;

@@ -1,8 +1,8 @@
 <script lang="ts">
   import X from "@lucide/svelte/icons/x";
   import Plus from "@lucide/svelte/icons/plus";
+  import { vaultReferences } from "$lib/vault/references";
   import type { EnvironmentDraft } from "../state/environments.svelte";
-  import { vaultReferences } from "../state/environments.svelte";
 
   let {
     draft,
