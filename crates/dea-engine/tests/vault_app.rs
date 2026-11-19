@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use dea_engine::vault::{
     SaveSecretError, SecretInput, SecretKey, SecretString, UnlockMethod, UseError, VaultService,
-    VaultStatus, production_reason, save_secret, unlock_method,
+    VaultStatus, production_reason, save_secret, unlock_method, values_involved,
 };
 use dea_project::{Project, ProjectError, SecretKind, SecretSpec, create_project, load_project};
 use dea_vault::{OAuthToken, SecretData};
@@ -577,4 +577,70 @@ fn a_locked_vault_keeps_an_environment_with_values_as_it_is() {
         value_in(&vault, "production", "PROD_TOKEN").as_deref(),
         Some("prod-1")
     );
+}
+
+#[test]
+fn values_shared_by_two_environments_of_one_name_stay() {
+    let (vault, _dir, _) = unlocked();
+    store(&vault, "staging", "PROD_TOKEN", "staging-1");
+    store(&vault, "production", "PROD_TOKEN", "prod-1");
+    // As after a git merge: two files define `staging`.
+    let mut p = project();
+    p.environments.push(p.environments[1].clone());
+
+    // Deleting one leaves the values the other still uses.
+    vault.remove_environment(&p, "staging").unwrap();
+    assert_eq!(
+        value_in(&vault, "staging", "PROD_TOKEN").as_deref(),
+        Some("staging-1")
+    );
+    // Renaming one leaves them under `staging` too.
+    vault.move_environment(&p, "staging", "qa").unwrap();
+    assert_eq!(
+        value_in(&vault, "staging", "PROD_TOKEN").as_deref(),
+        Some("staging-1")
+    );
+    assert_eq!(value_in(&vault, "qa", "PROD_TOKEN"), None);
+    let has = |name: &str| vault.has_values(&p, name);
+    assert!(!values_involved(&p, "staging", None, has));
+    assert!(!values_involved(&p, "staging", Some("qa"), has));
+
+    // Locked, nothing is refused either: no values are involved.
+    vault.lock();
+    vault.remove_environment(&p, "staging").unwrap();
+    vault.move_environment(&p, "staging", "qa").unwrap();
+
+    // The one environment of a name still takes its values along, and a
+    // rename also the values left under the new name.
+    assert!(values_involved(&p, "production", None, has));
+    assert!(values_involved(&p, "local", Some("production"), has));
+    assert!(!values_involved(&p, "local", Some("dev"), has));
+    // A name no environment has involves nothing.
+    assert!(!values_involved(&p, "gone", Some("production"), has));
+}
+
+#[test]
+fn a_secret_for_an_environment_that_is_gone_is_refused() {
+    let (vault, _app, _) = unlocked();
+    let dir = tempfile::tempdir().unwrap();
+    // `qa` was renamed or deleted after an Add form opened in another
+    // window; its name is free.
+    let p = on_disk(dir.path());
+    let before = fs::read_to_string(dir.path().join("vault.yaml")).unwrap();
+    let stale = SecretInput {
+        environment: "qa".into(),
+        ..input("access_token", SecretKind::Token, "abc")
+    };
+
+    match save_secret(&vault, &p, stale) {
+        Err(SaveSecretError::Invalid(message)) => {
+            assert_eq!(message, "the environment \"qa\" no longer exists");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(
+        fs::read_to_string(dir.path().join("vault.yaml")).unwrap(),
+        before
+    );
+    assert!(!vault.has_values(&p, "qa"));
 }

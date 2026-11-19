@@ -216,7 +216,9 @@ pub enum SaveSecretError {
 /// # Errors
 ///
 /// [`SaveSecretError::Invalid`] when a refresh token or expiry is given for
-/// a type other than an OAuth token, or the expiry is not RFC 3339.
+/// a type other than an OAuth token, the expiry is not RFC 3339, or
+/// `project` has no environment called `environment`, as when a form
+/// opened before it was renamed or deleted.
 /// [`SaveSecretError::Use`] with [`UseError::Locked`] when the Vault is
 /// locked. [`SaveSecretError::Project`] when the declaration cannot be
 /// written, for example in a read-only project or a `vault.yaml` with
@@ -253,6 +255,13 @@ pub fn save_secret(
         .map_err(|_| {
             invalid("the expiry must be an RFC 3339 time, such as 2026-12-31T23:59:00Z")
         })?;
+    // A form opened before the environment was renamed or deleted must not
+    // store a value under the freed name.
+    if !project.environments.iter().any(|e| e.name == environment) {
+        return Err(SaveSecretError::Invalid(format!(
+            "the environment \"{environment}\" no longer exists"
+        )));
+    }
     if vault.status().locked {
         return Err(UseError::Locked.into());
     }

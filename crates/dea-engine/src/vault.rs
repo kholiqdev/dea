@@ -365,13 +365,16 @@ impl VaultService {
 
     /// Moves the values of environment `from` of `project` to `to`, for an
     /// environment renamed on disk, so none stay behind under the freed
-    /// name. `to` ends with exactly what `from` had. Nothing to move needs
-    /// no unlock.
+    /// name. `to` ends with exactly what `from` had. `project` is the one
+    /// before the rename: when it has more than one environment called
+    /// `from`, the others still use the values, and nothing moves (see
+    /// [`values_involved`]). Nothing to move needs no unlock.
     ///
     /// # Errors
     ///
-    /// [`UseError::Locked`] when `from` has values and the Vault is locked;
-    /// nothing is moved then. [`UseError::Vault`] when the store fails.
+    /// [`UseError::Locked`] when `from` or `to` has values and the Vault is
+    /// locked; nothing is moved then. [`UseError::Vault`] when the store
+    /// fails.
     pub fn move_environment(
         &self,
         project: &Project,
@@ -379,7 +382,9 @@ impl VaultService {
         to: &str,
     ) -> Result<(), UseError> {
         let scope = project.vault_scope();
-        if !self.store.has_values(&scope, from) && !self.store.has_values(&scope, to) {
+        if !values_involved(project, from, Some(to), |name| {
+            self.store.has_values(&scope, name)
+        }) {
             return Ok(());
         }
         self.require_unlocked()?;
@@ -389,8 +394,10 @@ impl VaultService {
     }
 
     /// Removes the values of `environment` of `project`, for an environment
-    /// deleted on disk, so none stay behind under the freed name. Nothing
-    /// to remove needs no unlock.
+    /// deleted on disk, so none stay behind under the freed name. `project`
+    /// is the one before the delete: when it has more than one environment
+    /// of that name, the others still use the values, and nothing is removed
+    /// (see [`values_involved`]). Nothing to remove needs no unlock.
     ///
     /// # Errors
     ///
@@ -399,7 +406,9 @@ impl VaultService {
     /// store fails.
     pub fn remove_environment(&self, project: &Project, environment: &str) -> Result<(), UseError> {
         let scope = project.vault_scope();
-        if !self.store.has_values(&scope, environment) {
+        if !values_involved(project, environment, None, |name| {
+            self.store.has_values(&scope, name)
+        }) {
             return Ok(());
         }
         self.require_unlocked()?;
@@ -507,6 +516,29 @@ pub fn is_production(project: &Project, environment: &str) -> bool {
         .filter(|e| e.name == environment)
         .peekable();
     named.peek().is_none() || named.any(|e| e.production)
+}
+
+/// Whether renaming `environment` of `project` to `to`, or deleting it
+/// when `to` is `None`, involves Vault values; `has_values` tells whether a
+/// name has values on this device. `project` is the one before the change.
+///
+/// Only when exactly one environment has the name: two files can share one
+/// after a merge, and the values are then used by both, so moving or
+/// removing them with one would take them from the other. A rename also
+/// involves values left under `to`, which it removes.
+#[must_use]
+pub fn values_involved(
+    project: &Project,
+    environment: &str,
+    to: Option<&str>,
+    has_values: impl Fn(&str) -> bool,
+) -> bool {
+    let named = project
+        .environments
+        .iter()
+        .filter(|e| e.name == environment)
+        .count();
+    named == 1 && (has_values(environment) || to.is_some_and(&has_values))
 }
 
 /// Stops the timer and the OS event watcher when dropped.
