@@ -22,6 +22,8 @@ export interface FakeIpcOptions {
   project?: ProjectInfo | null;
   /** What get_ui_state returns. */
   uiState?: UiState;
+  /** How long clear_local_data takes, in milliseconds. */
+  clearTakes?: number;
 }
 
 export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
@@ -41,6 +43,10 @@ export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
       });
       return null;
     }
+    if (cmd === "clear_local_data")
+      return new Promise((resolve) =>
+        setTimeout(() => resolve(null), opts.clearTakes ?? 0),
+      );
     if (
       cmd === "save_settings" ||
       cmd === "set_active_environment" ||

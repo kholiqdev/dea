@@ -4,11 +4,14 @@
   import Menu, { type MenuItem } from "@dea/ui/Menu.svelte";
   import { errorMessage } from "$lib/ipc/errors";
   import { closeProject, openWindow, pickFolder } from "$lib/ipc/project";
+  import ClearLocalData from "../prompts/ClearLocalData.svelte";
+  import { clearLocalData } from "../prompts/clear-local-data";
   import { toasts } from "../prompts/toasts.svelte";
   import { shellContext } from "./context";
 
   const ctx = shellContext();
   const info = $derived(ctx.project.info);
+  let clearing = $state(false);
 
   function attempt(action: () => Promise<unknown>): void {
     action().catch((e: unknown) => toasts.show(errorMessage(e)));
@@ -35,6 +38,11 @@
       onselect: () => attempt(() => openWindow(info?.root ?? null)),
     },
     {
+      id: "clear",
+      label: "Clear local data…",
+      onselect: () => (clearing = true),
+    },
+    {
       id: "close",
       label: "Close project",
       onselect: () =>
@@ -54,6 +62,16 @@
       <ChevronDown size={14} strokeWidth={1.5} />
     {/snippet}
   </Menu>
+  {#if clearing}
+    <ClearLocalData
+      name={info.name}
+      oncancel={() => (clearing = false)}
+      onclear={() => {
+        clearing = false;
+        attempt(() => clearLocalData(ctx.shell, ctx.tabs));
+      }}
+    />
+  {/if}
 {/if}
 
 <style>
