@@ -10,9 +10,25 @@
   // The active tab always belongs to the active module.
   const tab = $derived(ctx.tabs.active);
   const tabType = $derived(tab ? ctx.registry.tabType(tab.tabType) : undefined);
+
+  let count = 0;
+  // A closed tab takes the focus with it: give it to the tab that is now
+  // active, or to the work area when none is left.
+  function keepFocus(main: HTMLElement): void {
+    const n = ctx.tabs.tabs.length;
+    const closed = n < count;
+    count = n;
+    const lost =
+      !document.activeElement || document.activeElement === document.body;
+    if (!closed || !lost) return;
+    (
+      main.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
+      main
+    ).focus();
+  }
 </script>
 
-<main class="main">
+<main class="main" tabindex="-1" {@attach keepFocus}>
   {#if ctx.project.info}<TabBar />{/if}
   <div class="content">
     {#if tab && tabType}
@@ -33,6 +49,10 @@
     display: flex;
     flex-direction: column;
     background: var(--bg-1);
+  }
+
+  .main:focus {
+    outline: none;
   }
 
   .content {

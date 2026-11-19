@@ -1,10 +1,9 @@
 // What modules may ask of the shell. The shell provides the implementation
 // when it starts, so modules never import the rest of src/app.
 
-export interface TabEnvironment {
-  name: string;
-  production: boolean;
-}
+import type { TabEnvironment } from "$lib/ipc/bindings/TabEnvironment";
+
+export type { TabEnvironment };
 
 export interface OpenTabOptions {
   environment?: TabEnvironment;

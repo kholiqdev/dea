@@ -155,3 +155,30 @@ test("switching modules replaces the view", async () => {
   expect(await screen.findByText("database view")).toBeInTheDocument();
   expect(screen.queryByText("requests view")).not.toBeInTheDocument();
 });
+
+test("shortcuts do nothing while a dialog is open", async () => {
+  const { shell } = setup(railModule("requests", 1), railModule("database", 2));
+  const answer = closeQuestion.ask({
+    id: "t",
+    tabType: "requests.request",
+    title: "Draft",
+    params: null,
+    module: "requests",
+    dirty: true,
+  });
+  const dialog = await screen.findByRole("dialog", {
+    name: "Save changes to Draft?",
+  });
+  // Everything behind the dialog is out of reach.
+  expect(document.querySelector(".app")).toHaveAttribute("inert");
+
+  await userEvent.keyboard("{Control>}2{/Control}");
+  expect(shell.activeModule).toBeNull();
+  expect(dialog).toBeInTheDocument();
+
+  await userEvent.keyboard("{Escape}");
+  expect(await answer).toBe("cancel");
+  expect(document.querySelector(".app")).not.toHaveAttribute("inert");
+  await userEvent.keyboard("{Control>}2{/Control}");
+  await waitFor(() => expect(shell.activeModule).toBe("database"));
+});

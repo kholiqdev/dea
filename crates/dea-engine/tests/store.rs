@@ -3,8 +3,8 @@ use std::error::Error;
 use std::fs;
 
 use dea_engine::store::{
-    Appearance, MAX_CLOSED_TABS, Settings, SidebarState, Store, StoreError, TabState,
-    ThemePreference, UiState,
+    Appearance, MAX_CLOSED_TABS, Settings, SidebarState, Store, StoreError, TabEnvironment,
+    TabState, ThemePreference, UiState,
 };
 
 fn tab(n: usize) -> TabState {
@@ -13,6 +13,7 @@ fn tab(n: usize) -> TabState {
         tab_type: "e2e.tab".into(),
         title: format!("Tab {n}"),
         params: serde_json::json!({ "n": n }),
+        environment: None,
     }
 }
 
@@ -282,4 +283,33 @@ fn clearing_a_project_removes_every_slot_and_nothing_else() {
     assert_eq!(store.load_ui_state("q", 0), state);
     // Clearing a project with nothing saved is fine.
     store.clear_ui_state("never-saved").unwrap();
+}
+
+#[test]
+fn a_tab_keeps_its_environment_across_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    let prod = TabState {
+        environment: Some(TabEnvironment {
+            name: "production".into(),
+            production: true,
+        }),
+        ..tab(1)
+    };
+    let state = UiState {
+        tabs: vec![prod.clone(), tab(2)],
+        ..UiState::default()
+    };
+    store.save_ui_state("p", 0, state).unwrap();
+    let loaded = store.load_ui_state("p", 0);
+    assert_eq!(loaded.tabs, vec![prod, tab(2)]);
+}
+
+#[test]
+fn ui_state_without_tab_environments_still_loads() {
+    let state: UiState = serde_json::from_str(
+        r#"{"version":1,"tabs":[{"id":"t1","tabType":"e2e.tab","title":"Tab 1","params":null}]}"#,
+    )
+    .unwrap();
+    assert_eq!(state.tabs[0].environment, None);
 }

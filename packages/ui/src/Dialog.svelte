@@ -28,14 +28,35 @@
     return [...box.querySelectorAll<HTMLElement>(FOCUSABLE)];
   }
 
+  /**
+   * Makes everything outside the dialog inert, wherever in the page the
+   * dialog is; returns what undoes it.
+   */
+  function inertOthers(el: HTMLElement): () => void {
+    const made: Element[] = [];
+    for (let node = el; node.parentElement; node = node.parentElement) {
+      for (const other of node.parentElement.children) {
+        if (other === node || other.hasAttribute("inert")) continue;
+        other.setAttribute("inert", "");
+        made.push(other);
+      }
+      if (node.parentElement === document.body) break;
+    }
+    return () => {
+      for (const other of made) other.removeAttribute("inert");
+    };
+  }
+
   onMount(() => {
     const before = document.activeElement as HTMLElement | null;
+    const restore = inertOthers(box);
     const first =
       box.querySelector<HTMLElement>("[data-autofocus]") ??
       focusables()[0] ??
       box;
     first.focus();
     return () => {
+      restore();
       if (before?.isConnected) before.focus();
     };
   });
