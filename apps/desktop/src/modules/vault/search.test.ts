@@ -24,6 +24,7 @@ function row(environment: string, name: string, missing = false): SecretRow {
 }
 
 let calls: string[];
+let project: ProjectApi & { info: ProjectInfo | null };
 let opened: string[];
 
 beforeEach(() => {
@@ -39,7 +40,7 @@ beforeEach(() => {
       { name: "production", production: true },
     ],
   } as unknown as ProjectInfo;
-  const project: ProjectApi = {
+  project = {
     info,
     environment: null,
     changed: [],
@@ -125,4 +126,28 @@ test("Lock Vault locks with Mod+L", async () => {
   const { default: run } = await intent!.handler();
   await run(undefined);
   expect(vault.locks).toBe(1);
+});
+
+test("a secret name removed after the palette opened says so", async () => {
+  reactiveVault();
+  const toasts: string[] = [];
+  setShellApi({
+    openTab: () => "t",
+    findTab: () => undefined,
+    activateTab: () => true,
+    closeTab: () => Promise.resolve(true),
+    setTabDirty: () => {},
+    setSaveHandler: () => {},
+    openModule: (id) => {
+      opened.push(id);
+      return Promise.resolve();
+    },
+    runCommand: () => Promise.resolve(),
+    toast: (text) => void toasts.push(text),
+  });
+  const items = secretNames();
+  project.info = { ...project.info!, secretNames: ["access_token"] };
+  await items[1]?.open("active");
+  expect(toasts).toEqual(["pg_password no longer exists"]);
+  expect(opened).toEqual([]);
 });
