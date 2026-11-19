@@ -108,3 +108,32 @@ test("the list can be searched", async () => {
   expect(screen.queryByRole("row", { name: /^Open Requests/ })).toBeNull();
   expect(row("Open Database")).toBeInTheDocument();
 });
+
+test("a shortcut needs Mod or Alt, except function keys", async () => {
+  render(ShortcutsSection);
+  await userEvent.click(
+    within(row("Open Requests")).getByRole("button", { name: "Change" }),
+  );
+  const capture = screen.getByRole("textbox", {
+    name: "New shortcut for Open Requests",
+  });
+  // Enter, Space and plain letters would take over typing and buttons.
+  await userEvent.keyboard("{Enter}{ }k{Shift>}K{/Shift}");
+  expect(capture).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await userEvent.keyboard("{F5}");
+  expect(capture).toHaveValue("F5");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
+test("resetting every shortcut starts on Cancel", async () => {
+  await settings.update({ shortcuts: { "requests.open": "Mod+Shift+1" } });
+  render(ShortcutsSection);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Reset all to defaults…" }),
+  );
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(settings.shortcuts).toEqual({ "requests.open": "Mod+Shift+1" });
+});

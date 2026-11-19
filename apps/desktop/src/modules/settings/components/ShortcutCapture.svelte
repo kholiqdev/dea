@@ -43,7 +43,11 @@
       return;
     }
     const chord = chordFromEvent(e, platform);
-    if (chord) oncapture(chordToString(chord));
+    // A key without Mod or Alt would take over typing and buttons (Enter,
+    // Space, letters); function keys are free to use on their own.
+    if (!chord || (!chord.mod && !chord.alt && !/^F\d+$/.test(chord.key)))
+      return;
+    oncapture(chordToString(chord));
   }
 </script>
 
