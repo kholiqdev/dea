@@ -12,11 +12,14 @@
     info,
     selected,
     onselect,
+    onadd,
   }: {
     rows: SecretRow[];
     info: ProjectInfo;
     selected: SecretRow | null;
     onselect: (row: SecretRow) => void;
+    /** Add the value of a declared secret that has none here. */
+    onadd: (row: SecretRow) => void;
   } = $props();
 
   const now = new Date();
@@ -55,7 +58,7 @@
         <td>
           {#if row.missing}
             <span class="missing">Missing</span>
-            <Button size="small" disabled>Add value</Button>
+            <Button size="small" onclick={() => onadd(row)}>Add value</Button>
           {:else}
             {row.updatedAt ? relativeTime(row.updatedAt, now) : "—"}
           {/if}

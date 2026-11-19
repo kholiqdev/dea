@@ -4,5 +4,6 @@ export {
   vaultCopy,
   vaultDeleteValue,
   vaultReveal,
+  vaultSaveSecret,
   vaultSecrets,
 } from "$lib/ipc/vault";
