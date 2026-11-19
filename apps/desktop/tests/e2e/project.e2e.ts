@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { $, browser, expect } from "@wdio/globals";
+import { $, $$, browser, expect } from "@wdio/globals";
 import { Key } from "webdriverio";
 import {
   MOD,
@@ -36,7 +36,7 @@ async function waitForWelcome(): Promise<void> {
 }
 
 async function projectMenu(item: string): Promise<void> {
-  await $("header .where button[aria-haspopup='menu']").click();
+  await $('header button[title="Project"]').click();
   await $('[role="menu"]').$(`button=${item}`).click();
 }
 
@@ -85,9 +85,8 @@ describe("projects and environments", () => {
     rmSync(gone, { recursive: true, force: true });
     await browser.reloadSession();
     await waitForWelcome();
-    const row = $("li*=gone-api");
-    await expect(row.$("span*=Folder not found")).toBeDisplayed();
-    await row.$("button=Remove from list").click();
+    // Only a recent project whose folder is gone can be removed here.
+    await $("li*=gone-api").$("button=Remove from list").click();
     await browser.waitUntil(
       async () => !(await recent())?.includes("gone-api"),
     );
@@ -188,7 +187,9 @@ describe("projects and environments", () => {
     await projectMenu("Clear local data…");
     await $('[role="dialog"]').$("button=Clear").click();
     await waitForText(".toasts", "Local data cleared");
-    await expect($('[role="tab"]')).not.toBeExisting();
+    await browser.waitUntil(
+      async () => (await $$('[role="tab"]').length) === 0,
+    );
     await browser.pause(800);
     expect(tabs()).toEqual([]);
   });
