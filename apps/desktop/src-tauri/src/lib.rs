@@ -1,6 +1,13 @@
 use std::io::Write;
 
+use tauri::Manager;
 use tauri::webview::PageLoadEvent;
+
+mod commands;
+mod error;
+mod state;
+
+use state::AppState;
 
 fn probe_enabled() -> bool {
     std::env::var_os("DEA_PERF_PROBE").is_some_and(|v| v == "1")
@@ -36,7 +43,19 @@ pub fn run() {
         probe_print("DEA_MARK process started");
     }
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![perf_ready, perf_mark])
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            app.manage(AppState::new(&dir));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            perf_ready,
+            perf_mark,
+            commands::settings::get_settings,
+            commands::settings::save_settings,
+            commands::settings::get_ui_state,
+            commands::settings::save_ui_state,
+        ])
         .on_page_load(move |_webview, payload| {
             if probe && payload.event() == PageLoadEvent::Finished {
                 probe_print("DEA_MARK page loaded");
