@@ -59,7 +59,7 @@
 </script>
 
 {#if info}
-  <Menu {items} menuLabel="Project">
+  <Menu {items} menuLabel="Project" title="Project">
     {#snippet trigger()}
       <span class="name">{info.name}</span>
       <ChevronDown size={14} strokeWidth={1.5} />

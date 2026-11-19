@@ -112,7 +112,7 @@
     >
   </nav>
 
-  <main class="main">
+  <div class="main">
     {#if newerDea}
       <FileBanner tone="neutral">
         {#snippet icon()}<Lock size={16} strokeWidth={1.5} />{/snippet}
@@ -232,7 +232,7 @@
         />
       </div>
     {/if}
-  </main>
+  </div>
 </div>
 
 {#if deleting}
