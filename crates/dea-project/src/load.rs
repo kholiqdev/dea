@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -52,10 +53,14 @@ pub fn load_project(root: &Path) -> Result<LoadedProject, ProjectError> {
     };
 
     let mut environments = Vec::new();
+    let mut environment_files = BTreeMap::new();
     for rel in yaml_files(root, Path::new(ENVIRONMENTS))? {
         match fs::read_to_string(root.join(&rel)) {
             Ok(text) => match parse_environment(&rel, &text, read_only) {
-                Ok(env) => environments.push(env),
+                Ok(env) => {
+                    environment_files.insert(env.name.clone(), rel);
+                    environments.push(env);
+                }
                 Err(e) => errors.push(e),
             },
             Err(e) => errors.push(io_error(&rel, &e)),
@@ -67,6 +72,7 @@ pub fn load_project(root: &Path) -> Result<LoadedProject, ProjectError> {
             root: root.to_path_buf(),
             manifest,
             environments,
+            environment_files,
             vault,
             read_only,
         },
@@ -213,13 +219,17 @@ pub(crate) fn parse<T: DeserializeOwned>(rel: &Path, text: &str) -> Result<T, Fi
         line,
         column,
         message,
+        merge_conflict: false,
     };
     if has_merge_conflict_markers(&text) {
-        return Err(error(
-            "unresolved merge conflict: resolve the conflict markers and save".into(),
-            None,
-            None,
-        ));
+        return Err(FileError {
+            merge_conflict: true,
+            ..error(
+                "unresolved merge conflict: resolve the conflict markers and save".into(),
+                None,
+                None,
+            )
+        });
     }
     if text.trim().is_empty() {
         return Err(error("empty file".into(), None, None));
@@ -240,6 +250,7 @@ fn io_error(rel: &Path, e: &std::io::Error) -> FileError {
         line: None,
         column: None,
         message: format!("cannot read file: {e}"),
+        merge_conflict: false,
     }
 }
 

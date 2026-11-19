@@ -110,6 +110,7 @@ fn invalid_version() -> ProjectError {
         line: None,
         column: None,
         message: "schemaVersion is missing or is not a whole number".into(),
+        merge_conflict: false,
     })
 }
 

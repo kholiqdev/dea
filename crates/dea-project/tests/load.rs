@@ -83,6 +83,7 @@ fn merge_conflict_file_is_flagged() {
         "{}",
         l.errors[0]
     );
+    assert!(l.errors[0].merge_conflict);
     assert_eq!(l.project.environments.len(), 2);
 }
 

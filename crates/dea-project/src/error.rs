@@ -9,6 +9,8 @@ pub struct FileError {
     pub line: Option<usize>,
     pub column: Option<usize>,
     pub message: String,
+    /// The file still holds git conflict markers.
+    pub merge_conflict: bool,
 }
 
 impl fmt::Display for FileError {
