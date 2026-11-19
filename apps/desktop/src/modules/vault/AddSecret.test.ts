@@ -163,8 +163,9 @@ test("saving a token declares it and shows it in the table", async () => {
   expect(
     screen.queryByRole("heading", { name: "Add a secret" }),
   ).not.toBeInTheDocument();
+  // The table reloads after the save; the new row comes with it.
   expect(
-    within(table).getByRole("button", { name: "api_token" }),
+    await within(table).findByRole("button", { name: "api_token" }),
   ).toHaveAttribute("aria-current", "true");
   expect(document.body.textContent).not.toContain(VALUE);
 });
@@ -328,25 +329,126 @@ test("Reveal shows the typed value for 30 s, then masks it", async () => {
   expect(calls.some((c) => c.cmd === "vault_reveal")).toBe(false);
 });
 
-test("Copy clears the clipboard after 30 s if it still holds the value", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true, now: NOW });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+test("the form has Reveal but no Copy", async () => {
+  const user = userEvent.setup();
   await openForm(user);
-  const write = vi.spyOn(navigator.clipboard, "writeText");
-  await user.type(screen.getByLabelText("Value"), VALUE);
-  await user.click(screen.getByRole("button", { name: "Copy" }));
-  expect(await navigator.clipboard.readText()).toBe(VALUE);
-  await vi.advanceTimersByTimeAsync(29_000);
-  expect(write).toHaveBeenCalledTimes(1);
-  await vi.advanceTimersByTimeAsync(1_000);
-  expect(write).toHaveBeenLastCalledWith("");
-  expect(write).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("button", { name: "Reveal" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Copy" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Reveal hides the value again after 30 seconds"),
+  ).toBeInTheDocument();
+});
 
-  // Something else on the clipboard is left alone.
-  await user.click(screen.getByRole("button", { name: "Copy" }));
-  await navigator.clipboard.writeText("something else");
-  write.mockClear();
-  await vi.advanceTimersByTimeAsync(30_000);
-  expect(write).not.toHaveBeenCalled();
-  expect(calls.some((c) => c.cmd === "vault_copy")).toBe(false);
+test("Reveal is off while the Vault is locked", async () => {
+  const user = userEvent.setup();
+  await openForm(user);
+  const value = screen.getByLabelText("Value");
+  await user.type(value, VALUE);
+  const reveal = screen.getByRole("button", { name: "Reveal" });
+  expect(reveal).toBeEnabled();
+
+  vault.locked = true;
+  await waitFor(() => expect(reveal).toBeDisabled());
+  await user.click(reveal);
+  expect(value).toHaveAttribute("type", "password");
+
+  // A value shown when the Vault locks is masked at once.
+  vault.locked = false;
+  await waitFor(() => expect(reveal).toBeEnabled());
+  await user.click(reveal);
+  expect(value).toHaveAttribute("type", "text");
+  vault.locked = true;
+  await waitFor(() => expect(value).toHaveAttribute("type", "password"));
+});
+
+test("saving over a value asks for a second press", async () => {
+  rows.push({
+    name: "api_token",
+    kind: "token",
+    description: null,
+    environment: "local",
+    missing: false,
+    updatedAt: "2026-11-18T12:00:00Z",
+    expiresAt: null,
+  });
+  const user = userEvent.setup();
+  await openForm(user);
+  const warning =
+    '"api_token" already has a value in local. Saving replaces it.';
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "api_token");
+  await user.type(screen.getByLabelText("Value"), VALUE);
+  expect(screen.getByText(warning)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Save secret" }));
+  expect(calls.some((c) => c.cmd === "vault_save_secret")).toBe(false);
+  expect(
+    screen.queryByRole("button", { name: "Save secret" }),
+  ).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Replace value" }));
+  await screen.findByRole("table", { name: "Secrets" });
+  expect(saved()).toMatchObject({
+    name: "api_token",
+    environment: "local",
+    value: VALUE,
+  });
+});
+
+test("another environment without a value saves at once", async () => {
+  rows.push({
+    name: "api_token",
+    kind: "token",
+    description: null,
+    environment: "local",
+    missing: false,
+    updatedAt: "2026-11-18T12:00:00Z",
+    expiresAt: null,
+  });
+  const user = userEvent.setup();
+  await openForm(user);
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "api_token");
+  await user.type(screen.getByLabelText("Value"), VALUE);
+  await user.selectOptions(screen.getByLabelText("Environment"), "staging");
+  expect(screen.queryByText(/already has a value/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save secret" }));
+  await screen.findByRole("table", { name: "Secrets" });
+  expect(saved()).toMatchObject({ name: "api_token", environment: "staging" });
+});
+
+test("a declared name brings its type and description", async () => {
+  setProjectApi({
+    info: { ...project(), secretNames: ["deploy_key"] },
+    environment: null,
+    changed: [],
+    setEnvironment: () => Promise.resolve(),
+    refresh: (i) => refreshed.push(i),
+  });
+  const user = userEvent.setup();
+  await openForm(user);
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "deploy_key");
+  expect(screen.getByLabelText("Type")).toHaveValue("sshKey");
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+    "Deploy to the box",
+  );
+});
+
+test("a declared name keeps a type and description already typed", async () => {
+  setProjectApi({
+    info: { ...project(), secretNames: ["deploy_key"] },
+    environment: null,
+    changed: [],
+    setEnvironment: () => Promise.resolve(),
+    refresh: (i) => refreshed.push(i),
+  });
+  const user = userEvent.setup();
+  await openForm(user);
+  await user.selectOptions(screen.getByLabelText("Type"), "Password");
+  await user.type(screen.getByRole("textbox", { name: "Description" }), "Mine");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "deploy_key");
+  expect(screen.getByLabelText("Type")).toHaveValue("password");
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+    "Mine",
+  );
 });
