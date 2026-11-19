@@ -243,10 +243,16 @@ pub async fn save_environment(
     let vault = app.state::<AppState>().vault.existing();
     spawn_blocking(move || {
         let project = load_project(&session.root)?.project;
+        // One refusal is enough when a rename also turns production off.
         if production_turned_off(&project, previous.as_deref(), &environment) {
             require_production_open(
                 vault.as_deref(),
                 "turning production off needs authentication first",
+            )?;
+        } else if renames_production(&project, previous.as_deref(), &environment) {
+            require_production_open(
+                vault.as_deref(),
+                "renaming a production environment needs authentication first",
             )?;
         }
         dea_project::save_environment(&project, previous.as_deref(), &environment)?;
@@ -262,19 +268,32 @@ fn production_turned_off(
     previous: Option<&str>,
     environment: &Environment,
 ) -> bool {
-    !environment.production
-        && previous.is_some_and(|previous| {
-            project
-                .environments
-                .iter()
-                .any(|e| e.name == previous && e.production)
-        })
+    !environment.production && previous.is_some_and(|previous| marked_production(project, previous))
+}
+
+/// Whether saving `environment` over `previous` renames a production
+/// environment. Only allowed while the production window is open: an
+/// environment created under the freed name, not marked production, would
+/// reach its Vault values.
+fn renames_production(
+    project: &Project,
+    previous: Option<&str>,
+    environment: &Environment,
+) -> bool {
+    previous.is_some_and(|previous| {
+        previous != environment.name && marked_production(project, previous)
+    })
 }
 
 /// Whether deleting `name` removes a production environment. Only allowed
-/// while the production window is open: an environment created again under
-/// the same name, not marked production, would reach its Vault values.
+/// while the production window is open, for the same reason as a rename.
 fn deletes_production(project: &Project, name: &str) -> bool {
+    marked_production(project, name)
+}
+
+/// Whether the project, as loaded, has an environment `name` marked
+/// production.
+fn marked_production(project: &Project, name: &str) -> bool {
     project
         .environments
         .iter()
@@ -459,6 +478,35 @@ mod tests {
             None,
             &env("production", false)
         ));
+    }
+
+    #[test]
+    fn renaming_production_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dea_project::create_project(&dir.path().join("p"), "p").unwrap();
+        let env = |name: &str, production: bool| Environment {
+            name: name.into(),
+            production,
+            color: None,
+            variables: Vec::new(),
+        };
+
+        assert!(renames_production(
+            &project,
+            Some("production"),
+            &env("live", true)
+        ));
+        assert!(!renames_production(
+            &project,
+            Some("staging"),
+            &env("qa", false)
+        ));
+        assert!(!renames_production(
+            &project,
+            Some("production"),
+            &env("production", true)
+        ));
+        assert!(!renames_production(&project, None, &env("live", true)));
     }
 
     #[test]
