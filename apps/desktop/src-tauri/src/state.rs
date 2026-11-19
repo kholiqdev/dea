@@ -1,19 +1,42 @@
 //! What every command can reach.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use dea_engine::store::Store;
+use dea_project::ProjectWatcher;
 use tauri::{AppHandle, Manager, Runtime};
+
+use crate::session::Sessions;
 
 pub struct AppState {
     pub store: Store,
+    sessions: Mutex<Sessions>,
+    // One watcher per window with a project, by window label.
+    watchers: Mutex<HashMap<String, ProjectWatcher>>,
 }
 
 impl AppState {
     pub fn new(app_data: PathBuf) -> Self {
         Self {
             store: Store::new(app_data),
+            sessions: Mutex::new(Sessions::default()),
+            watchers: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn sessions(&self) -> MutexGuard<'_, Sessions> {
+        self.sessions.lock().expect("sessions lock poisoned")
+    }
+
+    /// Replaces the window's watcher; `None` stops watching.
+    pub fn set_watcher(&self, window: &str, watcher: Option<ProjectWatcher>) {
+        let mut watchers = self.watchers.lock().expect("watchers lock poisoned");
+        match watcher {
+            Some(w) => watchers.insert(window.to_string(), w),
+            None => watchers.remove(window),
+        };
     }
 }
 

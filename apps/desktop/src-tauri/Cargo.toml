@@ -19,8 +19,11 @@ workspace = true
 
 [dependencies]
 dea-engine.workspace = true
+dea-project.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tauri = { version = "2.12.5", features = [] }
+tauri-plugin-dialog = "2.8.4"
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true

@@ -142,14 +142,32 @@ impl ProjectInfo {
     }
 }
 
+/// Sent to a window when files of its project changed on disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub struct ProjectChanged {
+    pub info: ProjectInfo,
+    /// Paths relative to the project root, with forward slashes.
+    pub changed: Vec<String>,
+}
+
+/// `path` relative to the project root, with forward slashes on every OS.
+#[must_use]
+pub fn portable_path(path: &Path) -> String {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn file_error_info(e: &FileError) -> FileErrorInfo {
     FileErrorInfo {
-        path: e
-            .path
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/"),
+        path: portable_path(&e.path),
         line: e.line.and_then(|l| u32::try_from(l).ok()),
         message: e.message.clone(),
     }
