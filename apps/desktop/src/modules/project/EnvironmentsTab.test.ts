@@ -190,19 +190,16 @@ test("deleting lists what uses the environment first", async () => {
   );
 });
 
-test("production can be turned on but not off yet", async () => {
+test("production can be turned on without signing in", async () => {
   open();
   await select("production");
-  const prodSwitch = screen.getByRole("switch", {
-    name: "Treat as production",
-  });
-  expect(prodSwitch).toHaveAttribute("aria-checked", "true");
-  expect(prodSwitch).toBeDisabled();
+  expect(
+    screen.getByRole("switch", { name: "Treat as production" }),
+  ).toBeEnabled();
   await select("staging");
   const stagingSwitch = screen.getByRole("switch", {
     name: "Treat as production",
   });
-  expect(stagingSwitch).toBeEnabled();
   await userEvent.click(stagingSwitch);
   expect(stagingSwitch).toHaveAttribute("aria-checked", "true");
 });

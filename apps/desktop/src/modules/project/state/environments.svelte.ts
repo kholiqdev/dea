@@ -3,6 +3,7 @@
 // problems show before anything is sent.
 
 import { projectApi } from "$app/contributions/project-api";
+import { vaultApi } from "$app/contributions/vault-api";
 import type { Environment } from "$lib/ipc/bindings/Environment";
 import type { FileErrorInfo } from "$lib/ipc/bindings/FileErrorInfo";
 import type { ProjectInfo } from "$lib/ipc/bindings/ProjectInfo";
@@ -273,7 +274,9 @@ export class EnvironmentsEditor {
   /**
    * Saves every changed environment, one after another. Refuses while
    * something stops a save, so a close that asked to save keeps the tab.
-   * A failure keeps every draft not written yet.
+   * A failure keeps every draft not written yet. Renaming a production
+   * environment asks to sign in first; if that is cancelled nothing is
+   * written and the drafts stay as they are.
    */
   async save(): Promise<void> {
     if (!this.dirty) return;
@@ -283,6 +286,14 @@ export class EnvironmentsEditor {
           ? "Decide what to do with the changes on disk before saving"
           : "Fix the problems in the environments before saving",
       );
+    for (const d of this.drafts.filter((x) => x.dirty)) {
+      if (d.saved?.production && d.draft.name !== d.saved.name) {
+        const ok = await vaultApi().authorize(
+          `rename the production environment ${d.saved.name}`,
+        );
+        if (!ok) return;
+      }
+    }
     const project = projectApi();
     const active = project.environment?.name;
     let info: ProjectInfo | null = null;
@@ -323,6 +334,12 @@ export class EnvironmentsEditor {
 
   async remove(d: EnvironmentDraft): Promise<void> {
     if (d.saved) {
+      if (d.saved.production) {
+        const ok = await vaultApi().authorize(
+          `delete the production environment ${d.saved.name}`,
+        );
+        if (!ok) return;
+      }
       const info = await deleteEnvironment(d.saved.name);
       projectApi().refresh(info);
     }

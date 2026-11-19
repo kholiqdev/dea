@@ -1,5 +1,6 @@
 <script lang="ts">
   import Trash from "@lucide/svelte/icons/trash-2";
+  import { vaultApi } from "$app/contributions/vault-api";
   import type { EnvironmentDraft } from "../state/environments.svelte";
 
   let {
@@ -21,9 +22,17 @@
   ] as const;
 
   const env = $derived(draft.draft);
-  // Production on disk can only be turned off after signing in (F1-FON-07 #4),
-  // which arrives with the Vault UI.
-  const lockedOn = $derived(draft.saved?.production === true);
+
+  // Production on disk can only be turned off after signing in (F1-FON-07 #4).
+  async function toggleProduction(): Promise<void> {
+    if (env.production && draft.saved?.production) {
+      const ok = await vaultApi().authorize(
+        `turn off production for ${draft.saved.name}`,
+      );
+      if (!ok) return;
+    }
+    env.production = !env.production;
+  }
 </script>
 
 <aside class="inspector" aria-label="Environment">
@@ -76,9 +85,8 @@
         class="switch"
         aria-checked={env.production}
         aria-label="Treat as production"
-        disabled={readonly || lockedOn}
-        onclick={() => (env.production = !env.production)}
-        ><span class="knob"></span></button
+        disabled={readonly}
+        onclick={toggleProduction}><span class="knob"></span></button
       >
     </div>
     <span class="meta">
