@@ -55,7 +55,11 @@
 
   // The tab bar shows unsaved changes, and a close asks to save them.
   $effect(() => shellApi().setTabDirty(tab.id, editor.dirty));
-  shellApi().setSaveHandler("project.environments", () => editor.save());
+  shellApi().setSaveHandler("project.environments", async () => {
+    await editor.save();
+    // A cancelled sign-in saves nothing; the tab must not close over that.
+    if (editor.dirty) throw new Error("The environments were not saved");
+  });
 
   function attempt(action: () => Promise<unknown>): void {
     action().catch((e: unknown) => (editor.error = errorMessage(e)));
