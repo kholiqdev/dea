@@ -1151,6 +1151,7 @@ name = "dea-engine"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "dea-http",
  "dea-project",
  "dea-testkit",
  "dea-vault",
@@ -1161,7 +1162,9 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "time",
+ "tokio",
  "ts-rs",
+ "url",
  "zeroize",
 ]
 

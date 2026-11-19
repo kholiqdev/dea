@@ -2,10 +2,13 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 
+use std::path::{Path, PathBuf};
+
 use dea_engine::store::{
     Appearance, MAX_CLOSED_TABS, Security, Settings, SidebarState, Store, StoreError,
     TabEnvironment, TabState, ThemePreference, UiState,
 };
+use dea_http::{CookieJar, StoredCookie};
 use dea_vault::{AutoLock, Policy};
 
 fn tab(n: usize) -> TabState {
@@ -379,4 +382,155 @@ fn vault_minutes_outside_their_ranges_are_refused() {
         with(None, 10).security.policy().unwrap().auto_lock,
         AutoLock::Never
     );
+}
+
+/// A jar with one session cookie `name=value` for `api.test`.
+fn jar_with(name: &str, value: &str) -> CookieJar {
+    let jar = CookieJar::new();
+    jar.insert(StoredCookie {
+        name: name.into(),
+        value: value.into(),
+        domain: "api.test".into(),
+        path: "/".into(),
+        expires: None,
+        secure: false,
+        http_only: false,
+        host_only: true,
+    })
+    .unwrap();
+    jar
+}
+
+fn cookie_names(jar: &CookieJar) -> Vec<String> {
+    jar.list().into_iter().map(|c| c.name).collect()
+}
+
+/// Every file under `dir`.
+fn files_in(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        if path.is_dir() {
+            pending.extend(fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
+        } else {
+            found.push(path);
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn cookies_are_kept_per_project_and_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    // Reading creates nothing.
+    assert!(store.load_cookies("p-1", "staging").list().is_empty());
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+
+    store
+        .save_cookies("p-1", "staging", &jar_with("a", "1"))
+        .unwrap();
+    store
+        .save_cookies("p-1", "production", &jar_with("b", "2"))
+        .unwrap();
+    store.save_cookies("p-1", "", &jar_with("c", "3")).unwrap();
+    store
+        .save_cookies("q-2", "staging", &jar_with("d", "4"))
+        .unwrap();
+
+    let again = Store::new(dir.path());
+    assert_eq!(cookie_names(&again.load_cookies("p-1", "staging")), ["a"]);
+    assert_eq!(
+        cookie_names(&again.load_cookies("p-1", "production")),
+        ["b"]
+    );
+    assert_eq!(cookie_names(&again.load_cookies("p-1", "")), ["c"]);
+    assert_eq!(cookie_names(&again.load_cookies("q-2", "staging")), ["d"]);
+    assert!(again.load_cookies("q-2", "production").list().is_empty());
+
+    // `cookies/<hash of the project>/<hash of the environment>.json`, and
+    // neither name shows in a path.
+    let files = files_in(&dir.path().join("cookies"));
+    assert_eq!(files.len(), 4, "{files:?}");
+    for file in &files {
+        let relative = file.strip_prefix(dir.path()).unwrap().to_string_lossy();
+        for name in ["p-1", "q-2", "staging", "production"] {
+            assert!(!relative.contains(name), "{relative}");
+        }
+        assert_eq!(file.extension().unwrap(), "json");
+    }
+    let text = files
+        .iter()
+        .map(|f| fs::read_to_string(f).unwrap())
+        .find(|t| t.contains("\"production\""))
+        .unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(saved["version"], 1);
+    assert_eq!(saved["environment"], "production");
+    let jar = CookieJar::from_json(&saved["cookies"].to_string()).unwrap();
+    assert_eq!(cookie_names(&jar), ["b"]);
+}
+
+#[test]
+fn damaged_cookie_file_is_set_aside() {
+    let newer = r#"{"version": 2, "environment": "staging", "cookies": []}"#;
+    let not_a_jar = r#"{"version": 1, "environment": "staging", "cookies": {"a": 1}}"#;
+    for text in ["{ not json", newer, not_a_jar] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        store
+            .save_cookies("p", "staging", &jar_with("a", "1"))
+            .unwrap();
+        let files = files_in(&dir.path().join("cookies"));
+        let [file] = &files[..] else {
+            panic!("expected one cookie file, got {files:?}");
+        };
+        fs::write(file, text).unwrap();
+
+        assert!(
+            store.load_cookies("p", "staging").list().is_empty(),
+            "{text}"
+        );
+        let mut damaged = file.clone().into_os_string();
+        damaged.push(".damaged");
+        assert_eq!(fs::read_to_string(&damaged).unwrap(), text);
+        assert!(!file.exists());
+
+        // The next save starts a new file and leaves the damaged one alone.
+        store
+            .save_cookies("p", "staging", &jar_with("b", "2"))
+            .unwrap();
+        assert_eq!(cookie_names(&store.load_cookies("p", "staging")), ["b"]);
+        assert_eq!(fs::read_to_string(&damaged).unwrap(), text);
+    }
+}
+
+#[test]
+fn clear_project_removes_ui_state_and_cookies() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    let state = UiState {
+        active_environment: Some("staging".into()),
+        ..UiState::default()
+    };
+    for scope in ["p", "q"] {
+        store.save_ui_state(scope, 0, state.clone()).unwrap();
+        store
+            .save_cookies(scope, "staging", &jar_with("a", "1"))
+            .unwrap();
+        store.save_cookies(scope, "", &jar_with("b", "2")).unwrap();
+    }
+
+    store.clear_project("p").unwrap();
+    assert_eq!(store.load_ui_state("p", 0), UiState::default());
+    assert!(store.load_cookies("p", "staging").list().is_empty());
+    assert!(store.load_cookies("p", "").list().is_empty());
+    // Another project keeps everything.
+    assert_eq!(store.load_ui_state("q", 0), state);
+    assert_eq!(cookie_names(&store.load_cookies("q", "staging")), ["a"]);
+    assert_eq!(cookie_names(&store.load_cookies("q", "")), ["b"]);
+    assert_eq!(files_in(&dir.path().join("cookies")).len(), 2);
+    // Clearing a project with nothing saved is fine.
+    store.clear_project("never-saved").unwrap();
 }

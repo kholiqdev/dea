@@ -1,4 +1,5 @@
-//! Settings and UI state, kept as JSON files in the app data folder.
+//! Settings, UI state and cookie jars, kept as JSON files in the app data
+//! folder.
 //!
 //! A file that cannot be read, or that a newer Dea wrote, is set aside as
 //! `<name>.damaged` and the defaults are used, so Dea always opens.
@@ -10,6 +11,7 @@ use std::io::{self, Write};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
+use dea_http::CookieJar;
 use dea_project::Project;
 use dea_vault::{
     AUTO_LOCK_MINUTES, DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_PRODUCTION_WINDOW_MINUTES,
@@ -32,9 +34,12 @@ pub const FONT_SIZES: RangeInclusive<u8> = 11..=20;
 
 const SETTINGS_FILE: &str = "settings.json";
 const UI_DIR: &str = "ui";
+const COOKIES_DIR: &str = "cookies";
 const RECENT_FILE: &str = "recent.json";
 /// The recent projects file format this Dea writes.
 pub const RECENT_VERSION: u32 = 1;
+/// The cookie jar file format this Dea writes.
+pub const COOKIES_VERSION: u32 = 1;
 
 /// The person's settings, shared by every project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,7 +247,7 @@ pub struct TabEnvironment {
     pub production: bool,
 }
 
-/// Why settings or UI state could not be saved.
+/// Why settings, UI state or cookies could not be saved.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// The value breaks a rule, such as a font size outside [`FONT_SIZES`].
@@ -259,7 +264,7 @@ pub enum StoreError {
     },
 }
 
-/// The settings and UI state files in one app data folder.
+/// The settings, UI state and cookie files in one app data folder.
 #[derive(Debug, Clone)]
 pub struct Store {
     dir: PathBuf,
@@ -330,14 +335,61 @@ impl Store {
     ///
     /// [`StoreError::Io`] when the folder exists but cannot be removed.
     pub fn clear_ui_state(&self, scope: &str) -> Result<(), StoreError> {
-        let dir = self.scope_dir(scope);
-        match fs::remove_dir_all(&dir) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(StoreError::Io {
-                path: dir,
-                source: e,
-            }),
-            _ => Ok(()),
-        }
+        remove_dir(&self.ui_dir(scope))
+    }
+
+    /// Removes everything kept for project `scope`: the UI state of every
+    /// window and the cookies of every environment (`Clear local data`).
+    /// A jar already loaded stays in memory until
+    /// [`crate::requests::RequestService::forget_project`].
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] when a folder exists but cannot be removed. The
+    /// cookies are removed even when the UI state could not be.
+    pub fn clear_project(&self, scope: &str) -> Result<(), StoreError> {
+        let ui = self.clear_ui_state(scope);
+        let cookies = remove_dir(&self.cookies_dir(scope));
+        ui.and(cookies)
+    }
+
+    /// The cookie jar of `environment` of project `scope`; `""` is "No
+    /// environment". Empty when there is none yet. A file that is damaged
+    /// or from a newer Dea is set aside as for [`Store::load_settings`].
+    pub fn load_cookies(&self, scope: &str, environment: &str) -> CookieJar {
+        read_or_set_aside(&self.cookies_path(scope, environment), |bytes| {
+            let file: CookieFile = serde_json::from_slice(bytes).ok()?;
+            if file.version > COOKIES_VERSION || file.environment != environment {
+                return None;
+            }
+            CookieJar::from_json(&file.cookies.to_string()).ok()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Saves the cookie jar of `environment` of project `scope`, session
+    /// cookies included (decision 12).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Invalid`] when the jar cannot be written out; the file
+    /// on disk is left as it was then. [`StoreError::Io`] when the file or
+    /// its folder cannot be written. No message holds a cookie.
+    pub fn save_cookies(
+        &self,
+        scope: &str,
+        environment: &str,
+        jar: &CookieJar,
+    ) -> Result<(), StoreError> {
+        let unwritable = || StoreError::Invalid("The cookie jar could not be saved".into());
+        let text = jar.to_json().map_err(|_| unwritable())?;
+        let cookies = serde_json::from_str(&text).map_err(|_| unwritable())?;
+        let file = CookieFile {
+            version: COOKIES_VERSION,
+            environment: environment.to_string(),
+            cookies,
+        };
+        write_json(&self.cookies_path(scope, environment), &file)
     }
 
     /// The projects opened most recently, newest first.
@@ -393,20 +445,52 @@ impl Store {
         write_json(&self.dir.join(RECENT_FILE), &file)
     }
 
-    /// The scope never appears in a file or folder name, since it may name
-    /// a project.
-    fn scope_dir(&self, scope: &str) -> PathBuf {
-        let digest = Sha256::digest(scope.as_bytes());
-        let name = digest[..8].iter().fold(String::new(), |mut s, b| {
-            let _ = write!(s, "{b:02x}");
-            s
-        });
-        self.dir.join(UI_DIR).join(name)
+    fn ui_dir(&self, scope: &str) -> PathBuf {
+        self.dir.join(UI_DIR).join(hashed(scope))
     }
 
     fn ui_path(&self, scope: &str, slot: u8) -> PathBuf {
-        self.scope_dir(scope).join(format!("{slot}.json"))
+        self.ui_dir(scope).join(format!("{slot}.json"))
     }
+
+    fn cookies_dir(&self, scope: &str) -> PathBuf {
+        self.dir.join(COOKIES_DIR).join(hashed(scope))
+    }
+
+    fn cookies_path(&self, scope: &str, environment: &str) -> PathBuf {
+        self.cookies_dir(scope)
+            .join(format!("{}.json", hashed(environment)))
+    }
+}
+
+/// A file or folder name for `name`. Project scopes and environment names
+/// never appear in a path, since they may name a customer.
+fn hashed(name: &str) -> String {
+    let digest = Sha256::digest(name.as_bytes());
+    digest[..8].iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+/// Removes `dir` and everything in it; a missing folder is fine.
+fn remove_dir(dir: &Path) -> Result<(), StoreError> {
+    match fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(StoreError::Io {
+            path: dir.to_path_buf(),
+            source: e,
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// A stored cookie jar. `cookies` is the jar's own JSON, kept as it is.
+#[derive(Debug, Serialize, Deserialize)]
+struct CookieFile {
+    version: u32,
+    /// The environment the jar belongs to, `""` for "No environment".
+    environment: String,
+    cookies: serde_json::Value,
 }
 
 /// The stored recent list.
@@ -452,23 +536,33 @@ fn validate(s: &Settings) -> Result<(), StoreError> {
 
 /// Reads `path`, or gives the defaults when there is no file. A file that
 /// cannot be read or parsed (not UTF-8, not JSON, locked), or that `usable`
-/// rejects, is renamed to `<name>.damaged` so the next save cannot
-/// overwrite it.
+/// rejects, is set aside as by [`read_or_set_aside`].
 fn read_or_default<T: DeserializeOwned + Default>(path: &Path, usable: impl Fn(&T) -> bool) -> T {
-    let value = match fs::read(path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return T::default(),
-        Err(_) => None,
-        Ok(bytes) => serde_json::from_slice::<T>(&bytes)
+    read_or_set_aside(path, |bytes| {
+        serde_json::from_slice::<T>(bytes)
             .ok()
-            .filter(|v| usable(v)),
+            .filter(|v| usable(v))
+    })
+    .unwrap_or_default()
+}
+
+/// Reads `path` with `parse`; `None` when there is no file. A file that
+/// cannot be read (locked, a folder), or that `parse` rejects, is renamed
+/// to `<name>.damaged` so the next save cannot overwrite it, and `None` is
+/// returned.
+fn read_or_set_aside<T>(path: &Path, parse: impl FnOnce(&[u8]) -> Option<T>) -> Option<T> {
+    let value = match fs::read(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return None,
+        Err(_) => None,
+        Ok(bytes) => parse(&bytes),
     };
-    value.unwrap_or_else(|| {
+    if value.is_none() {
         let mut damaged = path.as_os_str().to_owned();
         damaged.push(".damaged");
         // If even the rename fails, the next save replaces the file.
         let _ = fs::rename(path, PathBuf::from(damaged));
-        T::default()
-    })
+    }
+    value
 }
 
 /// Replaces `path` through a temporary file in the same folder, so a crash

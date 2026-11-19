@@ -16,6 +16,7 @@ workspace = true
 
 [dependencies]
 arboard.workspace = true
+dea-http.workspace = true
 dea-project.workspace = true
 dea-vault.workspace = true
 secrecy.workspace = true
@@ -25,8 +26,11 @@ sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
+tokio = { workspace = true, features = ["rt"] }
 ts-rs = { workspace = true, optional = true }
+url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-dea-testkit.workspace = true
+dea-testkit = { workspace = true, features = ["http"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
