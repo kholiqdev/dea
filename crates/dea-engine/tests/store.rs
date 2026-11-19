@@ -3,9 +3,10 @@ use std::error::Error;
 use std::fs;
 
 use dea_engine::store::{
-    Appearance, MAX_CLOSED_TABS, Settings, SidebarState, Store, StoreError, TabEnvironment,
-    TabState, ThemePreference, UiState,
+    Appearance, MAX_CLOSED_TABS, Security, Settings, SidebarState, Store, StoreError,
+    TabEnvironment, TabState, ThemePreference, UiState,
 };
+use dea_vault::{AutoLock, Policy};
 
 fn tab(n: usize) -> TabState {
     TabState {
@@ -312,4 +313,70 @@ fn ui_state_without_tab_environments_still_loads() {
     )
     .unwrap();
     assert_eq!(state.tabs[0].environment, None);
+}
+
+#[test]
+fn older_settings_get_the_default_vault_minutes() {
+    let dir = tempfile::tempdir().unwrap();
+    let older = r#"{"version": 1, "appearance": {"theme": "dark"}, "shortcuts": {}}"#;
+    fs::write(dir.path().join("settings.json"), older).unwrap();
+    let store = Store::new(dir.path());
+
+    let s = store.load_settings();
+    assert_eq!(
+        s.appearance.theme,
+        ThemePreference::Dark,
+        "the file was kept"
+    );
+    assert_eq!(
+        s.security,
+        Security {
+            auto_lock_minutes: Some(15),
+            production_minutes: 10,
+        }
+    );
+    assert_eq!(s.security.policy().unwrap(), Policy::default());
+    assert!(!dir.path().join("settings.json.damaged").exists());
+}
+
+#[test]
+fn vault_minutes_outside_their_ranges_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    let with = |auto_lock_minutes, production_minutes| Settings {
+        security: Security {
+            auto_lock_minutes,
+            production_minutes,
+        },
+        ..Settings::default()
+    };
+    let refused = |s: Settings| match store.save_settings(s) {
+        Err(StoreError::Invalid(message)) => message,
+        other => panic!("expected Invalid, got {other:?}"),
+    };
+
+    for minutes in [0, 241] {
+        assert_eq!(
+            refused(with(Some(minutes), 10)),
+            "Lock when idle must be from 1 to 240 minutes"
+        );
+    }
+    for minutes in [0, 61] {
+        assert_eq!(
+            refused(with(Some(15), minutes)),
+            "Ask again for production must be from 1 to 60 minutes"
+        );
+    }
+    assert!(!dir.path().join("settings.json").exists());
+
+    for (auto_lock, production) in [(None, 10), (Some(1), 1), (Some(240), 60)] {
+        let s = with(auto_lock, production);
+        store.save_settings(s.clone()).unwrap();
+        assert_eq!(store.load_settings(), s);
+        assert!(s.security.policy().is_ok());
+    }
+    assert_eq!(
+        with(None, 10).security.policy().unwrap().auto_lock,
+        AutoLock::Never
+    );
 }

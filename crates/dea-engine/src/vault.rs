@@ -1,5 +1,8 @@
 //! The one way to read a secret: checks the lock, asks for production
 //! authentication, and reports status changes (F1-FON-08, 09, 10).
+//!
+//! Everything the app needs from the Vault is here, so the app never
+//! depends on `dea-vault` itself.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,14 +11,22 @@ use std::time::Duration;
 
 use dea_project::{Project, SecretKind, SecretLookup, SecretLookupError};
 use dea_vault::{
-    AuthError, AuthMethod, Authenticator, KdfParams, LockState, OsEvent, OsEventsWatch, Policy,
-    SecretData, SecretKey, SecretStatus, SecretStore, VaultBackend, VaultError, VaultPassword,
-    watch_os_events,
+    AuthError, AuthMethod, Authenticator, KdfParams, LockState, OsEvent, OsEventsWatch, SecretData,
+    SecretStatus, SecretStore, VaultBackend, VaultPassword, watch_os_events,
 };
-use secrecy::SecretString;
+use serde::Serialize;
 
-use crate::clipboard::copy_and_clear_later;
-use crate::{Clipboard, Clock, PasswordPrompt, PromptProblem, Prompter, UseError};
+use crate::Clock;
+pub use crate::clipboard::{CLIPBOARD_CLEAR_AFTER, SystemClipboard};
+use crate::clipboard::{Clipboard, copy_and_clear_later};
+pub use crate::error::UseError;
+pub use crate::prompt::{PasswordPrompt, PromptProblem, Prompter};
+pub use crate::vault_app::{
+    SaveSecretError, SecretInput, SecretRow, UnlockMethod, open_app_vault, save_secret,
+    unlock_method,
+};
+pub use dea_vault::{MIN_PASSWORD_CHARS, Policy, SecretKey, VaultError};
+pub use secrecy::SecretString;
 
 /// How often the idle timer is checked. Below one second, so the status
 /// changes within a second of the Vault locking (F1-FON-09 #6).
@@ -24,13 +35,23 @@ pub const TICK: Duration = Duration::from_millis(500);
 /// File name of the Linux Vault password hash inside the Vault folder.
 pub const PASSWORD_FILE: &str = "password.phc";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Whether the Vault is locked; sent to every window when it changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct VaultStatus {
     pub locked: bool,
 }
 
-/// The production dialog text: `<action> using `a`, `b``.
+/// The production dialog text: `<action> using `a`, `b``, or only the
+/// action when no secret is involved, as when turning production off.
 pub fn production_reason(action: &str, secrets: &[&str]) -> String {
+    if secrets.is_empty() {
+        return action.to_string();
+    }
     let names: Vec<String> = secrets.iter().map(|s| format!("`{s}`")).collect();
     format!("{action} using {}", names.join(", "))
 }
@@ -48,6 +69,9 @@ pub struct VaultService {
     /// Held while a dialog is open, so only one shows at a time.
     auth_gate: Mutex<()>,
     on_status: Box<dyn Fn(VaultStatus) + Send + Sync>,
+    /// The timer and OS event watcher the service keeps running itself,
+    /// see [`VaultService::run_in_background`].
+    background: Mutex<Option<VaultBackground>>,
 }
 
 fn guard<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -81,6 +105,7 @@ impl VaultService {
             state: Mutex::new(LockState::new()),
             auth_gate: Mutex::new(()),
             on_status,
+            background: Mutex::new(None),
         }))
     }
 
@@ -166,6 +191,14 @@ impl VaultService {
         })
     }
 
+    /// Like [`VaultService::start_background`], but the service keeps the
+    /// timer and watcher until it is dropped itself.
+    pub(crate) fn run_in_background(self: &Arc<Self>) -> Result<(), VaultError> {
+        let background = self.start_background()?;
+        *guard(&self.background) = Some(background);
+        Ok(())
+    }
+
     /// Unlocks with the OS dialog, or on Linux the Vault password.
     pub fn unlock(&self, reason: &str) -> Result<(), UseError> {
         let _gate = guard(&self.auth_gate);
@@ -205,6 +238,11 @@ impl VaultService {
             self.report(false);
         }
         Ok(())
+    }
+
+    /// Whether production secrets are usable now without asking again.
+    pub fn production_open(&self) -> bool {
+        guard(&self.state).production_open(self.clock.now())
     }
 
     /// One authentication, native or by Vault password. The caller holds

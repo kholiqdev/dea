@@ -8,7 +8,8 @@ mod error;
 pub mod projects;
 mod prompt;
 pub mod store;
-mod vault;
+pub mod vault;
+mod vault_app;
 
 pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
 pub use clock::{Clock, SystemClock};

@@ -11,6 +11,10 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use dea_project::Project;
+use dea_vault::{
+    AUTO_LOCK_MINUTES, DEFAULT_AUTO_LOCK_MINUTES, DEFAULT_PRODUCTION_WINDOW_MINUTES,
+    PRODUCTION_WINDOW_MINUTES, Policy, VaultError,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,6 +51,9 @@ pub struct Settings {
     /// Shortcut overrides by command id. `None` turns a shortcut off; a
     /// command that is not listed keeps its default.
     pub shortcuts: BTreeMap<String, Option<String>>,
+    /// Vault lock times. Settings files from before the Vault get the
+    /// defaults.
+    pub security: Security,
 }
 
 impl Default for Settings {
@@ -55,7 +62,45 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             appearance: Appearance::default(),
             shortcuts: BTreeMap::new(),
+            security: Security::default(),
         }
+    }
+}
+
+/// When the Vault locks and how long production secrets stay usable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub struct Security {
+    /// Idle minutes before the Vault locks, within [`AUTO_LOCK_MINUTES`].
+    /// `None` means never.
+    pub auto_lock_minutes: Option<u16>,
+    /// Minutes production secrets stay usable after authentication, within
+    /// [`PRODUCTION_WINDOW_MINUTES`].
+    pub production_minutes: u16,
+}
+
+impl Default for Security {
+    fn default() -> Self {
+        Self {
+            auto_lock_minutes: Some(DEFAULT_AUTO_LOCK_MINUTES),
+            production_minutes: DEFAULT_PRODUCTION_WINDOW_MINUTES,
+        }
+    }
+}
+
+impl Security {
+    /// The Vault policy these settings ask for.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::InvalidSetting`] when a value is outside its range.
+    pub fn policy(&self) -> Result<Policy, VaultError> {
+        Policy::new(self.auto_lock_minutes, self.production_minutes)
     }
 }
 
@@ -243,8 +288,9 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// [`StoreError::Invalid`] when the font size is outside [`FONT_SIZES`]
-    /// or a font name is empty; nothing is written then.
+    /// [`StoreError::Invalid`] when the font size is outside [`FONT_SIZES`],
+    /// a font name is empty, or a Vault time is outside its range; nothing
+    /// is written then.
     /// [`StoreError::Io`] when the file or its folder cannot be written.
     pub fn save_settings(&self, mut settings: Settings) -> Result<(), StoreError> {
         validate(&settings)?;
@@ -382,6 +428,24 @@ fn validate(s: &Settings) -> Result<(), StoreError> {
     }
     if a.ui_font.trim().is_empty() || a.mono_font.trim().is_empty() {
         return Err(StoreError::Invalid("A font name cannot be empty".into()));
+    }
+    let security = &s.security;
+    if security
+        .auto_lock_minutes
+        .is_some_and(|m| !AUTO_LOCK_MINUTES.contains(&m))
+    {
+        return Err(StoreError::Invalid(format!(
+            "Lock when idle must be from {} to {} minutes",
+            AUTO_LOCK_MINUTES.start(),
+            AUTO_LOCK_MINUTES.end()
+        )));
+    }
+    if !PRODUCTION_WINDOW_MINUTES.contains(&security.production_minutes) {
+        return Err(StoreError::Invalid(format!(
+            "Ask again for production must be from {} to {} minutes",
+            PRODUCTION_WINDOW_MINUTES.start(),
+            PRODUCTION_WINDOW_MINUTES.end()
+        )));
     }
     Ok(())
 }
