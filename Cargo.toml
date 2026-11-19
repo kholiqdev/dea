@@ -96,6 +96,14 @@ zbus = "5.19.0"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-io-crypto-rust"] }
 zeroize = "1.9.2"
 
+# Argon2id unoptimised takes seconds per Vault password check, enough for
+# the debug-build E2E run to time out. Only the hash crates are optimised.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "fat"
