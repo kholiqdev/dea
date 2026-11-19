@@ -217,3 +217,44 @@ test("cancelling the delete of a production environment deletes nothing", async 
   expect(deleted).toEqual([]);
   expect(project.environments.map((e) => e.name)).toContain("production");
 });
+
+test("the environment asked about is the one turned off, whatever is selected", async () => {
+  let finish: (ok: boolean) => void = () => {};
+  setVaultApi({
+    locked: false,
+    method: "deviceOwner",
+    unlock: () => Promise.resolve(true),
+    lock: () => Promise.resolve(),
+    authorize: (action) => {
+      asked.push(action);
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+  });
+  await select("production");
+  await userEvent.click(prodSwitch());
+  // A second click while the question is open asks nothing more.
+  await userEvent.click(prodSwitch());
+  expect(asked).toEqual(["turn off production for production"]);
+
+  // The person moves to local before answering.
+  const nav = screen.getByRole("navigation", { name: "Environments" });
+  await userEvent.click(within(nav).getByRole("button", { name: /^local/ }));
+  finish(true);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
+  );
+  expect(prodSwitch()).toHaveAttribute("aria-checked", "false");
+
+  await userEvent.click(
+    within(nav).getByRole("button", { name: /^production/ }),
+  );
+  expect(prodSwitch()).toHaveAttribute("aria-checked", "false");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toMatchObject({
+    previous: "production",
+    environment: { name: "production", production: false },
+  });
+});
