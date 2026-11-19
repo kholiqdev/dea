@@ -95,7 +95,8 @@ impl From<ProjectError> for IpcError {
             | ProjectError::PathTooLong(_)
             | ProjectError::AlreadyExists(_)
             | ProjectError::InvalidEnvironment(_)
-            | ProjectError::InvalidSecret(_) => IpcErrorKind::Invalid,
+            | ProjectError::InvalidSecret(_)
+            | ProjectError::InvalidRequest(_) => IpcErrorKind::Invalid,
         };
         Self::new(kind, &e)
     }
