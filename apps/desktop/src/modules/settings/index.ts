@@ -3,6 +3,7 @@ import type { ModuleManifest } from "$app/contributions/types";
 export const manifest: ModuleManifest = {
   id: "settings",
   title: "Settings",
+  scope: "app",
   rail: { icon: "sliders-horizontal", group: "bottom", order: 2 },
   view: () => import("./SettingsView.svelte"),
   sidebar: () => import("./SettingsSidebar.svelte"),

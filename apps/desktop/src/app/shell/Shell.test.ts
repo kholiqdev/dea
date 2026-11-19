@@ -6,7 +6,13 @@ import { closeQuestion } from "../prompts/confirm-close.svelte";
 import { Tabs } from "../tabs/tabs.svelte";
 import ShellView from "./Shell.svelte";
 import { Shell } from "./shell-state.svelte";
-import { fakeIpc, railModule, registryWith, view } from "./test-support";
+import {
+  fakeIpc,
+  openProject,
+  railModule,
+  registryWith,
+  view,
+} from "./test-support";
 
 beforeEach(() => {
   fakeIpc();
@@ -16,7 +22,7 @@ function setup(...modules: Parameters<typeof registryWith>) {
   const registry = registryWith(...modules);
   const shell = new Shell(registry);
   const tabs = new Tabs(registry, shell, { confirmClose: closeQuestion.ask });
-  render(ShellView, { registry, shell, tabs });
+  render(ShellView, { registry, shell, tabs, project: openProject() });
   return { registry, shell, tabs };
 }
 
@@ -136,9 +142,9 @@ test("status bar renders registered items only", async () => {
   await waitFor(() => expect(footer).not.toHaveTextContent("2 tunnels"));
 });
 
-test("the title bar says no project is open", () => {
+test("the title bar names the project", () => {
   setup();
-  expect(screen.getByRole("banner")).toHaveTextContent("No project open");
+  expect(screen.getByRole("banner")).toHaveTextContent("harbor-api");
 });
 
 test("switching modules replaces the view", async () => {

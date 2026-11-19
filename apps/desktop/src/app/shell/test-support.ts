@@ -1,9 +1,11 @@
 // Fakes shared by the shell tests.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { ProjectInfo } from "$lib/ipc/bindings/ProjectInfo";
 import type { UiState } from "$lib/ipc/bindings/UiState";
 import { DEFAULT_SETTINGS } from "$lib/settings/settings.svelte";
 import Placeholder from "@dea/ui/Placeholder.svelte";
+import { WindowProject } from "../project/project.svelte";
 import {
   createRegistry,
   type Registry,
@@ -11,15 +13,26 @@ import {
 import type { AnyComponent, ModuleManifest } from "../contributions/types";
 
 export interface IpcLog {
+  calls: { cmd: string; args: unknown }[];
   savedUiStates: { scope: string; slot: number; state: UiState }[];
 }
 
-export function fakeIpc(): IpcLog {
-  const log: IpcLog = { savedUiStates: [] };
+export interface FakeIpcOptions {
+  /** What window_project returns. */
+  project?: ProjectInfo | null;
+  /** What get_ui_state returns. */
+  uiState?: UiState;
+}
+
+export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
+  const log: IpcLog = { calls: [], savedUiStates: [] };
   clearMocks();
   mockIPC((cmd, args) => {
     const a = args as Record<string, unknown>;
+    log.calls.push({ cmd, args });
     if (cmd === "get_settings") return structuredClone(DEFAULT_SETTINGS);
+    if (cmd === "window_project") return opts.project ?? null;
+    if (cmd === "get_ui_state" && opts.uiState) return opts.uiState;
     if (cmd === "save_ui_state") {
       log.savedUiStates.push({
         scope: a.scope as string,
@@ -28,7 +41,12 @@ export function fakeIpc(): IpcLog {
       });
       return null;
     }
-    if (cmd === "save_settings" || cmd.startsWith("perf_")) return null;
+    if (
+      cmd === "save_settings" ||
+      cmd === "set_active_environment" ||
+      cmd.startsWith("perf_")
+    )
+      return null;
     throw new Error(`unexpected command ${cmd}`);
   });
   return log;
@@ -74,4 +92,35 @@ export function registryWith(...modules: ModuleManifest[]): Registry {
   const r = createRegistry();
   for (const m of modules) r.register(m);
   return r;
+}
+
+/** A project with local, staging and production. */
+export function projectInfo(over: Partial<ProjectInfo> = {}): ProjectInfo {
+  return {
+    root: "/work/harbor-api",
+    name: "harbor-api",
+    scope: "scope-1",
+    slot: 0,
+    readOnly: false,
+    defaultEnvironment: "local",
+    environments: [
+      { name: "local", production: false },
+      { name: "staging", production: false, color: "blue" },
+      { name: "production", production: true },
+    ],
+    secretNames: [],
+    errors: [],
+    migratedFrom: null,
+    missing: false,
+    ...over,
+  };
+}
+
+/** A window project that already has `info` (or none). */
+export function openProject(
+  info: ProjectInfo | null = projectInfo(),
+): WindowProject {
+  const p = new WindowProject();
+  if (info) p.refresh(info);
+  return p;
 }

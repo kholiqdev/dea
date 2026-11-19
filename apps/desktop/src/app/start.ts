@@ -3,12 +3,15 @@
 
 import { mount } from "svelte";
 import { systemPrefersDark } from "@dea/ui/theme";
+import { setActiveEnvironment } from "$lib/ipc/project";
 import { getUiState } from "$lib/ipc/settings";
 import { settings } from "$lib/settings/settings.svelte";
 import App from "./App.svelte";
+import { setProjectApi } from "./contributions/project-api";
 import { registry } from "./contributions/registry.svelte";
 import { exposeE2eApi, isE2e } from "./e2e";
 import { registerBuiltInModules } from "./modules";
+import { thisProject } from "./project/project.svelte";
 import { applyAppearance } from "./shell/appearance";
 import { NO_PROJECT, shell } from "./shell/shell-state.svelte";
 import { shellModule } from "./shell/shell-module";
@@ -21,15 +24,19 @@ export async function start(
   target: HTMLElement,
 ): Promise<ReturnType<typeof mount>> {
   registerBuiltInModules(registry);
-  registry.register(shellModule(shell, tabs));
+  registry.register(shellModule(shell, tabs, thisProject));
+  setProjectApi(thisProject);
 
-  const [, saved] = await Promise.all([
-    settings.load(),
-    getUiState(NO_PROJECT, 0).catch(() => null),
-  ]);
+  const [, info] = await Promise.all([settings.load(), thisProject.load()]);
+  registry.setProjectOpen(info !== null);
+  // Each window of a project keeps its own layout, tabs and environment.
+  const scope = info?.scope ?? NO_PROJECT;
+  const slot = info?.slot ?? 0;
+  const saved = await getUiState(scope, slot).catch(() => null);
   if (saved) {
     shell.restore(saved);
-    tabs.restore(saved);
+    if (info) tabs.restore(saved);
+    thisProject.restoreEnvironment(saved.activeEnvironment);
   }
   applyAppearance(
     document.documentElement,
@@ -37,9 +44,15 @@ export async function start(
     systemPrefersDark(),
   );
 
-  const app = mount(App, { target });
+  const app = mount(App, { target, props: { scope, slot } });
   if (isE2e()) exposeE2eApi();
-  if (saved?.activeModule) await shell.openModule(saved.activeModule);
-  if (!shell.activeModule) await shell.openModule(WELCOME);
+  if (info) {
+    thisProject.listen().catch(() => {});
+    setActiveEnvironment(thisProject.environment?.name ?? null).catch(() => {});
+  }
+  if (saved?.activeModule && registry.module(saved.activeModule))
+    await shell.openModule(saved.activeModule);
+  const first = info ? registry.modules[0]?.id : WELCOME;
+  if (!shell.activeModule && first) await shell.openModule(first);
   return app;
 }

@@ -47,7 +47,13 @@ function flatten<T>(
 export class Registry {
   #manifests = $state.raw<ModuleManifest[]>([]);
   #disabled = new SvelteSet<string>();
-  #active = $derived(this.#manifests.filter((m) => !this.#disabled.has(m.id)));
+  #projectOpen = $state(true);
+  #active = $derived(
+    this.#manifests.filter(
+      (m) =>
+        !this.#disabled.has(m.id) && (this.#projectOpen || m.scope === "app"),
+    ),
+  );
 
   /** Adds a module. Throws ContributionError and adds nothing if any id is bad. */
   register(m: ModuleManifest): void {
@@ -71,6 +77,11 @@ export class Registry {
   setEnabled(module: string, on: boolean): void {
     if (on) this.#disabled.delete(module);
     else this.#disabled.add(module);
+  }
+
+  /** Turns the modules that need a project on or off for this window. */
+  setProjectOpen(open: boolean): void {
+    this.#projectOpen = open;
   }
 
   /** An enabled module, rail or not. */

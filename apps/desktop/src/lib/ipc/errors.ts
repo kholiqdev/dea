@@ -14,8 +14,16 @@ export function isIpcError(e: unknown): e is IpcError {
   );
 }
 
-/** A message to show for anything a command rejected with. */
+/**
+ * A message to show for anything a command rejected with. Dea's own
+ * messages are lower case, as Rust errors are; shown alone they start with
+ * a capital.
+ */
 export function errorMessage(e: unknown): string {
-  if (isIpcError(e)) return e.message;
-  return e instanceof Error ? e.message : String(e);
+  const text = isIpcError(e)
+    ? e.message
+    : e instanceof Error
+      ? e.message
+      : String(e);
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

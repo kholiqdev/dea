@@ -1,7 +1,10 @@
 // The shell's own commands, registered like any module's (without a rail
 // item), so they show up in Settings and can be rebound.
 
+import { openWindow } from "$lib/ipc/project";
+import type { ProjectApi } from "../contributions/project-api";
 import type { Action, ModuleManifest } from "../contributions/types";
+import { menus } from "./menus.svelte";
 import type { Tabs } from "../tabs/tabs.svelte";
 import type { Shell } from "./shell-state.svelte";
 
@@ -12,7 +15,11 @@ interface ShellCommand {
   run: () => unknown;
 }
 
-export function shellModule(shell: Shell, tabs: Tabs): ModuleManifest {
+export function shellModule(
+  shell: Shell,
+  tabs: Tabs,
+  project: ProjectApi,
+): ModuleManifest {
   const commands: ShellCommand[] = [
     {
       id: "shell.toggleSidebar",
@@ -21,6 +28,20 @@ export function shellModule(shell: Shell, tabs: Tabs): ModuleManifest {
       run: () => {
         if (shell.activeModule) shell.toggleSidebar(shell.activeModule);
       },
+    },
+    {
+      id: "shell.chooseEnvironment",
+      title: "Choose the environment for requests",
+      chord: "Mod+E",
+      run: () => {
+        if (project.info) menus.environment = true;
+      },
+    },
+    {
+      id: "shell.newWindow",
+      title: "New window",
+      chord: "Mod+Shift+N",
+      run: () => openWindow(project.info?.root ?? null),
     },
     {
       id: "shell.closeTab",
@@ -51,6 +72,7 @@ export function shellModule(shell: Shell, tabs: Tabs): ModuleManifest {
   return {
     id: "shell",
     title: "Shell",
+    scope: "app",
     commands: commands.map((c) => ({
       id: c.id,
       title: c.title,

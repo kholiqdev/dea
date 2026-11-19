@@ -108,6 +108,11 @@
         "rail": {
           "$ref": "#/definitions/RailData"
         },
+        "scope": {
+          "description": "`project` (the default): works on the window's project, so it is off while the window shows Welcome. `app`: always available.",
+          "enum": ["app", "project"],
+          "type": "string"
+        },
         "settings": {
           "items": {
             "$ref": "#/definitions/SettingsSectionData"

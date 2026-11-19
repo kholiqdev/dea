@@ -4,6 +4,8 @@
   import { settings } from "$lib/settings/settings.svelte";
   import { shellContext } from "./context";
   import { effectiveShortcuts } from "../contributions/shortcuts";
+  import EnvironmentPicker from "./EnvironmentPicker.svelte";
+  import ProjectMenu from "./ProjectMenu.svelte";
 
   const ctx = shellContext();
   const module = $derived(
@@ -39,8 +41,23 @@
         <PanelLeft size={16} strokeWidth={1.5} />
       </button>
     {/if}
-    <span class="project">No project open</span>
-    <!-- The environment picker joins here in Plan 3b. -->
+    {#if ctx.project.info}
+      <div class="where">
+        <ProjectMenu />
+        <span class="sep" aria-hidden="true">/</span>
+        <EnvironmentPicker />
+      </div>
+    {:else}
+      <span class="project">No project open</span>
+      {#if ctx.shell.activeModule && ctx.shell.activeModule !== "project"}
+        <button
+          type="button"
+          class="back"
+          data-shell-control
+          onclick={() => ctx.shell.openModule("project")}>Back</button
+        >
+      {/if}
+    {/if}
   </div>
 </header>
 
@@ -60,6 +77,36 @@
     align-items: center;
     gap: var(--s-4);
     min-width: 0;
+  }
+
+  .where {
+    display: flex;
+    align-items: center;
+    gap: var(--s-1);
+    min-width: 0;
+  }
+
+  .sep {
+    color: var(--text-4);
+  }
+
+  .back {
+    height: 28px;
+    padding: 0 var(--s-2);
+    border: 0;
+    border-radius: var(--r-small);
+    background: none;
+    color: var(--text-2);
+  }
+
+  .back:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+  }
+
+  /* Production is marked on the title bar as well as in words. */
+  :global(.app[data-env="production"]) .titlebar {
+    box-shadow: inset 0 -2px 0 var(--negative);
   }
 
   .project {
