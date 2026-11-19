@@ -9,13 +9,16 @@ import { settings } from "$lib/settings/settings.svelte";
 import App from "./App.svelte";
 import { setProjectApi } from "./contributions/project-api";
 import { registry } from "./contributions/registry.svelte";
+import { setVaultApi } from "./contributions/vault-api";
 import { exposeE2eApi, isE2e } from "./e2e";
 import { registerBuiltInModules } from "./modules";
 import { thisProject } from "./project/project.svelte";
+import { vaultPrompts } from "./prompts/vault-prompt.svelte";
 import { applyAppearance } from "./shell/appearance";
 import { NO_PROJECT, shell } from "./shell/shell-state.svelte";
 import { shellModule } from "./shell/shell-module";
 import { tabs } from "./tabs/tabs.svelte";
+import { thisVault } from "./vault/vault.svelte";
 
 /** The module shown when no project is open. */
 const WELCOME = "project";
@@ -26,8 +29,13 @@ export async function start(
   registerBuiltInModules(registry);
   registry.register(shellModule(shell, tabs, thisProject));
   setProjectApi(thisProject);
+  setVaultApi(thisVault);
 
-  const [, info] = await Promise.all([settings.load(), thisProject.load()]);
+  const [, info] = await Promise.all([
+    settings.load(),
+    thisProject.load(),
+    thisVault.load(),
+  ]);
   registry.setProjectOpen(info !== null);
   // Each window of a project keeps its own layout, tabs and environment.
   const scope = info?.scope ?? NO_PROJECT;
@@ -46,6 +54,10 @@ export async function start(
 
   const app = mount(App, { target, props: { scope, slot } });
   if (isE2e()) exposeE2eApi();
+  // Every window, Welcome too, follows the Vault and answers its prompts.
+  thisVault.listen().catch(() => {});
+  thisVault.trackActivity();
+  vaultPrompts.listen().catch(() => {});
   if (info) {
     thisProject.listen().catch(() => {});
     thisProject.recheckOnFocus();

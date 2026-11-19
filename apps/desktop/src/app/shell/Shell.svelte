@@ -5,6 +5,8 @@
   import type { Registry } from "../contributions/registry.svelte";
   import ConfirmClose from "../prompts/ConfirmClose.svelte";
   import { closeQuestion } from "../prompts/confirm-close.svelte";
+  import VaultPrompt from "../prompts/VaultPrompt.svelte";
+  import { vaultPrompts } from "../prompts/vault-prompt.svelte";
   import ToastStack from "../prompts/ToastStack.svelte";
   import type { Tabs } from "../tabs/tabs.svelte";
   import { setShellContext } from "./context";
@@ -66,6 +68,7 @@
   <StatusBar />
 </div>
 <ConfirmClose question={closeQuestion} />
+<VaultPrompt prompts={vaultPrompts} />
 <ToastStack />
 
 <style>
