@@ -32,6 +32,8 @@ beforeEach(() => {
   opened = [];
   const info = {
     name: "harbor-api",
+    defaultEnvironment: "staging",
+    secretNames: ["access_token", "pg_password"],
     environments: [
       { name: "staging", production: false },
       { name: "production", production: true },
@@ -82,33 +84,27 @@ test("the Vault module lists secret names in the palette", () => {
   ]);
 });
 
-test("secret names show while locked and never read a value", async () => {
+test("secret names show while locked and never touch the Vault", async () => {
   const vault = reactiveVault();
   await vault.lock();
-  const items = await secretNames();
+  const items = secretNames();
   expect(items.map((i) => [i.title, i.meta, i.environment])).toEqual([
-    [
-      "access_token",
-      "Name only, values never show here",
-      { name: "production", production: true },
-    ],
-    [
-      "access_token",
-      "Name only, values never show here",
-      { name: "staging", production: false },
-    ],
+    ["access_token", "Name only, values never show here", undefined],
+    ["pg_password", "Name only, values never show here", undefined],
   ]);
-  expect(calls).toEqual(["vault_secrets"]);
+  // No IPC at all: the palette never opens the Vault or reads a value.
+  expect(calls).toEqual([]);
   expect(vault.locked).toBe(true);
 });
 
 test("choosing a secret name opens the Vault on it", async () => {
   reactiveVault();
-  const items = await secretNames();
+  const items = secretNames();
   await items[0]?.open("active");
-  expect(secrets.chosen).toBe("production");
+  // The environment the Vault screen shows: the project's default here.
+  expect(secrets.chosen).toBe("staging");
   expect(secrets.choice).toEqual({
-    environment: "production",
+    environment: "staging",
     name: "access_token",
   });
   expect(opened).toEqual(["vault"]);
