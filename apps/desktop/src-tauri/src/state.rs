@@ -1,6 +1,6 @@
 //! What every command can reach.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use dea_engine::store::Store;
 use tauri::{AppHandle, Manager, Runtime};
@@ -10,7 +10,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(app_data: &Path) -> Self {
+    pub fn new(app_data: PathBuf) -> Self {
         Self {
             store: Store::new(app_data),
         }

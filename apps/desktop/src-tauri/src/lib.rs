@@ -54,7 +54,7 @@ pub fn run() {
     builder
         .setup(|app| {
             let dir = state::app_data_dir(app.handle())?;
-            app.manage(AppState::new(&dir));
+            app.manage(AppState::new(dir));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
