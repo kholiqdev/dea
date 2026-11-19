@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 bytes.workspace = true
+cookie_store.workspace = true
 flate2.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
@@ -22,6 +23,7 @@ rustls-platform-verifier.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "time"] }
 tokio-rustls.workspace = true
 tokio-util = { workspace = true, features = ["io"] }

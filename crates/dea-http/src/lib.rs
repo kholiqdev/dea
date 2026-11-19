@@ -5,6 +5,7 @@
 mod body;
 mod client;
 mod connect;
+mod cookies;
 mod error;
 mod pool;
 mod reader;
@@ -16,6 +17,7 @@ mod timing;
 mod tls;
 
 pub use client::{Client, ClientConfig, Event, ProxyConfig, SendContext};
+pub use cookies::{CookieJar, CookieJarError, StoredCookie};
 pub use error::HttpError;
 pub use request::{Body, ClientIdentity, Options, Part, PartValue, Request, TlsConfig};
 pub use response::{

@@ -448,6 +448,24 @@ async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> 
         }
         return redirect(StatusCode::FOUND, &format!("/redirect/{}", n - 1));
     }
+    if path == "/cookies/set" {
+        // `?name=value&Attribute&Attribute=value`: one Set-Cookie header.
+        // The path is `/` unless the query says otherwise, so the cookie
+        // reaches every other route.
+        let mut parts: Vec<&str> = query.unwrap_or_default().split('&').collect();
+        if !parts
+            .iter()
+            .skip(1)
+            .any(|p| p.to_ascii_lowercase().starts_with("path="))
+        {
+            parts.push("Path=/");
+        }
+        return set_cookie(reply(StatusCode::OK, Bytes::new()), &parts.join("; "));
+    }
+    if path == "/cookies/redirect" {
+        let response = redirect(StatusCode::FOUND, "/echo");
+        return set_cookie(response, "hop=1; Path=/");
+    }
     if path == "/redirect-to" {
         let param = |name: &str| {
             url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
@@ -597,6 +615,16 @@ fn redirect(status: StatusCode, location: &str) -> Reply {
     match HeaderValue::from_str(location) {
         Ok(value) => {
             response.headers_mut().insert("location", value);
+        }
+        Err(_) => *response.status_mut() = StatusCode::BAD_REQUEST,
+    }
+    response
+}
+
+fn set_cookie(mut response: Reply, value: &str) -> Reply {
+    match HeaderValue::from_str(value) {
+        Ok(value) => {
+            response.headers_mut().append("set-cookie", value);
         }
         Err(_) => *response.status_mut() = StatusCode::BAD_REQUEST,
     }
