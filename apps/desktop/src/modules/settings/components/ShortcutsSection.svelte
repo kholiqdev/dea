@@ -160,10 +160,11 @@
   <Dialog title="Reset every shortcut?" oncancel={() => (confirmReset = false)}>
     <p class="text">Every shortcut goes back to the one Dea comes with.</p>
     {#snippet actions()}
-      <Button onclick={() => (confirmReset = false)}>Cancel</Button>
+      <Button data-autofocus onclick={() => (confirmReset = false)}
+        >Cancel</Button
+      >
       <Button
         variant="danger"
-        data-autofocus
         onclick={() =>
           run(async () => {
             await resetAllShortcuts();
