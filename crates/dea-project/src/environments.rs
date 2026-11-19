@@ -76,13 +76,16 @@ fn stem_of(rel: &Path) -> String {
         .map_or_else(String::new, |s| s.to_string_lossy().to_lowercase())
 }
 
-fn validate(env: &Environment) -> Result<(), ProjectError> {
+/// Checks `env` before it is written. `kept` is the colour already in its
+/// file, which stays allowed even when this Dea does not know it.
+fn validate(env: &Environment, kept: Option<&str>) -> Result<(), ProjectError> {
     let invalid = |m: String| Err(ProjectError::InvalidEnvironment(m));
     if env.name.trim().is_empty() {
         return invalid("an environment needs a name".into());
     }
     if let Some(color) = env.color.as_deref()
         && !ENV_COLORS.contains(&color)
+        && kept != Some(color)
     {
         return invalid(format!(
             "\"{color}\" is not an environment colour; use one of {}",
@@ -150,7 +153,10 @@ pub fn save_environment(
     if project.read_only {
         return Err(ProjectError::ReadOnly);
     }
-    validate(env)?;
+    let kept = previous
+        .and_then(|name| project.environments.iter().find(|e| e.name == name))
+        .and_then(|e| e.color.as_deref());
+    validate(env, kept)?;
     let root = &project.root;
     let files = env_files(root)?;
     let old = previous.and_then(|name| files.iter().find(|f| f.name == name));
