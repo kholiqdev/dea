@@ -42,6 +42,7 @@
 
   onMount(() => {
     void treeState.load();
+    return clearTimings;
   });
 
   $effect(() => {
@@ -49,12 +50,20 @@
       void treeState.load();
   });
 
+  // The timings of one search stay until it ends: the filter is emptied or
+  // the sidebar goes away.
+  function clearTimings(): void {
+    performance.clearMarks("requests-filter-start");
+    performance.clearMeasures("requests-filter");
+  }
+
   function onFilter(event: Event): void {
+    if (treeState.filter === "") clearTimings();
     performance.mark("requests-filter-start");
     treeState.filter = (event.currentTarget as HTMLInputElement).value;
-    void tick().then(() =>
-      performance.measure("requests-filter", "requests-filter-start"),
-    );
+    void tick().then(() => {
+      performance.measure("requests-filter", "requests-filter-start");
+    });
   }
 
   function isEditable(target: EventTarget | null): boolean {

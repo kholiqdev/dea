@@ -10,6 +10,9 @@ export type TreeRowData = {
   path: string;
   name: string;
   depth: number;
+  /** Place among the siblings shown, from 1, and how many there are. */
+  position: number;
+  size: number;
   method?: string;
   count?: number;
   broken?: boolean;
@@ -46,8 +49,27 @@ export class RequestTreeState {
       if (query) visitFiltered(node, 0, false, query, out);
       else visit(node, 0, this.expanded, out);
     }
-    return out;
+    return withPositions(out);
   }
+}
+
+/** Sets each row's place among the siblings that share its parent. */
+function withPositions(rows: TreeRowData[]): TreeRowData[] {
+  // The sibling group at each depth; going back up drops the deeper ones.
+  const groups: TreeRowData[][] = [];
+  const all: TreeRowData[][] = [];
+  for (const row of rows) {
+    groups.length = row.depth + 1;
+    let group = groups[row.depth];
+    if (!group) {
+      group = groups[row.depth] = [];
+      all.push(group);
+    }
+    group.push(row);
+    row.position = group.length;
+  }
+  for (const group of all) for (const row of group) row.size = group.length;
+  return rows;
 }
 
 function folderRow(
@@ -60,6 +82,8 @@ function folderRow(
     path: node.path,
     name: node.name,
     depth,
+    position: 0,
+    size: 0,
     count: node.requestCount,
     broken: node.broken,
     open,
@@ -75,6 +99,8 @@ function requestRow(
     path: node.path,
     name: node.name,
     depth,
+    position: 0,
+    size: 0,
     method: node.method,
   };
 }

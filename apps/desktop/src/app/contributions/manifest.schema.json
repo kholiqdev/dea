@@ -136,6 +136,11 @@
           },
           "type": "array"
         },
+        "sidebarHeader": {
+          "description": "`shell` (the default): the shell draws the sidebar's heading, the module title. `module`: the module's sidebar draws its own head.",
+          "enum": ["shell", "module"],
+          "type": "string"
+        },
         "statusItems": {
           "items": {
             "$ref": "#/definitions/StatusItemData"

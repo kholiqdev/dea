@@ -89,6 +89,11 @@ export interface ManifestData {
    */
   scope?: "app" | "project";
   rail?: RailData;
+  /**
+   * `shell` (the default): the shell draws the sidebar's heading, the module
+   * title. `module`: the module's sidebar draws its own head.
+   */
+  sidebarHeader?: "shell" | "module";
   tabTypes?: TabTypeData[];
   panels?: PanelData[];
   commands?: CommandData[];

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test } from "vitest";
 import { settings } from "$lib/settings/settings.svelte";
@@ -126,6 +126,29 @@ test("the sidebar can be hidden and resized from the keyboard", async () => {
   expect(screen.queryByText("requests sidebar")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
   expect(await screen.findByText("requests sidebar")).toBeInTheDocument();
+});
+
+test("a module that draws its own sidebar head gets no shell heading", async () => {
+  const { shell } = setup(
+    railModule("requests", 1, {
+      sidebar: view("requests sidebar"),
+      sidebarHeader: "module",
+    }),
+    railModule("database", 2, { sidebar: view("database sidebar") }),
+  );
+  await shell.openModule("requests");
+  const side = await screen.findByRole("complementary");
+  await screen.findByText("requests sidebar");
+  expect(
+    within(side).queryByRole("heading", { level: 2 }),
+  ).not.toBeInTheDocument();
+  await shell.openModule("database");
+  await screen.findByText("database sidebar");
+  expect(
+    within(screen.getByRole("complementary")).getByRole("heading", {
+      level: 2,
+    }),
+  ).toBeInTheDocument();
 });
 
 test("status bar renders registered items only", async () => {

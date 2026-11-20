@@ -26,6 +26,8 @@
   role="treeitem"
   tabindex="-1"
   aria-level={row.depth + 1}
+  aria-setsize={row.size}
+  aria-posinset={row.position}
   aria-expanded={row.kind === "folder" ? row.open : undefined}
   aria-selected={selected}
   style:padding-left="calc(var(--s-2) + {row.depth * 14}px)"
