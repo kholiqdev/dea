@@ -151,6 +151,73 @@ fn path_variables_fill_colon_segments() {
     assert_eq!(resolved.unresolved, [":other"]);
 }
 
+/// A request under `requests/shipping/tracking` whose URL and header use
+/// `{{shipmentId}}`, with the path variables given as YAML.
+fn shipment_fixture(path_variables: &str) -> Fixture {
+    let mut f = fixture(&[(
+        REQ,
+        &format!(
+            "name: Events\nmethod: GET\n\
+             url: '{{{{baseUrl}}}}/v1/shipments/{{{{shipmentId}}}}'\n\
+             headers:\n  - name: X-Shipment\n    value: '{{{{shipmentId}}}}'\n\
+             {path_variables}"
+        ),
+    )]);
+    f.project.environments[0].variables.push(Variable {
+        name: "shipmentId".into(),
+        value: "shp_env".into(),
+        description: None,
+    });
+    f
+}
+
+#[test]
+fn a_path_variable_value_is_the_nearest_value_of_its_name() {
+    let f = shipment_fixture("pathVariables:\n  - name: shipmentId\n    value: shp_9\n");
+    let resolved = run(&f, REQ);
+    assert_eq!(
+        resolved.url.text,
+        "http://localhost:8080/v1/shipments/shp_9"
+    );
+    assert_eq!(header(&resolved, "x-shipment"), ["shp_9"]);
+    let used = resolved
+        .used
+        .iter()
+        .find(|u| u.name == "shipmentId")
+        .unwrap();
+    assert!(matches!(
+        &used.source,
+        ValueSource::Scope { kind: ScopeKind::Request, label } if label == "Events"
+    ));
+}
+
+#[test]
+fn an_empty_path_variable_hides_nothing() {
+    let f = shipment_fixture("pathVariables:\n  - name: shipmentId\n    value: ''\n");
+    let resolved = run(&f, REQ);
+    assert_eq!(
+        resolved.url.text,
+        "http://localhost:8080/v1/shipments/shp_env"
+    );
+    assert!(resolved.unresolved.is_empty());
+}
+
+#[test]
+fn a_path_variable_that_uses_its_own_name_reaches_the_environment() {
+    let mut f = fixture(&[(
+        REQ,
+        "name: Events\nmethod: GET\nurl: 'http://h/shipments/:shipmentId'\n\
+         pathVariables:\n  - name: shipmentId\n    value: '{{shipmentId}}'\n",
+    )]);
+    f.project.environments[0].variables.push(Variable {
+        name: "shipmentId".into(),
+        value: "shp_env".into(),
+        description: None,
+    });
+    let resolved = run(&f, REQ);
+    assert_eq!(resolved.url.text, "http://h/shipments/shp_env");
+}
+
 #[test]
 fn enabled_params_are_appended_and_encoded() {
     let f = fixture(&[(
