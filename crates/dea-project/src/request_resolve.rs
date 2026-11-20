@@ -483,18 +483,24 @@ pub fn resolve_request(
         };
     }
 
-    // Headers: wider first, the narrower replaces the same name.
+    // Headers: wider first. A level replaces same-named headers from wider
+    // levels only; rows within one level all stay, in order.
     let mut headers: Vec<(Resolved, Resolved)> = Vec::new();
     let rows = folders
         .iter()
         .map(|f| &f.settings.headers)
         .chain(std::iter::once(&request.headers));
     for rows in rows {
+        let mut level = Vec::new();
         for row in used_rows(rows) {
-            let (name, value) = r.pair(row)?;
-            headers.retain(|(n, _)| !n.text.eq_ignore_ascii_case(&name.text));
-            headers.push((name, value));
+            level.push(r.pair(row)?);
         }
+        headers.retain(|(n, _)| {
+            !level
+                .iter()
+                .any(|(ln, _)| ln.text.eq_ignore_ascii_case(&n.text))
+        });
+        headers.extend(level);
     }
 
     // Auth: the request's, else the nearest folder's that is not `inherit`.

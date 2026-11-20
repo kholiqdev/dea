@@ -267,6 +267,52 @@ fn explicit_header_beats_auth_and_inherited_headers() {
 }
 
 #[test]
+fn same_level_headers_with_one_name_are_all_sent() {
+    let f = fixture(&[
+        (
+            "requests/shipments/_folder.yaml",
+            "headers:\n  - name: Accept\n    value: '*/*'\n",
+        ),
+        (
+            "requests/shipments/list.yaml",
+            "name: List\nmethod: GET\nurl: http://h\nheaders:\n  \
+             - name: Accept\n    value: text/plain\n  - name: Accept\n    value: application/json\n",
+        ),
+        (
+            "requests/shipments/wide.yaml",
+            "name: Wide\nmethod: GET\nurl: http://h\n",
+        ),
+    ]);
+    assert_eq!(
+        header(&run(&f, "requests/shipments/list.yaml"), "accept"),
+        ["text/plain", "application/json"]
+    );
+    // A request without its own Accept still inherits the folder's.
+    assert_eq!(
+        header(&run(&f, "requests/shipments/wide.yaml"), "accept"),
+        ["*/*"]
+    );
+}
+
+#[test]
+fn nearer_level_replaces_every_same_named_header_from_farther_levels() {
+    let f = fixture(&[
+        (
+            "requests/shipments/_folder.yaml",
+            "headers:\n  - name: Accept\n    value: '*/*'\n  - name: Accept\n    value: text/html\n",
+        ),
+        (
+            "requests/shipments/one.yaml",
+            "name: One\nmethod: GET\nurl: http://h\nheaders:\n  - name: Accept\n    value: application/json\n",
+        ),
+    ]);
+    assert_eq!(
+        header(&run(&f, "requests/shipments/one.yaml"), "accept"),
+        ["application/json"]
+    );
+}
+
+#[test]
 fn auth_header_is_named() {
     let f = fixture(&[
         (
