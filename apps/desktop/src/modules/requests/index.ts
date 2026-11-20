@@ -41,6 +41,14 @@ export const manifest: ModuleManifest = {
     },
   ],
   shortcuts: [{ command: "requests.open", chord: "Mod+1" }],
+  searchSources: [
+    {
+      id: "requests.search",
+      group: "Requests",
+      order: 10,
+      source: () => import("./search"),
+    },
+  ],
   settings: [
     {
       id: "requests.settings",
