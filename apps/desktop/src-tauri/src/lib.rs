@@ -10,7 +10,7 @@ mod state;
 mod vault;
 
 use state::AppState;
-use vault::UiPrompter;
+use vault::{UiPrompter, VaultOnDemand};
 
 fn probe_enabled() -> bool {
     std::env::var_os("DEA_PERF_PROBE").is_some_and(|v| v == "1")
@@ -59,7 +59,8 @@ pub fn run() {
         .setup(|app| {
             let dir = state::app_data_dir(app.handle())?;
             let prompter = UiPrompter::new(app.handle().clone());
-            app.manage(AppState::new(dir, prompter));
+            let vault = VaultOnDemand(app.handle().clone());
+            app.manage(AppState::new(dir, prompter, vault));
             commands::project::reopen_last(app.handle(), "main");
             Ok(())
         })
@@ -89,6 +90,21 @@ pub fn run() {
             commands::project::environment_references,
             commands::project::set_active_environment,
             commands::project::clear_local_data,
+            commands::requests::request_tree,
+            commands::requests::read_request,
+            commands::requests::save_request,
+            commands::requests::read_folder,
+            commands::requests::save_folder,
+            commands::requests::create_request,
+            commands::requests::create_folder,
+            commands::requests::rename_request_item,
+            commands::requests::duplicate_request_item,
+            commands::requests::move_request_item,
+            commands::requests::delete_request_item,
+            commands::requests::restore_request_item,
+            commands::requests::inspect_request,
+            commands::requests::pick_request_file,
+            commands::requests::describe_file_ref,
             commands::vault::vault_info,
             commands::vault::vault_secrets,
             commands::vault::vault_unlock,

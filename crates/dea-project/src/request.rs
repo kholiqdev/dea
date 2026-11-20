@@ -19,40 +19,63 @@ fn is_true(value: &bool) -> bool {
 /// One request, stored in `requests/<collection>/.../<name>.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct RequestFile {
     pub name: String,
     /// An HTTP method: `GET`, `POST`, or any other token such as `PURGE`.
     pub method: String,
     pub url: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<Variable>>", optional))]
     pub path_variables: Vec<Variable>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<KeyValue>>", optional))]
     pub params: Vec<KeyValue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<KeyValue>>", optional))]
     pub headers: Vec<KeyValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub body: Option<Body>,
     #[serde(default, skip_serializing_if = "Auth::is_inherit")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Auth>", optional))]
     pub auth: Auth,
     #[serde(default, skip_serializing_if = "SendOptions::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<SendOptions>", optional))]
     pub options: SendOptions,
 }
 
 /// A parameter or header. A disabled row stays in the file but is not sent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct KeyValue {
     pub name: String,
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub description: Option<String>,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>", optional))]
     pub enabled: bool,
 }
 
 // `Deserialize` is written by hand, see `BodyRepr`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub enum Body {
     Json {
         text: String,
@@ -75,6 +98,11 @@ pub enum Body {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub enum RawLanguage {
     Text,
     Xml,
@@ -85,18 +113,28 @@ pub enum RawLanguage {
 /// A multipart field: it has either a `value` or a `file`, never both.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct FormField {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub value: Option<String>,
     /// Path of the file to upload, relative to the project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub content_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub description: Option<String>,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>", optional))]
     pub enabled: bool,
 }
 
@@ -105,6 +143,11 @@ pub struct FormField {
 // `Deserialize` is written by hand, see `AuthRepr`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub enum Auth {
     #[default]
     Inherit,
@@ -134,6 +177,11 @@ impl Auth {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub enum ApiKeyLocation {
     Header,
     Query,
@@ -415,20 +463,31 @@ impl<'de> Deserialize<'de> for Auth {
 /// Per-request or per-folder send settings. A field left out inherits.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct SendOptions {
     /// The longest wait for the response head, then between two pieces of
     /// the body. `0` sets no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(type = "number", optional))]
     pub timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub follow_redirects: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub max_redirects: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub verify_tls: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub use_system_proxy: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub cookies: Option<bool>,
 }
 
@@ -443,36 +502,60 @@ impl SendOptions {
 /// `requests/_folder.yaml` only sets the order of the collections.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct FolderFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub name: Option<String>,
     /// File names (without `.yaml`) and folder names, in display order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<String>>", optional))]
     pub order: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<KeyValue>>", optional))]
     pub headers: Vec<KeyValue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<Variable>>", optional))]
     pub variables: Vec<Variable>,
     #[serde(default, skip_serializing_if = "Auth::is_inherit")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Auth>", optional))]
     pub auth: Auth,
     #[serde(default, skip_serializing_if = "SendOptions::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<SendOptions>", optional))]
     pub options: SendOptions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub tls: Option<TlsSettings>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct TlsSettings {
     /// Paths of extra certificate authorities, relative to the project.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<Vec<String>>", optional))]
     pub ca_certificates: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub client_certificate: Option<ClientCertificate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct ClientCertificate {
     /// Path of the certificate, relative to the project.
     pub certificate: String,

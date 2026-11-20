@@ -66,6 +66,7 @@ fn bind(app: &AppHandle, window: &str, opened: &OpenedProject) -> ProjectInfo {
     let slot = state
         .sessions()
         .bind(window, project.root.clone(), project.vault_scope());
+    state.forget_window(window);
     // Failing to remember the project is no reason to refuse opening it.
     let _ = state.store.touch_recent(project, now());
     state.set_watcher(window, watch(app, window, &project.root));
@@ -76,6 +77,7 @@ fn unbind(app: &AppHandle, window: &str) {
     let state = app.state::<AppState>();
     state.set_watcher(window, None);
     state.sessions().unbind(window);
+    state.forget_window(window);
 }
 
 fn watch(app: &AppHandle, window: &str, root: &Path) -> Option<ProjectWatcher> {
@@ -87,6 +89,7 @@ fn watch(app: &AppHandle, window: &str, root: &Path) -> Option<ProjectWatcher> {
 /// One reload and one event per batch of changes, however many files.
 fn on_changes(app: &AppHandle, window: &str, changes: &[ProjectChange]) {
     let state = app.state::<AppState>();
+    state.requests_changed(window, changes);
     let session = {
         let mut sessions = state.sessions();
         sessions.refresh_missing(window);
@@ -205,7 +208,7 @@ pub fn close_project(app: AppHandle, window: WebviewWindow) {
 
 #[tauri::command]
 pub async fn pick_folder(window: WebviewWindow) -> Result<Option<String>, IpcError> {
-    if let Some(path) = crate::state::e2e_picked_folder() {
+    if let Some(path) = crate::state::e2e_picked_path() {
         return Ok(Some(path));
     }
     let picked = spawn_blocking(move || {
@@ -501,7 +504,15 @@ pub async fn clear_local_data(app: AppHandle, window: WebviewWindow) -> Result<(
         .map(|s| s.scope.clone())
         .ok_or(crate::session::Refusal::NoProject)?;
     let store = app.state::<AppState>().store.clone();
-    Ok(spawn_blocking(move || store.clear_project(&scope)).await??)
+    let cleared = {
+        let scope = scope.clone();
+        spawn_blocking(move || store.clear_project(&scope)).await?
+    };
+    let state = app.state::<AppState>();
+    // Cookie jars already read go too, so no send saves them again.
+    state.requests.forget_project(&scope);
+    state.forget_tree(window.label());
+    Ok(cleared?)
 }
 
 #[cfg(test)]
@@ -509,7 +520,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::vault::{AppVault, PromptWindows, UiPrompter, VaultPromptEvent};
+    use crate::vault::{AppVault, NoWindows, UiPrompter};
 
     #[test]
     fn a_broken_dea_yaml_is_a_file_problem_not_a_missing_folder() {
@@ -657,19 +668,6 @@ mod tests {
 
         fn record_activity(&self) {
             self.activity.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    /// No window can show a Vault password prompt.
-    struct NoWindows;
-
-    impl PromptWindows for NoWindows {
-        fn focused(&self) -> Option<String> {
-            None
-        }
-
-        fn show(&self, _window: &str, _prompt: VaultPromptEvent) -> bool {
-            false
         }
     }
 

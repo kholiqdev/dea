@@ -12,6 +12,7 @@ mod names;
 mod request;
 mod request_ops;
 mod request_resolve;
+mod request_tree_info;
 mod requests;
 mod resolve;
 mod schema;
@@ -39,12 +40,15 @@ pub use request::{
 };
 pub use request_ops::{
     DeletedItem, create_folder, create_request, delete_item, duplicate_item, move_item,
-    rename_item, restore_item, save_folder,
+    read_folder, rename_item, restore_item, save_folder,
 };
 pub use request_resolve::{
     DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS, EffectiveOptions, FieldValue, RequestContext,
     RequestError, Resolved, ResolvedBody, ResolvedClientCertificate, ResolvedField,
     ResolvedRequest, ResolvedTls, resolve_draft, resolve_request,
+};
+pub use request_tree_info::{
+    FolderNode, RequestFileError, RequestLeaf, RequestNode, RequestTreeInfo, tree_info,
 };
 pub use requests::{
     Folder, LoadedRequests, RequestEntry, RequestLocation, RequestTree, TreeItem, load_requests,

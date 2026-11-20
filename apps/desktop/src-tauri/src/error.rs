@@ -3,10 +3,11 @@
 use std::error::Error;
 use std::fmt::Write;
 
+use dea_engine::SendError;
 use dea_engine::projects::OpenError;
 use dea_engine::store::StoreError;
 use dea_engine::vault::{SaveSecretError, UseError, VaultError};
-use dea_project::ProjectError;
+use dea_project::{ProjectError, RequestError};
 use serde::Serialize;
 
 use crate::session::Refusal;
@@ -29,7 +30,7 @@ pub enum IpcErrorKind {
     ReadOnly,
     /// A file has Git conflict markers and is not overwritten.
     MergeConflict,
-    /// The project folder is gone.
+    /// The project folder, or the file or item asked for, is gone.
     Missing,
     /// The Vault is locked.
     VaultLocked,
@@ -97,6 +98,33 @@ impl From<ProjectError> for IpcError {
             | ProjectError::InvalidEnvironment(_)
             | ProjectError::InvalidSecret(_)
             | ProjectError::InvalidRequest(_) => IpcErrorKind::Invalid,
+        };
+        Self::new(kind, &e)
+    }
+}
+
+impl From<RequestError> for IpcError {
+    fn from(e: RequestError) -> Self {
+        let kind = match e {
+            RequestError::NotFound(_) | RequestError::LocalFileMissing(_) => IpcErrorKind::Missing,
+            RequestError::BrokenFolder(_)
+            | RequestError::FileOutsideProject(_)
+            | RequestError::Resolve(_) => IpcErrorKind::Invalid,
+        };
+        Self::new(kind, &e)
+    }
+}
+
+impl From<SendError> for IpcError {
+    fn from(e: SendError) -> Self {
+        let kind = match e {
+            SendError::Request(e) => return e.into(),
+            SendError::Secret(e) => return e.into(),
+            SendError::NotConfirmed => IpcErrorKind::Cancelled,
+            SendError::File { .. } => IpcErrorKind::Io,
+            SendError::Unresolved(_) | SendError::InvalidUrl(_) | SendError::Http(_) => {
+                IpcErrorKind::Invalid
+            }
         };
         Self::new(kind, &e)
     }
@@ -261,6 +289,44 @@ mod tests {
         assert_eq!(
             json(UseError::Vault(VaultError::Backend("keychain gone".into()))),
             json!({ "kind": "internal", "message": "the secret store failed: keychain gone" })
+        );
+    }
+
+    #[test]
+    fn request_and_send_errors_map_to_their_kinds() {
+        use dea_engine::vault::UseError;
+        use dea_project::{RequestError, ResolveError};
+
+        let json = |e: IpcError| serde_json::to_value(e).unwrap();
+        assert_eq!(
+            json(RequestError::NotFound(PathBuf::from("requests/a/b.yaml")).into()),
+            json!({ "kind": "missing", "message": "there is no request at requests/a/b.yaml" })
+        );
+        assert_eq!(
+            json(RequestError::LocalFileMissing("local:0123456789ab".into()).into())["kind"],
+            json!("missing")
+        );
+        assert_eq!(
+            json(RequestError::FileOutsideProject("../x.bin".into()).into())["kind"],
+            json!("invalid")
+        );
+        assert_eq!(
+            json(RequestError::Resolve(ResolveError::Cycle("a".into())).into())["kind"],
+            json!("invalid")
+        );
+        let request = SendError::Request(RequestError::NotFound(PathBuf::from("x.yaml")));
+        assert_eq!(json(request.into())["kind"], json!("missing"));
+        assert_eq!(
+            json(SendError::Secret(UseError::Locked).into())["kind"],
+            json!("vaultLocked")
+        );
+        assert_eq!(
+            json(SendError::NotConfirmed.into())["kind"],
+            json!("cancelled")
+        );
+        assert_eq!(
+            json(SendError::InvalidUrl("http://".into()).into())["kind"],
+            json!("invalid")
         );
     }
 
