@@ -385,6 +385,7 @@ fn body_files_must_stay_in_the_project() {
 
 /// Requests numbered `i` that use `path` as a binary body, a form file and,
 /// through their folder, a CA certificate.
+#[cfg(unix)]
 fn uses_of(i: usize, path: &str) -> Vec<(String, String)> {
     let request = |body: &str| format!("name: R\nmethod: POST\nurl: http://h\n{body}");
     vec![
