@@ -9,6 +9,7 @@ import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { Variable } from "$lib/ipc/bindings/Variable";
 import { errorMessage } from "$lib/ipc/errors";
+import { lintJson } from "@dea/editor";
 import { inspectRequest, readRequest, saveRequest } from "../api";
 import {
   joinUrl,
@@ -179,6 +180,12 @@ export class RequestDraft extends SyncedFile<RequestFile> {
     return sameRequest(a, b);
   }
 
+  /** A JSON body that does not parse is not written on its own. */
+  protected override autosavable(): boolean {
+    const body = this.draft.body;
+    return body?.mode !== "json" || lintJson(body.text) === null;
+  }
+
   protected override taken(): void {
     this.#bodies = {};
     this.typedUrl = null;
@@ -320,6 +327,7 @@ export function pruneDrafts(): void {
   for (const [id, draft] of drafts)
     if (!open.includes(id)) {
       draft.cancelInspection();
+      draft.cancelAutosave();
       drafts.delete(id);
     }
 }
@@ -335,12 +343,18 @@ export function draftFor(id: string, path: string): RequestDraft {
     id,
     path,
     (p) => new RequestDraft(p),
-    (known) => known.cancelInspection(),
+    (known) => {
+      known.cancelInspection();
+      known.cancelAutosave();
+    },
   );
 }
 
 /** Forgets every draft (tests). */
 export function resetDrafts(): void {
-  for (const draft of drafts.values()) draft.cancelInspection();
+  for (const draft of drafts.values()) {
+    draft.cancelInspection();
+    draft.cancelAutosave();
+  }
   drafts.clear();
 }

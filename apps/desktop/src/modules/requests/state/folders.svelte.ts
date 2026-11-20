@@ -194,8 +194,11 @@ export const folderStates = new Map<string, RequestFolderState>();
 /** Forgets the states of folder tabs that were closed. */
 export function pruneFolderStates(): void {
   const open = openTabs(TAB_TYPE);
-  for (const id of [...folderStates.keys()])
-    if (!open.includes(id)) folderStates.delete(id);
+  for (const [id, state] of [...folderStates])
+    if (!open.includes(id)) {
+      state.cancelAutosave();
+      folderStates.delete(id);
+    }
 }
 
 /** The state of the folder tab `id` as it is shown. */
@@ -206,7 +209,7 @@ export function folderStateFor(id: string, path: string): RequestFolderState {
     id,
     path,
     (p) => new RequestFolderState(p),
-    () => {},
+    (known) => known.cancelAutosave(),
   );
   void state.loadInherited();
   return state;
@@ -214,5 +217,6 @@ export function folderStateFor(id: string, path: string): RequestFolderState {
 
 /** Forgets every state (tests). */
 export function resetFolderStates(): void {
+  for (const state of folderStates.values()) state.cancelAutosave();
   folderStates.clear();
 }

@@ -13,6 +13,7 @@
   import { shellApi } from "$app/contributions/shell-api";
   import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
   import { errorMessage } from "$lib/ipc/errors";
+  import { settings } from "$lib/settings/settings.svelte";
   import BodySection from "./components/BodySection.svelte";
   import HeadersSection from "./components/HeadersSection.svelte";
   import NetworkOptions from "./components/NetworkOptions.svelte";
@@ -98,6 +99,15 @@
   });
 
   $effect(() => shell.setTabDirty(id, draft.dirty));
+
+  // Autosaves a second after the last edit, or after an outside change is
+  // answered. Leaving the tab does not cancel it: the draft outlives the view.
+  $effect(() => {
+    void JSON.stringify(draft.draft);
+    void draft.outside;
+    void settings.requests.autosave;
+    untrack(() => draft.scheduleAutosave());
+  });
 
   // The tab is named after the request.
   $effect(() => {

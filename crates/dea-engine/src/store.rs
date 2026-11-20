@@ -62,6 +62,9 @@ pub struct Settings {
     /// Vault lock times. Settings files from before the Vault get the
     /// defaults.
     pub security: Security,
+    /// How the request editor behaves. Settings files from before it get
+    /// the defaults.
+    pub requests: RequestSettings,
 }
 
 impl Default for Settings {
@@ -71,8 +74,22 @@ impl Default for Settings {
             appearance: Appearance::default(),
             shortcuts: BTreeMap::new(),
             security: Security::default(),
+            requests: RequestSettings::default(),
         }
     }
+}
+
+/// How the request editor behaves.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub struct RequestSettings {
+    /// Save an edited request a second after the last change.
+    pub autosave: bool,
 }
 
 /// When the Vault locks and how long production secrets stay usable.
