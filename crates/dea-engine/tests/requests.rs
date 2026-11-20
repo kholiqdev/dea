@@ -8,10 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use dea_engine::requests::{PreparedRequest, RequestService, SendError, Sent};
+use dea_engine::requests::{PreparedRequest, RequestService, SendError, Sent, VaultProvider};
 use dea_engine::store::Store;
+use dea_engine::vault::VaultError;
 use dea_engine::{
-    Inspection, PasswordPrompt, Prompter, SendAnswer, SendConfirmation, VaultService,
+    Inspection, PasswordPrompt, Prompter, SendAnswer, SendConfirmation, UseError, VaultService,
 };
 use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
@@ -812,6 +813,83 @@ async fn inspect_reports_values_sources_and_undefined_without_the_vault() {
         "{json}"
     );
     assert_untouched(&f);
+}
+
+/// A Vault that is not opened yet: opening it fails the test.
+struct NeverOpened;
+
+impl VaultProvider for NeverOpened {
+    fn open(&self) -> Result<Arc<VaultService>, UseError> {
+        panic!("the Vault was opened")
+    }
+}
+
+/// A service over the fixture that gets its Vault from `vault`.
+fn service_with(f: &Fixture, vault: impl VaultProvider + 'static) -> RequestService {
+    RequestService::new(
+        client(f.app_data.path()),
+        Arc::clone(&f.store),
+        vault,
+        Arc::clone(&f.prompter) as Arc<dyn Prompter>,
+    )
+}
+
+#[tokio::test]
+async fn inspect_never_opens_the_vault() {
+    let f = Fixture::new().await;
+    let service = service_with(&f, NeverOpened);
+    let draft = request("GET", "{{baseUrl}}/echo?t={{vault:access_token}}");
+
+    let inspection = service
+        .inspect(
+            &f.project,
+            &f.tree,
+            Path::new(LIST),
+            &draft,
+            Some("production"),
+        )
+        .unwrap();
+
+    let vault = inspection
+        .variables
+        .iter()
+        .find(|v| v.name == "vault:access_token")
+        .unwrap();
+    assert!(vault.secret);
+}
+
+#[tokio::test]
+async fn the_vault_is_opened_only_after_production_is_confirmed() {
+    let f = Fixture::new().await;
+    let service = service_with(&f, NeverOpened);
+    f.prompter.answer(SendAnswer::Cancel);
+
+    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("production"));
+
+    assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
+}
+
+/// A Vault that cannot be opened, as when the keychain is gone.
+struct Unavailable;
+
+impl VaultProvider for Unavailable {
+    fn open(&self) -> Result<Arc<VaultService>, UseError> {
+        Err(VaultError::Backend("keychain gone".into()).into())
+    }
+}
+
+#[tokio::test]
+async fn a_vault_that_cannot_be_opened_stops_the_send() {
+    let f = Fixture::new().await;
+    let service = service_with(&f, Unavailable);
+
+    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("staging"));
+
+    assert!(
+        matches!(result, Err(SendError::Secret(UseError::Vault(_)))),
+        "{result:?}"
+    );
+    assert!(f.server.requests().is_empty());
 }
 
 #[tokio::test]

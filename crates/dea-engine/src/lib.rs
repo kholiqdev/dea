@@ -19,7 +19,7 @@ pub use clock::{Clock, SystemClock};
 pub use error::UseError;
 pub use inspection::{AutomaticHeader, Inspection, OptionsInfo, VariableInfo};
 pub use prompt::{PasswordPrompt, PromptProblem, Prompter, SendAnswer, SendConfirmation};
-pub use requests::{PreparedRequest, RequestService, SendError, Sent};
+pub use requests::{PreparedRequest, RequestService, SendError, Sent, VaultProvider};
 pub use vault::{
     PASSWORD_FILE, TICK, VaultBackground, VaultLookup, VaultService, VaultStatus, production_reason,
 };
