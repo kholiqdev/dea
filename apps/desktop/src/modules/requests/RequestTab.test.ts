@@ -1,0 +1,520 @@
+import { render, screen, waitFor, within } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, expect, test } from "vitest";
+import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
+import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
+import type { FakeProject } from "./fake-project.svelte";
+import RequestTab from "./RequestTab.svelte";
+import {
+  openRequestTab,
+  setUpRequestTabs,
+  type FakeShell,
+} from "./request-tab-support.svelte";
+import { resetTreeState, treeState } from "./state/tree.svelte";
+import {
+  fakeRequestsIpc,
+  folder,
+  leaf,
+  type RequestsIpc,
+} from "./test-support";
+
+const BY_ID = "requests/shipments/by-id.yaml";
+const BASE = "{{baseUrl}}/v1/shipments/{{shipmentId}}";
+
+function shipments(): RequestTreeInfo {
+  return {
+    collections: [
+      folder("requests/shipments", "Shipments", [
+        leaf(BY_ID, "Shipment by ID", "GET", BASE),
+      ]),
+      folder("requests/tracking", "Tracking", []),
+    ],
+    errors: [],
+  };
+}
+
+function byId(): RequestFile {
+  return { name: "Shipment by ID", method: "GET", url: BASE };
+}
+
+let shell: FakeShell;
+let project: FakeProject;
+
+beforeEach(() => {
+  resetTreeState();
+  ({ shell, project } = setUpRequestTabs());
+});
+
+const calls = (ipc: RequestsIpc, cmd: string) =>
+  ipc.calls.filter(([c]) => c === cmd).map(([, args]) => args);
+
+function shipmentsIpc(file: Partial<RequestFile> = {}): RequestsIpc {
+  return fakeRequestsIpc({
+    tree: shipments(),
+    files: { [BY_ID]: { ...byId(), ...file } },
+  });
+}
+
+const urlField = () =>
+  screen.findByRole<HTMLInputElement>("textbox", { name: "URL" });
+
+test("typing a query in the URL fills the table and Save writes both", async () => {
+  const ipc = fakeRequestsIpc({
+    tree: shipments(),
+    files: { [BY_ID]: byId() },
+  });
+  openRequestTab(BY_ID);
+  const url = await screen.findByRole("textbox", { name: "URL" });
+  await userEvent.type(url, "?include=events");
+  expect(screen.getByRole("checkbox", { name: "Send include" })).toBeChecked();
+  expect(screen.getByRole("tab", { name: /Params 2/ })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Save request" }));
+  expect(ipc.saved.at(-1)).toMatchObject({
+    url: "{{baseUrl}}/v1/shipments/{{shipmentId}}",
+    params: [{ name: "include", value: "events", enabled: true }],
+  });
+});
+
+test("the URL bar keeps what is typed while the table follows it", async () => {
+  shipmentsIpc();
+  openRequestTab(BY_ID);
+  const url = await urlField();
+  await userEvent.type(url, "?include&");
+  expect(url).toHaveValue(`${BASE}?include&`);
+  const table = screen.getByRole("table", { name: "Query parameters" });
+  expect(
+    within(table).getByRole("textbox", { name: "Key of row 1" }),
+  ).toHaveValue("include");
+});
+
+test("editing_the_table_rewrites_the_url_bar", async () => {
+  shipmentsIpc();
+  openRequestTab(BY_ID);
+  const url = await urlField();
+  await userEvent.click(screen.getByRole("button", { name: "Add parameter" }));
+  const key = screen.getByRole("textbox", { name: "Key of row 1" });
+  expect(key).toHaveFocus();
+  await userEvent.type(key, "limit");
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Value of limit" }),
+    "20",
+  );
+  expect(url).toHaveValue(`${BASE}?limit=20`);
+  // A row not filled in yet is not part of the URL.
+  await userEvent.click(screen.getByRole("button", { name: "Add parameter" }));
+  expect(url).toHaveValue(`${BASE}?limit=20`);
+  await userEvent.click(screen.getByRole("checkbox", { name: "Send limit" }));
+  expect(url).toHaveValue(BASE);
+});
+
+test("moving_an_open_dirty_request_keeps_its_edits", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID, "Shipment by ID");
+  const url = await urlField();
+  await userEvent.type(url, "/events");
+  await treeState.move(BY_ID, "requests/tracking", 0);
+
+  const moved = "requests/tracking/by-id.yaml";
+  expect(shell.tab(id).params.path).toBe(moved);
+  expect(screen.getByRole("textbox", { name: "URL" })).toBe(url);
+  expect(url).toHaveValue(`${BASE}/events`);
+  expect(shell.tab(id).dirty).toBe(true);
+
+  await userEvent.click(screen.getByRole("button", { name: "Save request" }));
+  await waitFor(() =>
+    expect(calls(ipc, "save_request")).toMatchObject([
+      { path: moved, request: { url: `${BASE}/events` } },
+    ]),
+  );
+  expect(ipc.files.has(BY_ID)).toBe(false);
+  expect(shell.tab(id).dirty).toBe(false);
+});
+
+test("a sidebar rename keeps its name when the edited draft is saved", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID, "Shipment by ID");
+  await userEvent.type(await urlField(), "/events");
+  await treeState.rename(BY_ID, "Shipment details");
+
+  const renamed = "requests/shipments/shipment-details.yaml";
+  expect(shell.tab(id)).toMatchObject({
+    title: "Shipment details",
+    params: { path: renamed },
+  });
+  await shell.save(id);
+  expect(calls(ipc, "save_request").at(-1)).toMatchObject({
+    path: renamed,
+    request: { name: "Shipment details", url: `${BASE}/events` },
+  });
+  expect(ipc.files.has(BY_ID)).toBe(false);
+});
+
+test("outside_change_to_a_dirty_request_asks", async () => {
+  const ipc = shipmentsIpc();
+  openRequestTab(BY_ID);
+  const url = await urlField();
+  await userEvent.type(url, "/events");
+
+  ipc.files.set(BY_ID, { ...byId(), method: "POST" });
+  project.change([BY_ID]);
+  await screen.findByText("This request changed on disk.");
+  // The edits stay until the person decides.
+  expect(url).toHaveValue(`${BASE}/events`);
+  expect(screen.getByRole("button", { name: "Keep mine" })).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Take theirs" }));
+  await screen.findByRole("button", { name: "Method: POST" });
+  expect(url).toHaveValue(BASE);
+  expect(screen.queryByText("This request changed on disk.")).toBeNull();
+});
+
+test("keep mine keeps the edits and saves them over the disk", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "/events");
+  ipc.files.set(BY_ID, { ...byId(), method: "POST" });
+  project.change([BY_ID]);
+
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Keep mine" }),
+  );
+  expect(screen.queryByText("This request changed on disk.")).toBeNull();
+  expect(shell.tab(id).dirty).toBe(true);
+  await shell.save(id);
+  expect(ipc.files.get(BY_ID)).toMatchObject({
+    method: "GET",
+    url: `${BASE}/events`,
+  });
+});
+
+test("clean_draft_reloads_silently_on_outside_change", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID, "Shipment by ID");
+  const url = await urlField();
+
+  const v2 = "{{baseUrl}}/v2/shipments/{{shipmentId}}";
+  ipc.files.set(BY_ID, { ...byId(), name: "Shipment v2", url: v2 });
+  project.change([BY_ID]);
+  await waitFor(() => expect(url).toHaveValue(v2));
+  expect(screen.queryByText("This request changed on disk.")).toBeNull();
+  expect(shell.tab(id)).toMatchObject({ title: "Shipment v2", dirty: false });
+});
+
+test("a save reported back by the watcher raises nothing", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "?include=events");
+  await shell.save(id);
+
+  project.change([BY_ID]);
+  await waitFor(() => expect(calls(ipc, "read_request")).toHaveLength(2));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.queryByText("This request changed on disk.")).toBeNull();
+  expect(shell.tab(id).dirty).toBe(false);
+});
+
+test("deleted_on_disk_offers_save_again", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "/events");
+
+  // Deleting from the sidebar leaves a tab with edits open.
+  await treeState.remove(BY_ID);
+  expect(shell.tab(id)).toBeTruthy();
+  project.change([BY_ID]);
+  await screen.findByText("This request was deleted on disk.");
+  expect(screen.getByRole("button", { name: "Close tab" })).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Save again" }));
+  await waitFor(() =>
+    expect(ipc.files.get(BY_ID)).toMatchObject({ url: `${BASE}/events` }),
+  );
+  expect(screen.queryByText("This request was deleted on disk.")).toBeNull();
+});
+
+test("close tab on a deleted request asks the shell to close it", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID);
+  await urlField();
+  ipc.files.delete(BY_ID);
+  ipc.tree = { collections: [], errors: [] };
+  project.change([BY_ID]);
+
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Close tab" }),
+  );
+  expect(shell.closing).toEqual([id]);
+});
+
+test("a restored tab whose request is gone says so", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  openRequestTab("requests/shipments/gone.yaml");
+  expect(
+    await screen.findByRole("heading", {
+      name: "This request no longer exists",
+    }),
+  ).toBeInTheDocument();
+});
+
+test("custom_method_is_accepted_and_shown", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Method: GET" }),
+  );
+  const menu = screen.getByRole("menu");
+  expect(
+    within(menu)
+      .getAllByRole("menuitemradio")
+      .map((item) => item.textContent?.trim()),
+  ).toEqual([
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "HEAD",
+    "OPTIONS",
+    "Custom…",
+  ]);
+  await userEvent.click(
+    within(menu).getByRole("menuitemradio", { name: "Custom…" }),
+  );
+
+  const input = screen.getByRole("textbox", { name: "Custom method" });
+  expect(input).toHaveFocus();
+  // Not an HTTP token: Enter does nothing.
+  await userEvent.type(input, "NOT OK{Enter}");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  await userEvent.clear(input);
+  await userEvent.type(input, "PURGE{Enter}");
+  expect(
+    screen.getByRole("button", { name: "Method: PURGE" }),
+  ).toBeInTheDocument();
+
+  await shell.save(id);
+  expect(ipc.saved.at(-1)?.method).toBe("PURGE");
+});
+
+test("a standard method is chosen from the menu", async () => {
+  shipmentsIpc();
+  openRequestTab(BY_ID);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Method: GET" }),
+  );
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "PATCH" }));
+  expect(
+    screen.getByRole("button", { name: "Method: PATCH" }),
+  ).toBeInTheDocument();
+});
+
+test("path_variables_follow_the_url", async () => {
+  const ipc = shipmentsIpc({
+    url: "https://harbor.test/shipments/:id",
+    pathVariables: [{ name: "id", value: "shp_1", description: "Shipment ID" }],
+  });
+  const { id } = openRequestTab(BY_ID);
+  const url = await urlField();
+  const table = screen.getByRole("table", { name: "Path variables" });
+  expect(within(table).getByText("id")).toBeInTheDocument();
+  expect(
+    within(table).getByRole("textbox", { name: "Value of id" }),
+  ).toHaveValue("shp_1");
+  // Names follow the URL, so they cannot be typed over.
+  expect(
+    within(table).queryByRole("textbox", { name: "Key of row 1" }),
+  ).toBeNull();
+
+  await userEvent.type(url, "/events/:eventId");
+  await userEvent.type(
+    within(table).getByRole("textbox", { name: "Value of eventId" }),
+    "evt_9",
+  );
+  expect(screen.getByRole("tab", { name: /Params 2/ })).toBeInTheDocument();
+  await shell.save(id);
+  expect(ipc.saved.at(-1)?.pathVariables).toEqual([
+    { name: "id", value: "shp_1", description: "Shipment ID" },
+    { name: "eventId", value: "evt_9" },
+  ]);
+
+  // Without path variables the table goes; it comes back with the new ones.
+  await userEvent.clear(url);
+  expect(screen.queryByRole("table", { name: "Path variables" })).toBeNull();
+  await userEvent.type(url, "https://harbor.test/events/:eventId");
+  const after = screen.getByRole("table", { name: "Path variables" });
+  expect(within(after).queryByText("id")).toBeNull();
+  expect(within(after).getByText("eventId")).toBeInTheDocument();
+});
+
+test("automatic_headers_show_and_replaced_ones_are_marked", async () => {
+  fakeRequestsIpc({
+    tree: shipments(),
+    files: { [BY_ID]: byId() },
+    inspection: {
+      automaticHeaders: [
+        { name: "User-Agent", value: "Dea/0.1.0", replaced: false },
+        { name: "Accept", value: "*/*", replaced: true },
+        { name: "Content-Length", value: null, replaced: false },
+      ],
+    },
+  });
+  openRequestTab(BY_ID);
+  await userEvent.click(await screen.findByRole("tab", { name: /Headers/ }));
+  expect(
+    screen.getByText(
+      "Added when the request is sent. A header with the same name above replaces it.",
+    ),
+  ).toBeInTheDocument();
+  const list = await screen.findByRole("list", { name: "Automatic headers" });
+  const [agent, accept, length] = within(list).getAllByRole("listitem");
+  expect(agent).toHaveTextContent("User-AgentDea/0.1.0");
+  expect(agent).not.toHaveTextContent("Replaced");
+  expect(accept).toHaveTextContent("Replaced");
+  expect(accept?.querySelector("s")).toHaveTextContent("Accept");
+  expect(length).toHaveTextContent("Content-LengthCalculated when sent");
+});
+
+test("header_count_counts_enabled_rows_only", async () => {
+  shipmentsIpc({
+    headers: [
+      { name: "Accept", value: "application/json" },
+      { name: "X-Trace", value: "1", enabled: false },
+      { name: "X-Carrier", value: "dhl" },
+    ],
+  });
+  openRequestTab(BY_ID);
+  await userEvent.click(await screen.findByRole("tab", { name: "Headers 2" }));
+  await userEvent.click(screen.getByRole("checkbox", { name: "Send Accept" }));
+  expect(screen.getByRole("tab", { name: "Headers 1" })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("checkbox", { name: "Send X-Trace" }));
+  expect(screen.getByRole("tab", { name: "Headers 2" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Body" })).toBeInTheDocument();
+});
+
+test("undefined_variables_in_headers_are_red", async () => {
+  fakeRequestsIpc({
+    tree: shipments(),
+    files: {
+      [BY_ID]: {
+        ...byId(),
+        headers: [{ name: "X-Carrier", value: "{{carrierCode}}" }],
+      },
+    },
+    inspection: { undefined: ["carrierCode"] },
+  });
+  openRequestTab(BY_ID);
+  await userEvent.click(await screen.findByRole("tab", { name: /Headers/ }));
+  const table = screen.getByRole("table", { name: "Headers" });
+  await waitFor(() =>
+    expect(table.querySelector(".undefined-var")).toHaveTextContent(
+      "{{carrierCode}}",
+    ),
+  );
+});
+
+test("read_only_project_disables_the_editor", async () => {
+  project.refresh({ ...project.info!, readOnly: true });
+  shipmentsIpc({ headers: [{ name: "Accept", value: "application/json" }] });
+  openRequestTab(BY_ID);
+  expect(await urlField()).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Method: GET" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save request" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add parameter" })).toBeDisabled();
+
+  await userEvent.click(screen.getByRole("tab", { name: /Headers/ }));
+  expect(screen.getByRole("checkbox", { name: "Send Accept" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Key of row 1" })).toBeDisabled();
+  expect(
+    screen.getByRole("textbox", { name: "Value of Accept" }),
+  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add header" })).toBeDisabled();
+});
+
+test("a failed inspection shows why", async () => {
+  const ipc = shipmentsIpc();
+  ipc.failures.set("inspect_request", {
+    kind: "invalid",
+    message:
+      "requests/shipments/_folder.yaml is not valid: unknown field `colour`",
+  });
+  openRequestTab(BY_ID);
+  expect(
+    await screen.findByText(
+      "Requests/shipments/_folder.yaml is not valid: unknown field `colour`",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("inspection waits for the last change, and runs again for a new environment", async () => {
+  const ipc = shipmentsIpc();
+  openRequestTab(BY_ID);
+  await waitFor(() => expect(calls(ipc, "inspect_request")).toHaveLength(1));
+  await userEvent.type(await urlField(), "/events");
+  await waitFor(() => expect(calls(ipc, "inspect_request")).toHaveLength(2));
+  expect(calls(ipc, "inspect_request").at(-1)).toMatchObject({
+    path: BY_ID,
+    request: { url: `${BASE}/events` },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  expect(calls(ipc, "inspect_request")).toHaveLength(2);
+
+  await project.setEnvironment("staging");
+  await waitFor(() => expect(calls(ipc, "inspect_request")).toHaveLength(3));
+});
+
+test("an older inspection never replaces a newer one", async () => {
+  let release = () => {};
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  fakeRequestsIpc({
+    tree: shipments(),
+    files: { [BY_ID]: byId() },
+    inspection: async (_path, request) => {
+      if (request.url.endsWith("/v2"))
+        return {
+          automaticHeaders: [{ name: "X-New", value: "2", replaced: false }],
+        };
+      await slow;
+      return {
+        automaticHeaders: [{ name: "X-Old", value: "1", replaced: false }],
+      };
+    },
+  });
+  openRequestTab(BY_ID);
+  await userEvent.click(await screen.findByRole("tab", { name: /Headers/ }));
+  // The first inspection is still out when the URL changes.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await userEvent.type(await urlField(), "/v2");
+  await screen.findByText("X-New");
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(screen.queryByText("X-Old")).toBeNull();
+  expect(screen.getByText("X-New")).toBeInTheDocument();
+});
+
+test("switching to another tab and back keeps the edits", async () => {
+  shipmentsIpc();
+  const { id, unmount } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "/events");
+  unmount();
+
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  expect(await urlField()).toHaveValue(`${BASE}/events`);
+  expect(shell.tab(id).dirty).toBe(true);
+});
+
+test("a closed tab forgets its edits, even if it is reopened", async () => {
+  shipmentsIpc();
+  const { id, unmount } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "/events");
+  // Closing with Discard: the shell drops the tab, then its view.
+  const closed = shell.tab(id);
+  shell.tabs = shell.tabs.filter((t) => t.id !== id);
+  unmount();
+
+  // Reopening the closed tab brings back its id.
+  shell.tabs.push({ ...closed, dirty: false });
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  expect(await urlField()).toHaveValue(BASE);
+  expect(shell.tab(id).dirty).toBe(false);
+});

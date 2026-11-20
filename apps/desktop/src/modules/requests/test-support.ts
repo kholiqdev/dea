@@ -7,20 +7,34 @@ import type { FolderFile } from "$lib/ipc/bindings/FolderFile";
 import type { FolderNode } from "$lib/ipc/bindings/FolderNode";
 import type { Inspection } from "$lib/ipc/bindings/Inspection";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
-import type { RequestLeaf } from "$lib/ipc/bindings/RequestLeaf";
 import type { RequestNode } from "$lib/ipc/bindings/RequestNode";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
 import { VariableLookup } from "./state/variables.svelte";
 import type { IpcError } from "$lib/ipc/errors";
 
+/** What `inspect_request` answers: fixed, or worked out from the draft. */
+export type FakeInspection =
+  | Partial<Inspection>
+  | ((
+      path: string,
+      request: RequestFile,
+    ) => Partial<Inspection> | Promise<Partial<Inspection>>);
+
 export interface RequestsIpc {
   calls: [string, Record<string, unknown>][];
   tree: RequestTreeInfo;
-  /** The request files `save_request` wrote, by path. */
+  /**
+   * The request files on disk, by path: given, or written by
+   * `save_request`. A request in the tree without a file here reads as its
+   * name, method and URL.
+   */
   files: Map<string, RequestFile>;
+  /** Every request `save_request` wrote, in order. */
+  saved: RequestFile[];
   folders: Map<string, FolderFile>;
   /** Commands that reject, with the error each rejects with. */
   failures: Map<string, IpcError>;
+  inspection: FakeInspection;
 }
 
 export function leaf(
@@ -119,20 +133,45 @@ function slug(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "-");
 }
 
+/** Gives the files of `from`, and of everything in it, the path under `to`. */
+function moveFiles(
+  files: Map<string, RequestFile>,
+  from: string,
+  to: string,
+): void {
+  for (const [path, file] of [...files]) {
+    if (path !== from && !path.startsWith(`${from}/`)) continue;
+    files.delete(path);
+    files.set(to + path.slice(from.length), file);
+  }
+}
+
 export function fakeRequestsIpc(
-  opts: { tree?: RequestTreeInfo; errors?: FileErrorInfo[] } = {},
+  opts: {
+    tree?: RequestTreeInfo;
+    errors?: FileErrorInfo[];
+    files?: Record<string, RequestFile>;
+    inspection?: FakeInspection;
+  } = {},
 ): RequestsIpc {
   const ipc: RequestsIpc = {
     calls: [],
     tree: opts.tree ?? { collections: [], errors: [] },
-    files: new Map(),
+    files: new Map(Object.entries(opts.files ?? {})),
+    saved: [],
     folders: new Map(),
     failures: new Map(),
+    inspection: opts.inspection ?? {},
   };
   if (opts.errors) ipc.tree.errors = opts.errors;
   const trash = new Map<
     number,
-    { parent: string; index: number; node: RequestNode }
+    {
+      parent: string;
+      index: number;
+      node: RequestNode;
+      files: Map<string, RequestFile>;
+    }
   >();
   let nextId = 1;
 
@@ -161,19 +200,19 @@ export function fakeRequestsIpc(
       case "read_request": {
         const path = args.path as string;
         const saved = ipc.files.get(path);
-        if (saved) return saved;
+        if (saved) return structuredClone(saved);
         const hit = find(roots(), path);
-        const node = hit?.list[hit.index] as RequestLeaf | undefined;
-        return {
-          name: node?.name ?? "",
-          method: node?.method ?? "GET",
-          url: node?.url ?? "",
-        };
+        const node = hit?.list[hit.index];
+        if (node?.kind !== "request")
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw { kind: "missing", message: `there is no request at ${path}` };
+        return { name: node.name, method: node.method, url: node.url };
       }
       case "save_request": {
         const path = args.path as string;
         const request = args.request as RequestFile;
-        ipc.files.set(path, request);
+        ipc.files.set(path, structuredClone(request));
+        ipc.saved.push(structuredClone(request));
         const hit = find(roots(), path);
         const node = hit?.list[hit.index];
         if (node?.kind === "request") {
@@ -217,6 +256,10 @@ export function fakeRequestsIpc(
             ? `${parentOf(path)}/${slug(name)}`
             : `${parentOf(path)}/${slug(name)}.yaml`,
         );
+        // Dea writes a request's new name into its file.
+        const file = ipc.files.get(path);
+        if (file && node.kind === "request") file.name = name;
+        moveFiles(ipc.files, path, node.path);
         return node.path;
       }
       case "duplicate_request_item": {
@@ -244,6 +287,7 @@ export function fakeRequestsIpc(
           `${args.folder as string}/${path.slice(path.lastIndexOf("/") + 1)}`,
         );
         target.splice(args.index as number, 0, node);
+        moveFiles(ipc.files, path, node.path);
         refresh();
         return node.path;
       }
@@ -254,7 +298,18 @@ export function fakeRequestsIpc(
         const [node] = hit.list.splice(hit.index, 1);
         if (!node) return 0;
         const id = nextId++;
-        trash.set(id, { parent: parentOf(path), index: hit.index, node });
+        const files = new Map<string, RequestFile>();
+        for (const [at, file] of [...ipc.files])
+          if (at === path || at.startsWith(`${path}/`)) {
+            files.set(at, file);
+            ipc.files.delete(at);
+          }
+        trash.set(id, {
+          parent: parentOf(path),
+          index: hit.index,
+          node,
+          files,
+        });
         refresh();
         return id;
       }
@@ -262,13 +317,22 @@ export function fakeRequestsIpc(
         const entry = trash.get(args.id as number);
         if (entry) {
           folderAt(entry.parent)?.splice(entry.index, 0, entry.node);
+          for (const [at, file] of entry.files) ipc.files.set(at, file);
           trash.delete(args.id as number);
           refresh();
         }
         return null;
       }
-      case "inspect_request":
-        return EMPTY_INSPECTION;
+      case "inspect_request": {
+        const answer =
+          typeof ipc.inspection === "function"
+            ? ipc.inspection(args.path as string, args.request as RequestFile)
+            : ipc.inspection;
+        return Promise.resolve(answer).then((a) => ({
+          ...EMPTY_INSPECTION,
+          ...a,
+        }));
+      }
       case "pick_request_file":
         return null;
       case "describe_file_ref":

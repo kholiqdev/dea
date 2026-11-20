@@ -17,6 +17,7 @@
     label,
     placeholder,
     mono = false,
+    disabled = false,
     variables,
     oninput,
     onenter,
@@ -25,6 +26,7 @@
     label: string;
     placeholder?: string;
     mono?: boolean;
+    disabled?: boolean;
     variables: VariableLookup;
     oninput: (value: string) => void;
     onenter?: () => void;
@@ -128,7 +130,7 @@
   }
 </script>
 
-<div class="field" class:mono>
+<div class="field" class:mono class:disabled>
   <input
     bind:this={input}
     class="input"
@@ -136,6 +138,7 @@
     aria-describedby={active ? popoverId : undefined}
     {placeholder}
     {value}
+    {disabled}
     autocomplete="off"
     spellcheck="false"
     oninput={(e) => {
@@ -204,6 +207,10 @@
 
   .field:focus-within {
     box-shadow: inset 0 0 0 1px var(--focus);
+  }
+
+  .field.disabled {
+    opacity: 0.5;
   }
 
   /* The input and the layer share every metric that moves text. */
