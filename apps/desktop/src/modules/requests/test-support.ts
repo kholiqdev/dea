@@ -157,6 +157,8 @@ export function fakeRequestsIpc(
     pick?: FileRef | null;
     /** What `describe_file_ref` says about a value, over the plain default. */
     describe?: Record<string, Partial<FileRef>>;
+    /** The names `vault_secrets` lists (one row each, in `local`). */
+    secrets?: string[];
   } = {},
 ): RequestsIpc {
   const ipc: RequestsIpc = {
@@ -338,6 +340,16 @@ export function fakeRequestsIpc(
           ...a,
         }));
       }
+      case "vault_secrets":
+        return (opts.secrets ?? []).map((name) => ({
+          name,
+          kind: "secret",
+          description: null,
+          environment: "local",
+          missing: false,
+          updatedAt: null,
+          expiresAt: null,
+        }));
       case "pick_request_file":
         return opts.pick ?? null;
       case "describe_file_ref": {

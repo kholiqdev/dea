@@ -16,6 +16,7 @@ import {
   restoreRequestItem,
 } from "../api";
 import { drafts } from "./drafts.svelte";
+import { folderStates } from "./folders.svelte";
 
 /** The folder that holds the collections. */
 export const ROOT = "requests";
@@ -257,6 +258,7 @@ export class RequestTreeState {
       // A tab not shown has no view to follow the path, and its edits are
       // saved from the draft.
       drafts.get(id)?.moveTo(next.path);
+      folderStates.get(id)?.moveTo(next.path);
       return next;
     });
   }

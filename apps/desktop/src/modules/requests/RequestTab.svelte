@@ -11,9 +11,11 @@
   import Placeholder from "@dea/ui/Placeholder.svelte";
   import { projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
+  import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
   import { errorMessage } from "$lib/ipc/errors";
   import BodySection from "./components/BodySection.svelte";
   import HeadersSection from "./components/HeadersSection.svelte";
+  import NetworkOptions from "./components/NetworkOptions.svelte";
   import OutsideChange from "./components/OutsideChange.svelte";
   import ParamsSection from "./components/ParamsSection.svelte";
   import RequestLine from "./components/RequestLine.svelte";
@@ -23,6 +25,8 @@
     pruneDrafts,
     type Section,
   } from "./state/drafts.svelte";
+  import TlsWarning from "./components/TlsWarning.svelte";
+  import { DEFAULT_OPTIONS } from "./state/folders.svelte";
   import { VariableLookup } from "./state/variables.svelte";
 
   let { tab }: { tab: { id: string; title: string; params: unknown } } =
@@ -48,6 +52,15 @@
   );
   const readonly = $derived(project.info?.readOnly === true);
   const counts = $derived(draft.counts);
+  // What the request will use: its own settings over what it inherits.
+  const effective = $derived({
+    ...(draft.inspection?.options ?? DEFAULT_OPTIONS),
+    ...Object.fromEntries(
+      Object.entries(draft.draft.options ?? {}).filter(
+        ([, v]) => v !== undefined,
+      ),
+    ),
+  });
   let tablist = $state<HTMLElement>();
 
   shell.setSaveHandler(
@@ -141,6 +154,7 @@
     {#if draft.error}{@render problem(draft.error)}{/if}
     {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
     <RequestLine {draft} {variables} {readonly} onsave={save} />
+    <TlsWarning {effective} />
     <div
       class="sections"
       role="tablist"
@@ -182,6 +196,14 @@
           {variables}
           {readonly}
           onerror={(message: string) => shell.toast(message)}
+        />
+      {:else}
+        <NetworkOptions
+          options={draft.draft.options ?? {}}
+          effective={draft.inspection?.options ?? null}
+          scope="request"
+          disabled={readonly}
+          onchange={(options: SendOptions) => draft.setOptions(options)}
         />
       {/if}
     </div>
