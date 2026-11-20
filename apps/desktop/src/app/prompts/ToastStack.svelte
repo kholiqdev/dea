@@ -31,7 +31,7 @@
           {#each keys as key, i (i)}<kbd class="kc">{key}</kbd>{/each}
         </Button>
         {#if toast.seconds !== undefined}
-          <!-- Read once with the toast, not every second. -->
+          <!-- The status region would read it out every second. -->
           <span class="left" aria-hidden="true">{toast.seconds} s</span>
         {/if}
       {/if}

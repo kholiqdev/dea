@@ -10,6 +10,7 @@
   import type { FormField } from "$lib/ipc/bindings/FormField";
   import type { KeyValue } from "$lib/ipc/bindings/KeyValue";
   import type { RawLanguage } from "$lib/ipc/bindings/RawLanguage";
+  import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
   import type { BodyMode, RequestDraft } from "../state/drafts.svelte";
   import type { VariableLookup } from "../state/variables.svelte";
   import FileChoice from "./FileChoice.svelte";
@@ -45,6 +46,8 @@
   ];
 
   const uid = $props.id();
+  // The code editor's own Format key.
+  const formatKey = formatChordText("Mod+Shift+F", currentPlatform());
   const body = $derived(draft.draft.body);
   const text = $derived(
     body?.mode === "json" || body?.mode === "raw" ? body.text : "",
@@ -102,7 +105,7 @@
   {/if}
   {#if body?.mode === "json"}
     <button type="button" class="format" disabled={!canFormat} onclick={format}>
-      Format <kbd class="kc">⌘⇧F</kbd>
+      Format <kbd class="kc">{formatKey}</kbd>
     </button>
   {/if}
 </div>
@@ -118,6 +121,8 @@
         {variables}
         onchange={setText}
       />
+    {:catch}
+      <p class="load-error">The editor could not load.</p>
     {/await}
   </div>
 {:else if body?.mode === "formData"}
@@ -233,6 +238,13 @@
     border-radius: var(--r-card);
     box-shadow: inset 0 0 0 1px var(--line);
     overflow: hidden;
+  }
+
+  .load-error {
+    padding: var(--s-3);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--negative-text);
   }
 
   .card {

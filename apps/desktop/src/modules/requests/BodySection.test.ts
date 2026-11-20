@@ -1,7 +1,7 @@
 import { screen, waitFor } from "@testing-library/svelte";
 import { EditorView } from "@codemirror/view";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Body } from "$lib/ipc/bindings/Body";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import {
@@ -24,6 +24,10 @@ let shell: FakeShell;
 beforeEach(() => {
   resetTreeState();
   ({ shell } = setUpRequestTabs());
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 function uploadIpc(
@@ -125,6 +129,17 @@ test("format_button_formats_json", async () => {
   expect((await editor()).state.doc.toString()).toBe('{\n  "a": 1\n}');
   await type("{");
   await waitFor(() => expect(format).toBeDisabled());
+});
+
+test("the Format button shows its shortcut as this platform writes it", async () => {
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue(
+    "Mozilla/5.0 (X11; Linux x86_64)",
+  );
+  uploadIpc();
+  await openBody();
+  await userEvent.click(await mode("JSON"));
+  const format = screen.getByRole("button", { name: /Format/ });
+  expect(format.querySelector("kbd")).toHaveTextContent("Ctrl+Shift+F");
 });
 
 test("switching_modes_keeps_the_text_of_each_mode", async () => {
