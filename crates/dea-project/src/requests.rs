@@ -15,8 +15,8 @@ use crate::{
     write_if_changed,
 };
 
-const REQUESTS: &str = "requests";
-const FOLDER_FILE: &str = "_folder.yaml";
+pub(crate) const REQUESTS: &str = "requests";
+pub(crate) const FOLDER_FILE: &str = "_folder.yaml";
 
 /// A folder or collection of requests.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,7 +47,7 @@ pub enum TreeItem {
 }
 
 impl TreeItem {
-    fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         match self {
             TreeItem::Folder(f) => dir_name(&f.dir),
             TreeItem::Request(r) => r
@@ -114,6 +114,23 @@ impl RequestTree {
         None
     }
 
+    /// The folder or collection at `dir`, relative to the project root.
+    pub(crate) fn folder(&self, dir: &Path) -> Option<&Folder> {
+        fn search<'a>(folder: &'a Folder, dir: &Path) -> Option<&'a Folder> {
+            if folder.dir == dir {
+                return Some(folder);
+            }
+            folder.items.iter().find_map(|item| match item {
+                TreeItem::Folder(inner) if dir.starts_with(&inner.dir) => search(inner, dir),
+                _ => None,
+            })
+        }
+        self.collections
+            .iter()
+            .find(|c| dir.starts_with(&c.dir))
+            .and_then(|c| search(c, dir))
+    }
+
     /// Every request, folder by folder in display order.
     pub fn requests(&self) -> impl Iterator<Item = &RequestEntry> {
         fn walk<'a>(folder: &'a Folder, out: &mut Vec<&'a RequestEntry>) {
@@ -139,7 +156,7 @@ pub struct LoadedRequests {
     pub errors: Vec<FileError>,
 }
 
-fn dir_name(dir: &Path) -> String {
+pub(crate) fn dir_name(dir: &Path) -> String {
     dir.file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
 }
@@ -172,7 +189,7 @@ fn validate_client_certificate(cert: &ClientCertificate) -> Result<(), String> {
 }
 
 /// Checks a request. Used when loading and when saving.
-fn validate_request(request: &RequestFile) -> Result<(), String> {
+pub(crate) fn validate_request(request: &RequestFile) -> Result<(), String> {
     if request.name.trim().is_empty() {
         return Err("a request needs a name".into());
     }
@@ -197,7 +214,7 @@ fn validate_request(request: &RequestFile) -> Result<(), String> {
 
 /// Checks a folder file. `root` is `requests/_folder.yaml`, which only sets
 /// the order.
-fn validate_folder(settings: &FolderFile, root: bool) -> Result<(), String> {
+pub(crate) fn validate_folder(settings: &FolderFile, root: bool) -> Result<(), String> {
     if root {
         let only_order = FolderFile {
             order: settings.order.clone(),
@@ -239,7 +256,10 @@ fn file_error(path: &Path, message: String) -> FileError {
     }
 }
 
-fn read_parsed<T: serde::de::DeserializeOwned>(root: &Path, rel: &Path) -> Result<T, FileError> {
+pub(crate) fn read_parsed<T: serde::de::DeserializeOwned>(
+    root: &Path,
+    rel: &Path,
+) -> Result<T, FileError> {
     let text = fs::read_to_string(root.join(rel)).map_err(|e| io_error(rel, &e))?;
     parse(rel, &text)
 }
@@ -335,7 +355,7 @@ fn load_folder(
     }))
 }
 
-fn is_missing(root: &Path, rel: &Path) -> bool {
+pub(crate) fn is_missing(root: &Path, rel: &Path) -> bool {
     matches!(fs::metadata(root.join(rel)), Err(e) if e.kind() == ErrorKind::NotFound)
 }
 
@@ -412,7 +432,7 @@ pub fn load_requests(root: &Path) -> Result<LoadedRequests, ProjectError> {
     })
 }
 
-fn check_request_path(path: &Path) -> Result<(), ProjectError> {
+pub(crate) fn check_request_path(path: &Path) -> Result<(), ProjectError> {
     let invalid = |message: &str| Err(ProjectError::InvalidRequest(message.into()));
     let parts: Vec<_> = path.components().collect();
     if !parts.iter().all(|c| matches!(c, Component::Normal(_))) {
