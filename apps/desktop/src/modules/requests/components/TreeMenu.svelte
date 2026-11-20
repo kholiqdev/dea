@@ -8,6 +8,7 @@
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import Menu from "@dea/ui/Menu.svelte";
   import { shellApi } from "$app/contributions/shell-api";
+  import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
   import { ROOT, treeState, type TreeRowData } from "../state/tree.svelte";
 
   let {
@@ -31,7 +32,13 @@
   } = $props();
 
   // A menu item, as Menu takes it.
-  type Entry = { id: string; label: string; onselect: () => void };
+  type Entry = {
+    id: string;
+    label: string;
+    disabled?: boolean;
+    shortcut?: string;
+    onselect: () => void;
+  };
 
   let root = $state<HTMLElement>();
   let place = $state<{ x: number; y: number } | null>(null);
@@ -45,6 +52,8 @@
       }),
       item("duplicate", "Duplicate", () => treeState.duplicate(target.path)),
       item("move", "Move to…", () => onmove(target)),
+      shift("move-up", "Move up", target, -1, "Alt+ArrowUp"),
+      shift("move-down", "Move down", target, 1, "Alt+ArrowDown"),
     ];
     const remove = item("delete", "Delete…", () => ondelete(target));
     if (target.kind === "request") return [...common, remove];
@@ -69,6 +78,21 @@
     run: () => void | Promise<void>,
   ): Entry {
     return { id, label, onselect: () => void run() };
+  }
+
+  /** Moves the item one place in its folder, as `chord` on the tree does. */
+  function shift(
+    id: string,
+    label: string,
+    target: TreeRowData,
+    by: -1 | 1,
+    chord: string,
+  ): Entry {
+    return {
+      ...item(id, label, () => treeState.shift(target.path, by)),
+      disabled: !treeState.canShift(target.path, by),
+      shortcut: formatChordText(chord, currentPlatform()) ?? undefined,
+    };
   }
 
   function newCollection(): Promise<void> {

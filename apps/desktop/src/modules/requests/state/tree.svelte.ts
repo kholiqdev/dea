@@ -158,6 +158,34 @@ export class RequestTreeState {
   }
 
   /**
+   * Whether `shift` can move an item `by` one place: not the first one up,
+   * nor the last one down.
+   */
+  canShift(path: string, by: -1 | 1): boolean {
+    const { from, size } = this.#place(path);
+    return from >= 0 && from + by >= 0 && from + by < size;
+  }
+
+  /**
+   * Moves an item one place up (-1) or down (+1) in its folder, a collection
+   * among the collections. The index is counted after the item left its
+   * place, as for a drop, so it is one more or less than where it was.
+   */
+  async shift(path: string, by: -1 | 1): Promise<void> {
+    if (!this.canShift(path, by)) return;
+    await this.move(path, parentOf(path), this.#place(path).from + by);
+  }
+
+  /** Where an item is in its folder, and how many items the folder holds. */
+  #place(path: string): { from: number; size: number } {
+    const items = this.itemsOf(parentOf(path)) ?? [];
+    return {
+      from: items.findIndex((n) => n.path === path),
+      size: items.length,
+    };
+  }
+
+  /**
    * Deletes an item and offers Undo for a while. Its tabs close without
    * asking, as the files come back with Undo; a tab with unsaved edits
    * stays open.

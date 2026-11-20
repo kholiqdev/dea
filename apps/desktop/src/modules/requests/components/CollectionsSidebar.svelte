@@ -156,8 +156,12 @@
   }
 
   function onTreeKeydown(event: KeyboardEvent): void {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (isEditable(event.target)) return;
+    if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      onAltKeydown(event);
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     const index = activeIndex;
     const row = rows[index];
     switch (event.key) {
@@ -198,6 +202,14 @@
         return;
     }
     event.preventDefault();
+  }
+
+  /** Alt+ArrowUp and Alt+ArrowDown move the active row in its folder. */
+  function onAltKeydown(event: KeyboardEvent): void {
+    const by = { ArrowUp: -1, ArrowDown: 1 }[event.key] as -1 | 1 | undefined;
+    if (!by) return;
+    event.preventDefault();
+    if (active) void treeState.shift(active.path, by);
   }
 
   function onRowClick(index: number): void {
