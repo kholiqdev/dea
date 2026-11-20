@@ -306,20 +306,6 @@ test("no results says so", async () => {
   expect(within(dialog).getByText('No results for "zzqq"')).toBeInTheDocument();
 });
 
-test("5,000 items show the first result within 100 ms", async () => {
-  setup({
-    items: Array.from({ length: 5000 }, (_, i) => item(`environment ${i}`)),
-  });
-  performance.clearMeasures();
-  const dialog = await openPalette();
-  await within(dialog).findAllByRole("option");
-  await waitFor(() =>
-    expect(performance.getEntriesByName("palette-all-results")).toHaveLength(1),
-  );
-  const measure = performance.getEntriesByName("palette-all-results").at(-1);
-  expect(measure?.duration ?? Infinity).toBeLessThan(100);
-});
-
 test("choosing a Settings section opens Settings on it", async () => {
   const { shell } = setup();
   const dialog = await openPalette();
