@@ -10,6 +10,7 @@ import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { RequestLeaf } from "$lib/ipc/bindings/RequestLeaf";
 import type { RequestNode } from "$lib/ipc/bindings/RequestNode";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
+import { VariableLookup } from "./state/variables.svelte";
 import type { IpcError } from "$lib/ipc/errors";
 
 export interface RequestsIpc {
@@ -282,4 +283,16 @@ export function fakeRequestsIpc(
     }
   });
   return ipc;
+}
+
+/** A lookup over a made-up inspection, for the variable field tests. */
+export function lookupFrom(
+  inspection: Partial<Inspection> | null,
+  environment: string | null,
+): VariableLookup {
+  const full = inspection && { ...EMPTY_INSPECTION, ...inspection };
+  return new VariableLookup(
+    () => full,
+    () => environment,
+  );
 }
