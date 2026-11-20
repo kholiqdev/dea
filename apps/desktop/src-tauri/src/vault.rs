@@ -11,9 +11,10 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
+use dea_engine::VaultProvider;
 use dea_engine::vault::{
-    PasswordPrompt, PromptProblem, Prompter, SecretString, SystemClipboard, VaultService,
-    app_vault_has_values, open_app_vault,
+    PasswordPrompt, PromptProblem, Prompter, SecretString, SystemClipboard, UseError, VaultError,
+    VaultService, app_vault_has_values, open_app_vault,
 };
 use dea_project::Project;
 use serde::Serialize;
@@ -65,6 +66,11 @@ impl AppVault {
     /// Each status change goes to every window as `vault-status`. Opening
     /// reaches the keychain, so call this off the main thread.
     pub fn get_or_open(&self, app: &AppHandle) -> Result<Arc<VaultService>, IpcError> {
+        Ok(self.open(app)?)
+    }
+
+    /// [`AppVault::get_or_open`], failing with the Vault's own error.
+    fn open(&self, app: &AppHandle) -> Result<Arc<VaultService>, VaultError> {
         if let Some(vault) = self.vault.get() {
             return Ok(Arc::clone(vault));
         }
@@ -111,9 +117,24 @@ impl AppVault {
         &self.prompter
     }
 
+    /// [`AppVault::prompter`], for the request service to ask with too.
+    pub fn shared_prompter(&self) -> Arc<dyn Prompter> {
+        Arc::clone(&self.prompter) as Arc<dyn Prompter>
+    }
+
     /// The clipboard `Copy` uses.
     pub fn clipboard(&self) -> Arc<SystemClipboard> {
         Arc::clone(&self.clipboard)
+    }
+}
+
+/// Gives the request service the app's Vault, opened the first time a send
+/// needs it, so starting Dea never reaches the keychain.
+pub struct VaultOnDemand(pub AppHandle);
+
+impl VaultProvider for VaultOnDemand {
+    fn open(&self) -> Result<Arc<VaultService>, UseError> {
+        Ok(self.0.state::<AppState>().vault.open(&self.0)?)
     }
 }
 
@@ -138,6 +159,21 @@ impl<R: Runtime> PromptWindows for AppHandle<R> {
     fn show(&self, window: &str, prompt: VaultPromptEvent) -> bool {
         self.get_webview_window(window).is_some()
             && self.emit_to(window, VAULT_PROMPT, prompt).is_ok()
+    }
+}
+
+/// No window can show a Vault password prompt.
+#[cfg(test)]
+pub struct NoWindows;
+
+#[cfg(test)]
+impl PromptWindows for NoWindows {
+    fn focused(&self) -> Option<String> {
+        None
+    }
+
+    fn show(&self, _window: &str, _prompt: VaultPromptEvent) -> bool {
+        false
     }
 }
 

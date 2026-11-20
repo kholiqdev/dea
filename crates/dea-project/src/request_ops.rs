@@ -554,6 +554,21 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), ProjectError> {
     Ok(())
 }
 
+/// Reads the settings of the folder at `dir` (`requests` for the order of
+/// the collections): the defaults when it has no `_folder.yaml`.
+///
+/// # Errors
+///
+/// [`ProjectError::InvalidRequest`] for a path outside `requests/`, a
+/// folder that does not exist or a `_folder.yaml` that cannot be read.
+pub fn read_folder(project: &Project, dir: &Path) -> Result<FolderFile, ProjectError> {
+    check_dir_path(dir, true)?;
+    if !is_root(dir) {
+        require_exists(project, dir)?;
+    }
+    read_folder_file(project, dir)
+}
+
 /// Saves the settings of the folder at `dir` (`requests` for the order of
 /// the collections, which takes nothing else), checked as when loading.
 ///

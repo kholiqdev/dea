@@ -3,7 +3,8 @@ use std::path::Path;
 
 use dea_project::{
     FolderFile, Project, ProjectError, RequestFile, create_folder, create_project, create_request,
-    delete_item, duplicate_item, load_requests, move_item, rename_item, restore_item, save_folder,
+    delete_item, duplicate_item, load_requests, move_item, read_folder, rename_item, restore_item,
+    save_folder,
 };
 
 fn write(root: &Path, rel: &str, text: &str) {
@@ -231,6 +232,44 @@ fn duplicating_a_folder_copies_every_file() {
         folder_file(dir.path(), "requests").order,
         ["shipments", "shipments-copy"]
     );
+}
+
+#[test]
+fn read_folder_gives_the_settings_or_the_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = shipments(dir.path());
+    let shipments = Path::new("requests/shipments");
+    assert_eq!(
+        read_folder(&project, shipments).unwrap(),
+        FolderFile::default()
+    );
+    write(dir.path(), "requests/_folder.yaml", "order: [shipments]\n");
+    assert_eq!(
+        read_folder(&project, Path::new("requests")).unwrap().order,
+        ["shipments"]
+    );
+    write(
+        dir.path(),
+        "requests/shipments/_folder.yaml",
+        "name: Freight\nheaders:\n  - name: X-Trace\n    value: on\n",
+    );
+    let settings = read_folder(&project, shipments).unwrap();
+    assert_eq!(settings.name.as_deref(), Some("Freight"));
+    assert_eq!(settings.headers[0].value, "on");
+
+    write(dir.path(), "requests/shipments/_folder.yaml", "name: [\n");
+    assert!(matches!(
+        read_folder(&project, shipments),
+        Err(ProjectError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        read_folder(&project, Path::new("requests/gone")),
+        Err(ProjectError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        read_folder(&project, Path::new("environments")),
+        Err(ProjectError::InvalidRequest(_))
+    ));
 }
 
 #[test]
