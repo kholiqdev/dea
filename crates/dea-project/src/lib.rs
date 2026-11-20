@@ -35,7 +35,10 @@ pub use request::{
     ApiKeyLocation, Auth, Body, ClientCertificate, FolderFile, FormField, KeyValue, RawLanguage,
     RequestFile, SendOptions, TlsSettings,
 };
-pub use request_ops::{create_folder, create_request, duplicate_item, rename_item, save_folder};
+pub use request_ops::{
+    DeletedItem, create_folder, create_request, delete_item, duplicate_item, move_item,
+    rename_item, restore_item, save_folder,
+};
 pub use request_resolve::{
     DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS, EffectiveOptions, FieldValue, RequestContext,
     RequestError, Resolved, ResolvedBody, ResolvedClientCertificate, ResolvedField,

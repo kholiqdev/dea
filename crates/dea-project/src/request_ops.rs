@@ -1,5 +1,5 @@
-//! File operations on the request tree: create, rename and duplicate
-//! requests and folders, and save folder settings.
+//! File operations on the request tree: create, rename, duplicate, move,
+//! delete and restore requests and folders, and save folder settings.
 //!
 //! Paths are relative to the project root. A folder's order lives in its
 //! `_folder.yaml`; every operation that adds, renames or copies an item
@@ -328,6 +328,202 @@ pub fn duplicate_item(project: &Project, path: &Path) -> Result<PathBuf, Project
     order.insert(at, key_of(&target));
     write_order(project, parent, order)?;
     Ok(target)
+}
+
+/// Moves a request or folder into the folder `to` (`requests` for a
+/// collection) at position `index` of its order, counted after the item left
+/// its old place; an `index` past the end puts it last. A name taken in `to`
+/// gets a number. Returns the new path.
+///
+/// # Errors
+///
+/// Like [`rename_item`]; also [`ProjectError::InvalidRequest`] for a request
+/// moved to `requests` itself, or a folder moved into itself or below itself.
+pub fn move_item(
+    project: &Project,
+    path: &Path,
+    to: &Path,
+    index: usize,
+) -> Result<PathBuf, ProjectError> {
+    guard(project)?;
+    let is_folder = item_is_folder(project, path)?;
+    check_dir_path(to, true)?;
+    if is_folder {
+        if to.starts_with(path) {
+            return Err(invalid("a folder cannot move into itself"));
+        }
+    } else if is_root(to) {
+        return Err(invalid("a request is inside a collection"));
+    }
+    if !is_root(to) {
+        require_exists(project, to)?;
+    }
+    let from = path.parent().unwrap_or(Path::new(REQUESTS));
+    let same = from == to;
+    let old_key = key_of(path);
+    let stem = unique_file_stem(
+        &sibling_keys(project, to, same.then_some(old_key.as_str())),
+        &old_key,
+    );
+    let target = if is_folder {
+        to.join(&stem)
+    } else {
+        to.join(format!("{stem}.yaml"))
+    };
+    check_relative_path(&target)?;
+
+    // Read both orders and both folder files before touching the disk.
+    let mut from_order = displayed_order(project, from)?;
+    from_order.retain(|k| *k != old_key);
+    read_folder_file(project, from)?;
+    let to_order = if same {
+        None
+    } else {
+        read_folder_file(project, to)?;
+        Some(displayed_order(project, to)?)
+    };
+
+    if target != path {
+        move_between(&project.root.join(path), &project.root.join(&target))?;
+    }
+    let place = |order: &mut Vec<String>| {
+        order.retain(|k| *k != stem);
+        order.insert(index.min(order.len()), stem.clone());
+    };
+    match to_order {
+        None => {
+            place(&mut from_order);
+            write_order(project, from, from_order)?;
+        }
+        Some(mut to_order) => {
+            write_order(project, from, from_order)?;
+            place(&mut to_order);
+            write_order(project, to, to_order)?;
+        }
+    }
+    Ok(target)
+}
+
+/// A request or folder taken off the disk, kept whole in memory so that
+/// [`restore_item`] can put it back.
+#[derive(Clone)]
+pub struct DeletedItem {
+    /// Where the item was, relative to the project root.
+    pub path: PathBuf,
+    /// Its position in the order of its folder.
+    pub index: usize,
+    files: Vec<(PathBuf, Vec<u8>)>,
+}
+
+impl std::fmt::Debug for DeletedItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeletedItem")
+            .field("path", &self.path)
+            .field("index", &self.index)
+            .field("files", &self.files.len())
+            .finish()
+    }
+}
+
+/// Deletes a request, or a folder with everything in it, and takes its key
+/// out of the order of its folder. The files are kept in the result.
+///
+/// # Errors
+///
+/// Like [`rename_item`].
+pub fn delete_item(project: &Project, path: &Path) -> Result<DeletedItem, ProjectError> {
+    guard(project)?;
+    let is_folder = item_is_folder(project, path)?;
+    let parent = path.parent().unwrap_or(Path::new(REQUESTS));
+    let key = key_of(path);
+    read_folder_file(project, parent)?;
+    let mut order = displayed_order(project, parent)?;
+    let index = order.iter().position(|k| *k == key).unwrap_or(order.len());
+    order.retain(|k| *k != key);
+
+    let mut files = Vec::new();
+    collect_files(&project.root, path, &mut files)?;
+    if is_folder {
+        fs::remove_dir_all(project.root.join(path))?;
+    } else {
+        fs::remove_file(project.root.join(path))?;
+    }
+    write_order(project, parent, order)?;
+    Ok(DeletedItem {
+        path: path.to_path_buf(),
+        index,
+        files,
+    })
+}
+
+/// Puts back what [`delete_item`] took: every file, and its key at the old
+/// position in the order of its folder (last if the folder got shorter).
+///
+/// # Errors
+///
+/// [`ProjectError::ReadOnly`]; [`ProjectError::InvalidRequest`] when the
+/// path exists again (`<name> already exists`) or its folder is gone.
+pub fn restore_item(project: &Project, item: &DeletedItem) -> Result<(), ProjectError> {
+    guard(project)?;
+    check_dir_path(&item.path, false)?;
+    let root = &project.root;
+    if root.join(&item.path).exists() {
+        return Err(invalid(format!("{} already exists", dir_name(&item.path))));
+    }
+    let parent = item.path.parent().unwrap_or(Path::new(REQUESTS));
+    if !is_root(parent) {
+        require_exists(project, parent)?;
+    }
+    read_folder_file(project, parent)?;
+    let key = key_of(&item.path);
+    let mut order = displayed_order(project, parent)?;
+    order.retain(|k| *k != key);
+    order.insert(item.index.min(order.len()), key);
+
+    for (rel, bytes) in &item.files {
+        let file = root.join(rel);
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(file, bytes)?;
+    }
+    write_order(project, parent, order)
+}
+
+/// Reads every file at or below `rel` into `files`, with paths relative to
+/// `root`.
+fn collect_files(
+    root: &Path,
+    rel: &Path,
+    files: &mut Vec<(PathBuf, Vec<u8>)>,
+) -> Result<(), ProjectError> {
+    let full = root.join(rel);
+    if full.is_dir() {
+        for entry in fs::read_dir(&full)? {
+            collect_files(root, &rel.join(entry?.file_name()), files)?;
+        }
+    } else {
+        files.push((rel.to_path_buf(), fs::read(full)?));
+    }
+    Ok(())
+}
+
+/// Renames `from` to `to`; across volumes it copies and then removes.
+fn move_between(from: &Path, to: &Path) -> Result<(), ProjectError> {
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            if from.is_dir() {
+                copy_dir(from, to)?;
+                fs::remove_dir_all(from)?;
+            } else {
+                fs::copy(from, to)?;
+                fs::remove_file(from)?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Whether `path` is a folder (else a request), after checking that it is an
