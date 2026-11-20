@@ -944,6 +944,30 @@ async fn inspect_names_the_folder_and_collection_of_a_variable() {
 }
 
 #[tokio::test]
+async fn inspect_names_this_request_for_a_path_variable() {
+    let f = Fixture::new().await;
+    let mut draft = request("GET", "{{baseUrl}}/shipments/{{shipmentId}}");
+    draft.path_variables.push(Variable {
+        name: "shipmentId".into(),
+        value: "shp_9".into(),
+        description: None,
+    });
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    let id = inspection
+        .variables
+        .iter()
+        .find(|v| v.name == "shipmentId")
+        .unwrap();
+    assert_eq!(
+        (id.shown.as_str(), id.source.as_str()),
+        ("shp_9", "This request")
+    );
+    assert!(inspection.undefined.is_empty());
+}
+
+#[tokio::test]
 async fn inspect_lists_automatic_headers_and_marks_replaced_ones() {
     let f = Fixture::new().await;
     let mut draft = request("POST", "{{baseUrl}}/x");

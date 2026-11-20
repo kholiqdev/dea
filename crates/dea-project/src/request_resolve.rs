@@ -264,6 +264,26 @@ fn scope(kind: ScopeKind, label: String, variables: &[Variable]) -> Scope {
     }
 }
 
+/// Whether `text` has a `{{name}}` placeholder for `name`.
+fn uses_name(text: &str, name: &str) -> bool {
+    text.split("{{").skip(1).any(|rest| {
+        rest.split_once("}}")
+            .is_some_and(|(inner, _)| inner.trim() == name)
+    })
+}
+
+/// The request's own variables: its path variables that have a value. One
+/// whose value uses its own name is left out, so that `{{id}}` in it still
+/// reaches the folders and the environment instead of itself.
+fn request_variables(request: &RequestFile) -> Vec<Variable> {
+    request
+        .path_variables
+        .iter()
+        .filter(|v| !v.value.is_empty() && !uses_name(&v.value, &v.name))
+        .cloned()
+        .collect()
+}
+
 fn used_rows(rows: &[KeyValue]) -> impl Iterator<Item = &KeyValue> {
     rows.iter()
         .filter(|r| r.enabled && !r.name.trim().is_empty())
@@ -478,8 +498,13 @@ pub fn resolve_draft(
     let root = &ctx.project.root;
     let local_files = ctx.local_files;
 
-    // Innermost folder first; within a kind the first scope wins.
-    let mut scopes = Vec::new();
+    // The request's path variables come first of all; then the innermost
+    // folder. Within a kind the first scope wins.
+    let mut scopes = vec![scope(
+        ScopeKind::Request,
+        request.name.clone(),
+        &request_variables(request),
+    )];
     for (i, folder) in folders.iter().enumerate().rev() {
         let kind = if i == 0 {
             ScopeKind::Collection
