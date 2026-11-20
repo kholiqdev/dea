@@ -1,7 +1,8 @@
 // What a request tab and a folder tab share: a file read into a draft, kept
 // in step with the disk, and written back (F1-FON-05).
 
-import { projectApi } from "$app/contributions/project-api";
+import { untrack } from "svelte";
+import { projectApi, type ProjectApi } from "$app/contributions/project-api";
 import { shellApi } from "$app/contributions/shell-api";
 import { settings } from "$lib/settings/settings.svelte";
 import { errorMessage, isIpcError } from "$lib/ipc/errors";
@@ -38,6 +39,14 @@ export abstract class SyncedFile<T> {
 
   constructor(path: string) {
     this.path = path;
+  }
+
+  /** What the file is, in messages: "request", "folder" or "collection". */
+  abstract get noun(): string;
+
+  /** Whether Save again can write the file back after it was deleted on disk. */
+  get recreatable(): boolean {
+    return true;
   }
 
   protected abstract readFile(path: string): Promise<T>;
@@ -96,9 +105,31 @@ export abstract class SyncedFile<T> {
     });
   }
 
-  /** Writes the draft. A failure rejects with Dea's message. */
+  /**
+   * Writes the draft. A failure rejects with Dea's message, and so does a
+   * change on disk that waits for an answer: only the banner writes over it.
+   */
   async save(): Promise<void> {
     await this.#settling;
+    if (this.outside !== null) throw new Error(this.#unanswered());
+    await this.#write();
+  }
+
+  /** Writes the draft back after its file was deleted on disk ("Save again"). */
+  async saveAgain(): Promise<void> {
+    await this.#settling;
+    await this.#write();
+  }
+
+  #unanswered(): string {
+    if (this.outside === "changed")
+      return `This ${this.noun} changed on disk. Choose Keep mine or Take theirs first.`;
+    return this.recreatable
+      ? `This ${this.noun} was deleted on disk. Choose Save again or Close tab first.`
+      : `This ${this.noun} was deleted on disk and cannot be saved.`;
+  }
+
+  async #write(): Promise<void> {
     // Nothing was read, so there is nothing to write.
     if (!this.saved) return;
     const file = await this.prepare(this.clean(this.snapshot()));
@@ -156,6 +187,14 @@ export abstract class SyncedFile<T> {
   moveTo(path: string): void {
     if (path === this.path) return;
     this.path = path;
+    this.recheck();
+  }
+
+  /**
+   * Looks at the file again after the sidebar wrote it in place, as a
+   * rename that keeps the file name does. A save waits for the look.
+   */
+  recheck(): void {
     this.#settling = this.check();
   }
 
@@ -220,6 +259,57 @@ export abstract class SyncedFile<T> {
     if (!this.dirty || this.same(disk, this.draft)) return this.take(disk);
     this.#theirs = disk;
     this.outside = "changed";
+  }
+}
+
+type DiskWatcher = (changed: readonly string[]) => void;
+
+// Only gone through when a change comes in, never watched.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const watchers = new Set<DiskWatcher>();
+let watching: { project: ProjectApi; stop: () => void } | null = null;
+
+/**
+ * Calls `watcher` with each batch of files changed on disk from now on,
+ * whether or not a tab is shown: a tab that is not shown can still be
+ * saved, from the close dialog or by autosave. The batch already there is
+ * old news. A new project (in tests) is watched from scratch.
+ */
+export function watchDisk(watcher: DiskWatcher): void {
+  watchers.add(watcher);
+  const project = projectApi();
+  if (watching?.project === project) return;
+  watching?.stop();
+  const stop = $effect.root(() => {
+    let seen = project.changed;
+    $effect(() => {
+      const changed = project.changed;
+      if (changed === seen) return;
+      seen = changed;
+      untrack(() => {
+        for (const watch of watchers) watch(changed);
+      });
+    });
+  });
+  watching = { project, stop };
+}
+
+/**
+ * Saves the state of the tab `id`, as the shell's Save does (the close
+ * dialog, Mod+S). A save refused for a change on disk shows the tab, so
+ * its banner can be answered; the rejection keeps the tab open.
+ */
+export async function saveTab(
+  states: ReadonlyMap<string, SyncedFile<unknown>>,
+  id: string,
+): Promise<void> {
+  const state = states.get(id);
+  if (!state) return;
+  try {
+    await state.save();
+  } catch (e) {
+    if (state.outside !== null) shellApi().activateTab(id);
+    throw e;
   }
 }
 

@@ -25,6 +25,7 @@
     folderStates,
     pruneFolderStates,
   } from "./state/folders.svelte";
+  import { saveTab } from "./state/synced-file.svelte";
   import { treeState } from "./state/tree.svelte";
   import { VariableLookup } from "./state/variables.svelte";
 
@@ -50,30 +51,15 @@
   });
   const unit = $derived(collection ? "collection" : "folder");
 
-  shell.setSaveHandler(
-    "requests.folder",
-    (tabId) => folderStates.get(tabId)?.save() ?? Promise.resolve(),
+  shell.setSaveHandler("requests.folder", (tabId) =>
+    saveTab(folderStates, tabId),
   );
 
-  // A rename or move from the sidebar gives the tab a new path.
+  // A rename or move from the sidebar gives the tab a new path. A change on
+  // disk is looked at by the module, as a tab not shown needs it too.
   $effect(() => {
     const to = path;
     untrack(() => state.moveTo(to));
-  });
-
-  // A change on disk to this folder, or to one above it that it inherits from.
-  let seen = project.changed;
-  $effect(() => {
-    const changed = project.changed;
-    if (changed === seen) return;
-    seen = changed;
-    untrack(() => {
-      const own = `${state.path}/_folder.yaml`;
-      if (changed.some((p) => p === own || p === state.path))
-        void state.check();
-      if (changed.some((p) => p.endsWith("/_folder.yaml")))
-        void state.loadInherited();
-    });
   });
 
   $effect(() => shell.setTabDirty(id, state.dirty));
@@ -115,7 +101,7 @@
   {#if state.error}{@render problem(state.error)}{/if}
 {:else}
   <div class="editor">
-    <OutsideChange draft={state} noun={unit} onclose={close} />
+    <OutsideChange draft={state} onclose={close} />
     {#if state.error}{@render problem(state.error)}{/if}
     <header class="toolbar">
       <div class="heading">

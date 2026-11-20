@@ -18,7 +18,12 @@ import {
   syncParams,
   syncPathVariables,
 } from "../lib/url";
-import { openTabs, SyncedFile, syncedFor } from "./synced-file.svelte";
+import {
+  openTabs,
+  SyncedFile,
+  syncedFor,
+  watchDisk,
+} from "./synced-file.svelte";
 
 /** How long after the last change the draft is inspected, in milliseconds. */
 export const INSPECT_DELAY = 200;
@@ -159,6 +164,10 @@ export class RequestDraft extends SyncedFile<RequestFile> {
 
   #inspections = 0;
   #timer: ReturnType<typeof setTimeout> | undefined;
+
+  get noun(): string {
+    return "request";
+  }
 
   protected snapshot(): RequestFile {
     return $state.snapshot(this.draft);
@@ -332,11 +341,19 @@ export function pruneDrafts(): void {
     }
 }
 
+/** Looks at the files of the drafts a change on disk touched, shown or not. */
+function followDisk(changed: readonly string[]): void {
+  pruneDrafts();
+  for (const draft of drafts.values())
+    if (changed.includes(draft.path)) void draft.check();
+}
+
 /**
  * The draft of the request tab `id` as it is shown: the one it had, after a
  * look at the file, or a new one read from `path`.
  */
 export function draftFor(id: string, path: string): RequestDraft {
+  watchDisk(followDisk);
   pruneDrafts();
   return syncedFor(
     drafts,

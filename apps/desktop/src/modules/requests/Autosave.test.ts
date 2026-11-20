@@ -142,6 +142,22 @@ test("autosave_waits_while_an_outside_change_is_open", async () => {
   await waitFor(() => expect(ipc.saved).toHaveLength(1));
 });
 
+test("a hidden tab is not autosaved over a change on disk", async () => {
+  const ipc = await setUpIpc();
+  const { unmount } = openRequestTab(BY_ID);
+  await user.type(await urlBox(), "/x");
+  unmount();
+  ipc.files.set(BY_ID, {
+    name: "By ID",
+    method: "POST",
+    url: "https://harbor.test/s",
+  });
+  setup.project.change([BY_ID]);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(ipc.saved).toHaveLength(0);
+  expect(ipc.files.get(BY_ID)?.method).toBe("POST");
+});
+
 test("a closed tab is not autosaved", async () => {
   const ipc = await setUpIpc();
   const { id, unmount } = openRequestTab(BY_ID);

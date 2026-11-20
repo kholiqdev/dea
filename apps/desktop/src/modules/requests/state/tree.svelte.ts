@@ -256,10 +256,11 @@ export class RequestTreeState {
           : { params: next },
       );
       // A tab not shown has no view to follow the path, and its edits are
-      // saved from the draft.
-      drafts.get(id)?.moveTo(next.path);
-      folderStates.get(id)?.moveTo(next.path);
-      return next;
+      // saved from the draft. A rename that keeps the file name changed the
+      // file all the same.
+      const state = drafts.get(id) ?? folderStates.get(id);
+      if (next.path === params.path) state?.recheck();
+      else state?.moveTo(next.path);
     });
   }
 
@@ -312,14 +313,15 @@ function hasPath(params: unknown): params is PathParams {
 }
 
 /**
- * Calls `visit` once for every open tab of `path` or of anything in it.
- * `visit` returns the params it gave the tab, if any.
+ * Calls `visit` once for every open tab of `path` or of anything in it. The
+ * tabs are found first, so what `visit` does to them changes nothing here.
  */
 function eachTabWithin(
   path: string,
-  visit: (id: string, params: PathParams) => unknown,
+  visit: (id: string, params: PathParams) => void,
 ): void {
   const shell = shellApi();
+  const found: [string, PathParams][] = [];
   const seen: unknown[] = [];
   for (const type of PATH_TABS)
     for (;;) {
@@ -331,8 +333,10 @@ function eachTabWithin(
         return true;
       });
       if (id === undefined || !hit) break;
-      seen.push(hit, visit(id, hit));
+      seen.push(hit);
+      found.push([id, hit]);
     }
+  for (const [id, params] of found) visit(id, params);
 }
 
 /** A command's message as part of a sentence: as Dea wrote it. */

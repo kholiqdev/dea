@@ -28,6 +28,7 @@
   } from "./state/drafts.svelte";
   import TlsWarning from "./components/TlsWarning.svelte";
   import { DEFAULT_OPTIONS } from "./state/folders.svelte";
+  import { saveTab } from "./state/synced-file.svelte";
   import { VariableLookup } from "./state/variables.svelte";
 
   let { tab }: { tab: { id: string; title: string; params: unknown } } =
@@ -64,26 +65,13 @@
   });
   let tablist = $state<HTMLElement>();
 
-  shell.setSaveHandler(
-    "requests.request",
-    (tabId) => drafts.get(tabId)?.save() ?? Promise.resolve(),
-  );
+  shell.setSaveHandler("requests.request", (tabId) => saveTab(drafts, tabId));
 
-  // A rename or move from the sidebar gives the tab a new path.
+  // A rename or move from the sidebar gives the tab a new path. A change on
+  // disk is looked at by the module, as a tab not shown needs it too.
   $effect(() => {
     const to = path;
     untrack(() => draft.moveTo(to));
-  });
-
-  // A change on disk to this request (the batch shown at first is old).
-  let seen = project.changed;
-  $effect(() => {
-    const changed = project.changed;
-    if (changed === seen) return;
-    seen = changed;
-    untrack(() => {
-      if (changed.includes(draft.path)) void draft.check();
-    });
   });
 
   // Inspects again after an edit, a move, a new environment, or any change
