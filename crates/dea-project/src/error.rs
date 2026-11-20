@@ -68,6 +68,9 @@ pub enum ProjectError {
     PathTooLong(PathBuf),
     #[error("{0} already exists")]
     AlreadyExists(PathBuf),
+    /// The request or folder asked for is not on disk, as after a delete.
+    #[error("{} does not exist", .0.display())]
+    NotFound(PathBuf),
     #[error("cannot write YAML: {0}")]
     Yaml(String),
     #[error(transparent)]

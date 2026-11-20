@@ -47,7 +47,7 @@ fn require_exists(project: &Project, path: &Path) -> Result<(), ProjectError> {
     if project.root.join(path).exists() {
         Ok(())
     } else {
-        Err(invalid(format!("{} does not exist", path.display())))
+        Err(ProjectError::NotFound(path.to_path_buf()))
     }
 }
 
@@ -152,9 +152,9 @@ fn move_path(from: &Path, to: &Path) -> Result<(), ProjectError> {
 ///
 /// # Errors
 ///
-/// [`ProjectError::ReadOnly`]; [`ProjectError::InvalidRequest`] for a
-/// folder outside `requests/<collection>/`, one that does not exist or a
-/// blank name; [`ProjectError::PathTooLong`].
+/// [`ProjectError::ReadOnly`]; [`ProjectError::NotFound`] for a folder that
+/// does not exist; [`ProjectError::InvalidRequest`] for a folder outside
+/// `requests/<collection>/` or a blank name; [`ProjectError::PathTooLong`].
 pub fn create_request(
     project: &Project,
     folder: &Path,
@@ -225,8 +225,9 @@ pub fn create_folder(
 ///
 /// # Errors
 ///
-/// [`ProjectError::ReadOnly`]; [`ProjectError::InvalidRequest`] for a path
-/// outside `requests/`, one that does not exist or a blank name.
+/// [`ProjectError::ReadOnly`]; [`ProjectError::NotFound`] for a path that
+/// does not exist; [`ProjectError::InvalidRequest`] for a path outside
+/// `requests/` or a blank name.
 pub fn rename_item(project: &Project, path: &Path, name: &str) -> Result<PathBuf, ProjectError> {
     guard(project)?;
     let is_folder = item_is_folder(project, path)?;
@@ -462,7 +463,8 @@ pub fn delete_item(project: &Project, path: &Path) -> Result<DeletedItem, Projec
 /// # Errors
 ///
 /// [`ProjectError::ReadOnly`]; [`ProjectError::InvalidRequest`] when the
-/// path exists again (`<name> already exists`) or its folder is gone.
+/// path exists again (`<name> already exists`); [`ProjectError::NotFound`]
+/// when its folder is gone.
 pub fn restore_item(project: &Project, item: &DeletedItem) -> Result<(), ProjectError> {
     guard(project)?;
     check_dir_path(&item.path, false)?;
@@ -559,8 +561,9 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), ProjectError> {
 ///
 /// # Errors
 ///
-/// [`ProjectError::InvalidRequest`] for a path outside `requests/`, a
-/// folder that does not exist or a `_folder.yaml` that cannot be read.
+/// [`ProjectError::NotFound`] for a folder that does not exist;
+/// [`ProjectError::InvalidRequest`] for a path outside `requests/` or a
+/// `_folder.yaml` that cannot be read.
 pub fn read_folder(project: &Project, dir: &Path) -> Result<FolderFile, ProjectError> {
     check_dir_path(dir, true)?;
     if !is_root(dir) {
@@ -574,9 +577,10 @@ pub fn read_folder(project: &Project, dir: &Path) -> Result<FolderFile, ProjectE
 ///
 /// # Errors
 ///
-/// [`ProjectError::ReadOnly`]; [`ProjectError::InvalidRequest`] for a path
-/// outside `requests/`, a folder that does not exist or settings that could
-/// not be loaded; [`ProjectError::MergeConflict`].
+/// [`ProjectError::ReadOnly`]; [`ProjectError::NotFound`] for a folder that
+/// does not exist; [`ProjectError::InvalidRequest`] for a path outside
+/// `requests/` or settings that could not be loaded;
+/// [`ProjectError::MergeConflict`].
 pub fn save_folder(
     project: &Project,
     dir: &Path,
