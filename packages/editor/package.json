@@ -3,7 +3,6 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "svelte": "./src/CodeEditor.svelte",
   "exports": {
     ".": "./src/index.ts",
     "./*.svelte": "./src/*.svelte"
