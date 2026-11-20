@@ -125,6 +125,17 @@ impl VariableInfo {
     }
 }
 
+/// Whether the connection sends any bytes for `body`. A form always does:
+/// it ends with its closing boundary.
+fn has_body(body: &ResolvedBody) -> bool {
+    match body {
+        ResolvedBody::None => false,
+        ResolvedBody::Text { text, .. } => !text.text.is_empty(),
+        ResolvedBody::Urlencoded(fields) => !fields.is_empty(),
+        ResolvedBody::FormData(_) | ResolvedBody::File { .. } => true,
+    }
+}
+
 /// The `Content-Type` the connection adds for `body`.
 fn content_type(body: &ResolvedBody) -> Option<&str> {
     match body {
@@ -149,22 +160,26 @@ impl Inspection {
             .filter(|u| u.host_str().is_some_and(|host| !host.contains(['{', '}'])));
         let known = parsed.is_some();
         let target = parsed.unwrap_or_else(|| Url::parse(STAND_IN_URL).expect("a valid URL"));
-        let automatic_headers =
-            automatic_headers(&target, content_type(&resolved.body), user_agent)
-                .into_iter()
-                .map(|(name, value)| AutomaticHeader {
-                    replaced: resolved
-                        .headers
-                        .iter()
-                        .any(|(own, _)| own.text.eq_ignore_ascii_case(name)),
-                    value: if name == "Host" && !known {
-                        None
-                    } else {
-                        value
-                    },
-                    name: name.to_string(),
-                })
-                .collect();
+        let automatic_headers = automatic_headers(
+            &target,
+            content_type(&resolved.body),
+            has_body(&resolved.body),
+            user_agent,
+        )
+        .into_iter()
+        .map(|(name, value)| AutomaticHeader {
+            replaced: resolved
+                .headers
+                .iter()
+                .any(|(own, _)| own.text.eq_ignore_ascii_case(name)),
+            value: if name == "Host" && !known {
+                None
+            } else {
+                value
+            },
+            name: name.to_string(),
+        })
+        .collect();
         Inspection {
             variables: resolved.used.iter().map(VariableInfo::new).collect(),
             undefined: resolved.unresolved.clone(),

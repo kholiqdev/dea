@@ -37,11 +37,13 @@ pub struct Request {
 /// they are shown. `None` is a value known only when the request is sent.
 /// This is the single source for what goes on the wire and for what the
 /// editor shows. `Content-Type` is listed when `content_type` is given;
-/// `Content-Length` is added by the connection from the body's size.
+/// `Content-Length` is listed only when `has_body`: the connection adds it
+/// from the body's size, and adds none for an empty body.
 #[must_use]
 pub fn automatic_headers(
     url: &Url,
     content_type: Option<&str>,
+    has_body: bool,
     user_agent: &str,
 ) -> Vec<(&'static str, Option<String>)> {
     let host = url.host_str().map(|host| match url.port() {
@@ -56,7 +58,9 @@ pub fn automatic_headers(
     if let Some(content_type) = content_type {
         headers.push(("Content-Type", Some(content_type.to_owned())));
     }
-    headers.push(("Content-Length", None));
+    if has_body {
+        headers.push(("Content-Length", None));
+    }
     headers
 }
 
@@ -305,7 +309,9 @@ impl Prepared {
         let body = Plan::new(&request.body)?;
         let mut headers = Vec::with_capacity(user.len() + 3);
         let mut host = None;
-        for (name, value) in automatic_headers(url, body.content_type(), user_agent) {
+        for (name, value) in
+            automatic_headers(url, body.content_type(), body.has_bytes(), user_agent)
+        {
             let Some(value) = value else { continue };
             let header = HeaderName::from_bytes(name.as_bytes()).map_err(|_| not_sendable())?;
             if user_wrote(&header) {
