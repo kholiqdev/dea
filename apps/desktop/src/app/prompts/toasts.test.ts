@@ -62,3 +62,15 @@ test("the stack shows the countdown and one keycap per key", () => {
   expect(screen.getByText("9 s")).toBeInTheDocument();
   appToasts.dismiss(id);
 });
+
+test("the countdown is not read out every second", () => {
+  vi.useFakeTimers();
+  render(ToastStack);
+  const id = appToasts.show("Deleted", {
+    action: { label: "Undo", run: () => {} },
+    timeout: 10_000,
+  });
+  flushSync();
+  expect(screen.getByText("10 s")).toHaveAttribute("aria-hidden", "true");
+  appToasts.dismiss(id);
+});
