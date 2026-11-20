@@ -90,6 +90,7 @@ impl From<ProjectError> for IpcError {
             ProjectError::NameTaken(_) => IpcErrorKind::NameTaken,
             ProjectError::ReadOnly => IpcErrorKind::ReadOnly,
             ProjectError::MergeConflict(_) => IpcErrorKind::MergeConflict,
+            ProjectError::NotFound(_) => IpcErrorKind::Missing,
             ProjectError::Io(_) => IpcErrorKind::Io,
             ProjectError::Yaml(_) | ProjectError::Migration(_) => IpcErrorKind::Internal,
             ProjectError::InvalidManifest(_)
@@ -232,6 +233,12 @@ mod tests {
         assert_eq!(
             kind(IpcError::from(ProjectError::ReadOnly)),
             json!("readOnly")
+        );
+        assert_eq!(
+            kind(IpcError::from(ProjectError::NotFound(PathBuf::from(
+                "requests/gone"
+            )))),
+            json!("missing")
         );
         assert_eq!(
             kind(IpcError::from(ProjectError::MergeConflict(PathBuf::from(

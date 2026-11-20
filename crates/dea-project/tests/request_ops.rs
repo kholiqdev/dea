@@ -262,10 +262,9 @@ fn read_folder_gives_the_settings_or_the_defaults() {
         read_folder(&project, shipments),
         Err(ProjectError::InvalidRequest(_))
     ));
-    assert!(matches!(
-        read_folder(&project, Path::new("requests/gone")),
-        Err(ProjectError::InvalidRequest(_))
-    ));
+    let gone = read_folder(&project, Path::new("requests/gone")).unwrap_err();
+    assert!(matches!(gone, ProjectError::NotFound(_)), "{gone:?}");
+    assert_eq!(gone.to_string(), "requests/gone does not exist");
     assert!(matches!(
         read_folder(&project, Path::new("environments")),
         Err(ProjectError::InvalidRequest(_))
