@@ -230,3 +230,11 @@ test("a new environment named prod, production or prd starts as production", asy
     screen.getByRole("switch", { name: "Treat as production" }),
   ).toHaveAttribute("aria-checked", "true");
 });
+
+test("the variable count reads in the singular for one variable", async () => {
+  open();
+  await select("local");
+  expect(screen.getByText(/^1 variable\. /)).toBeInTheDocument();
+  await select("staging");
+  expect(screen.getByText(/^0 variables\. /)).toBeInTheDocument();
+});
