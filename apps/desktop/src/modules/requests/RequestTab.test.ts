@@ -10,6 +10,7 @@ import {
   setUpRequestTabs,
   type FakeShell,
 } from "./request-tab-support.svelte";
+import { drafts } from "./state/drafts.svelte";
 import { resetTreeState, treeState } from "./state/tree.svelte";
 import {
   fakeRequestsIpc,
@@ -107,6 +108,21 @@ test("editing_the_table_rewrites_the_url_bar", async () => {
   expect(url).toHaveValue(BASE);
 });
 
+test("a row with only a description is not in the URL and not written", async () => {
+  const ipc = shipmentsIpc();
+  const { id } = openRequestTab(BY_ID);
+  const url = await urlField();
+  await userEvent.click(screen.getByRole("button", { name: "Add parameter" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Description of row 1" }),
+    "later",
+  );
+  expect(url).toHaveValue(BASE);
+  expect(screen.getByRole("tab", { name: /Params 1/ })).toBeInTheDocument();
+  await shell.save(id);
+  expect(ipc.saved.at(-1)?.params).toBeUndefined();
+});
+
 test("moving_an_open_dirty_request_keeps_its_edits", async () => {
   const ipc = shipmentsIpc();
   const { id } = openRequestTab(BY_ID, "Shipment by ID");
@@ -146,6 +162,26 @@ test("a sidebar rename keeps its name when the edited draft is saved", async () 
     path: renamed,
     request: { name: "Shipment details", url: `${BASE}/events` },
   });
+  expect(ipc.files.has(BY_ID)).toBe(false);
+});
+
+test("a renamed tab that is not shown saves to its new path", async () => {
+  const ipc = shipmentsIpc();
+  const { id, unmount } = openRequestTab(BY_ID, "Shipment by ID");
+  await userEvent.type(await urlField(), "/events");
+  // Another tab is shown while the sidebar renames this one.
+  unmount();
+  await treeState.rename(BY_ID, "Shipment details");
+
+  // Closing it with Save, from the close dialog.
+  await shell.save(id);
+  const renamed = "requests/shipments/shipment-details.yaml";
+  expect(calls(ipc, "save_request")).toMatchObject([
+    {
+      path: renamed,
+      request: { name: "Shipment details", url: `${BASE}/events` },
+    },
+  ]);
   expect(ipc.files.has(BY_ID)).toBe(false);
 });
 
@@ -235,7 +271,7 @@ test("deleted_on_disk_offers_save_again", async () => {
 test("close tab on a deleted request asks the shell to close it", async () => {
   const ipc = shipmentsIpc();
   const { id } = openRequestTab(BY_ID);
-  await urlField();
+  await userEvent.type(await urlField(), "/events");
   ipc.files.delete(BY_ID);
   ipc.tree = { collections: [], errors: [] };
   project.change([BY_ID]);
@@ -244,6 +280,21 @@ test("close tab on a deleted request asks the shell to close it", async () => {
     await screen.findByRole("button", { name: "Close tab" }),
   );
   expect(shell.closing).toEqual([id]);
+});
+
+test("a tab without edits whose file is deleted on disk says it is gone", async () => {
+  const ipc = shipmentsIpc();
+  openRequestTab(BY_ID);
+  await urlField();
+  ipc.files.delete(BY_ID);
+  ipc.tree = { collections: [], errors: [] };
+  project.change([BY_ID]);
+  expect(
+    await screen.findByRole("heading", {
+      name: "This request no longer exists",
+    }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("This request was deleted on disk.")).toBeNull();
 });
 
 test("a restored tab whose request is gone says so", async () => {
@@ -501,6 +552,37 @@ test("switching to another tab and back keeps the edits", async () => {
   render(RequestTab, { props: { tab: shell.tab(id) } });
   expect(await urlField()).toHaveValue(`${BASE}/events`);
   expect(shell.tab(id).dirty).toBe(true);
+});
+
+test("a tab closed while not shown forgets its edits when reopened", async () => {
+  shipmentsIpc();
+  const { id, unmount } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "/events");
+  unmount();
+  // Closed from the tab bar with Discard, then reopened with its id.
+  const closed = shell.tab(id);
+  shell.tabs = shell.tabs.filter((t) => t.id !== id);
+  shell.tabs.push({ ...closed, dirty: false });
+
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  expect(await urlField()).toHaveValue(BASE);
+  expect(shell.tab(id).dirty).toBe(false);
+});
+
+test("the draft of a tab closed while not shown is dropped", async () => {
+  fakeRequestsIpc({
+    tree: shipments(),
+    files: { [BY_ID]: byId(), "requests/shipments/list.yaml": byId() },
+  });
+  const first = openRequestTab(BY_ID);
+  await urlField();
+  first.unmount();
+  shell.tabs = shell.tabs.filter((t) => t.id !== first.id);
+  expect(drafts.has(first.id)).toBe(true);
+
+  openRequestTab("requests/shipments/list.yaml");
+  await urlField();
+  expect(drafts.has(first.id)).toBe(false);
 });
 
 test("a closed tab forgets its edits, even if it is reopened", async () => {
