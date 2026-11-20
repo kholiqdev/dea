@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { $, browser } from "@wdio/globals";
-import { Key } from "webdriverio";
+import { Key, type ChainablePromiseElement } from "webdriverio";
 
 /** Mod is Ctrl on Linux and Windows, the only places these tests run. */
 export const MOD = Key.Ctrl;
@@ -85,6 +85,14 @@ export function pickNextFolder(path: string): void {
   const file = process.env.DEA_E2E_PICK_FILE;
   if (!file) throw new Error("DEA_E2E_PICK_FILE is not set");
   writeFileSync(file, path);
+}
+
+/**
+ * The file the next "pick a file" returns, instead of the dialog. The folder
+ * and the file picker read the same one-shot file (see wdio.conf.ts).
+ */
+export function pickNextFile(path: string): void {
+  pickNextFolder(path);
 }
 
 /** Writes a project with local, staging and production into a new folder. */
@@ -190,4 +198,61 @@ export async function waitForNoDialog(): Promise<void> {
     async () => !(await $('[role="dialog"]').isExisting()),
     { timeoutMsg: "a dialog stayed open" },
   );
+}
+
+type Row = WebdriverIO.Element | ChainablePromiseElement;
+
+/** Where over a row a drag is let go: before it, in it (a folder), after it. */
+export type DropPlace = "above" | "into" | "below";
+
+// Rows are 28 px high; the drop rules in state/drag.svelte.ts read the top
+// quarter of a folder or half of a request as "above", the middle half of a
+// folder as "into", and the rest as "below".
+const DROP_OFFSET: Record<DropPlace, number> = {
+  above: 3,
+  into: 14,
+  below: 25,
+};
+
+const DRAG_STEPS = 8;
+
+/**
+ * Drags `source` over `target` with the pointer: press, move away past the
+ * drag threshold, move to `place` of the target in steps, release. The tree
+ * drags with pointer events (WebDriver cannot drive HTML drag and drop in
+ * WebKitGTK or WebView2). The whole move stays under the 600 ms a closed
+ * folder needs to open under the pointer.
+ */
+export async function dragTo(
+  source: Row,
+  target: Row,
+  place: DropPlace,
+): Promise<void> {
+  const from = await (await source).getLocation();
+  const fromSize = await (await source).getSize();
+  const to = await (await target).getLocation();
+  const toSize = await (await target).getSize();
+  const start = {
+    x: Math.round(from.x + fromSize.width / 2),
+    y: Math.round(from.y + fromSize.height / 2),
+  };
+  const end = {
+    x: Math.round(to.x + toSize.width / 2),
+    y: Math.round(to.y + DROP_OFFSET[place]),
+  };
+  const action = browser
+    .action("pointer", { parameters: { pointerType: "mouse" } })
+    .move({ x: start.x, y: start.y })
+    .down()
+    // Past the 4 px threshold, so the press becomes a drag.
+    .move({ x: start.x + 8, y: start.y, duration: 20 });
+  for (let i = 1; i <= DRAG_STEPS; i++) {
+    action.move({
+      x: Math.round(start.x + 8 + ((end.x - start.x - 8) * i) / DRAG_STEPS),
+      y: Math.round(start.y + ((end.y - start.y) * i) / DRAG_STEPS),
+      duration: 20,
+    });
+  }
+  await action.pause(50).up().perform();
+  await browser.releaseActions();
 }
