@@ -273,6 +273,13 @@ test("production items carry the production badge", async () => {
   expect(staging.querySelector(".env-prod")).toBeNull();
 });
 
+test("an environment item says its name once to screen readers", async () => {
+  setup();
+  const dialog = await openPalette();
+  const staging = within(dialog).getByRole("option", { name: /^staging/ });
+  expect(staging).toHaveAccessibleName("staging Use for requests");
+});
+
 test("on Welcome only app-wide items show", async () => {
   setup({ project: false });
   const dialog = await openPalette();
