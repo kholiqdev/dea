@@ -17,7 +17,7 @@ use dea_http::{Body, ClientIdentity, Options, Part, PartValue, Request, SendCont
 use dea_project::{
     FieldValue, LocalFiles, Project, RequestContext, RequestError, RequestFile, RequestTree,
     Resolved, ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError,
-    SystemDynamicSource, is_local_ref, resolve_draft, resolve_request,
+    SystemDynamicSource, VaultManifest, is_local_ref, resolve_draft, resolve_request,
 };
 use url::Url;
 use zeroize::Zeroizing;
@@ -245,7 +245,8 @@ impl RequestService {
     /// What the editor shows about `draft`, as if it were saved at `path`:
     /// each variable with its value and source, the placeholders with no
     /// value, the headers Dea adds, and the options that apply. Secrets are
-    /// placeholders: the Vault is not read and nothing is asked.
+    /// placeholders: the Vault is not read and nothing is asked. A Vault
+    /// name `vault.yaml` does not declare has no value.
     ///
     /// # Errors
     ///
@@ -263,7 +264,7 @@ impl RequestService {
         let preview = resolve_with(
             project,
             environment,
-            &Placeholders,
+            &Declared(&project.vault),
             &AnyLocalFile,
             |ctx| resolve_draft(path, draft, ctx),
             tree,
@@ -433,6 +434,21 @@ struct Placeholders;
 impl SecretLookup for Placeholders {
     fn lookup(&self, _environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
         Ok(Some(format!("[secret:{name}]")))
+    }
+}
+
+/// Stands in for the Vault when inspecting: a secret `vault.yaml` declares
+/// reads as `[secret:<name>]`, any other name has no value, so a misspelt
+/// reference shows as undefined. The Vault is never asked.
+struct Declared<'a>(&'a VaultManifest);
+
+impl SecretLookup for Declared<'_> {
+    fn lookup(&self, environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
+        if self.0.secrets.iter().any(|secret| secret.name == name) {
+            Placeholders.lookup(environment, name)
+        } else {
+            Ok(None)
+        }
     }
 }
 

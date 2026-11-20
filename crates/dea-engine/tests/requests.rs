@@ -17,7 +17,8 @@ use dea_engine::{
 use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
     ApiKeyLocation, Auth, Body, Environment, KeyValue, Project, RequestError, RequestFile,
-    RequestTree, SecretKind, SendOptions, Variable, create_project, load_requests, save_request,
+    RequestTree, SecretKind, SecretSpec, SendOptions, Variable, create_project, load_requests,
+    save_request,
 };
 use dea_testkit::http::{Received, TestServer, Tls};
 use dea_testkit::{canary, find_canary};
@@ -85,9 +86,14 @@ fn request(method: &str, url: &str) -> RequestFile {
 
 /// A project in `dir` with `staging` and `production` pointing at
 /// `server`, and a `shipments` collection signing in with the Vault's
-/// `access_token`.
+/// `access_token`, which `vault.yaml` declares.
 fn project_in(dir: &Path, server: &TestServer) -> (Project, RequestTree) {
     let mut project = create_project(dir, "harbor-api").unwrap();
+    project.vault.secrets.push(SecretSpec {
+        name: "access_token".into(),
+        kind: SecretKind::Token,
+        description: None,
+    });
     let env = |name: &str, production: bool| Environment {
         name: name.into(),
         production,
@@ -856,6 +862,43 @@ async fn inspect_never_opens_the_vault() {
         .find(|v| v.name == "vault:access_token")
         .unwrap();
     assert!(vault.secret);
+}
+
+#[tokio::test]
+async fn inspect_marks_a_vault_name_vault_yaml_does_not_declare_as_undefined() {
+    let f = Fixture::new().await;
+    let service = service_with(&f, NeverOpened);
+    let draft = request(
+        "GET",
+        "{{baseUrl}}/echo?t={{vault:access_token}}&u={{vault:acess_token}}",
+    );
+
+    let inspection = service
+        .inspect(
+            &f.project,
+            &f.tree,
+            Path::new(LIST),
+            &draft,
+            Some("staging"),
+        )
+        .unwrap();
+
+    let declared = inspection
+        .variables
+        .iter()
+        .find(|v| v.name == "vault:access_token")
+        .unwrap();
+    assert_eq!(declared.source, "Vault, staging. The value stays hidden");
+    assert!(
+        inspection
+            .variables
+            .iter()
+            .all(|v| v.name != "vault:acess_token"),
+        "{:?}",
+        inspection.variables
+    );
+    assert_eq!(inspection.undefined, ["vault:acess_token"]);
+    assert_untouched(&f);
 }
 
 #[tokio::test]
