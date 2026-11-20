@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
     autoLockMinutes: 15,
     productionMinutes: 10,
   },
+  requests: { autosave: false },
 };
 
 export interface SettingsPatch {
@@ -29,6 +30,7 @@ export interface SettingsPatch {
   /** Replaces every shortcut override. */
   shortcuts?: Settings["shortcuts"];
   security?: Partial<Settings["security"]>;
+  requests?: Partial<Settings["requests"]>;
 }
 
 export class SettingsState {
@@ -51,6 +53,14 @@ export class SettingsState {
 
   get security(): Settings["security"] {
     return this.#value.security;
+  }
+
+  get requests(): Settings["requests"] {
+    return this.#value.requests;
+  }
+
+  get requests(): Settings["requests"] {
+    return this.#value.requests;
   }
 
   /** Reads the saved settings. Outside the app the defaults stay. */
@@ -94,6 +104,8 @@ function merged(value: Settings, patch: SettingsPatch): Settings {
     appearance: { ...value.appearance, ...patch.appearance },
     shortcuts: patch.shortcuts ?? value.shortcuts,
     security: { ...value.security, ...patch.security },
+    requests: { ...value.requests, ...patch.requests },
+    requests: { ...value.requests, ...patch.requests },
   };
 }
 

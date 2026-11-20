@@ -41,6 +41,14 @@ export const manifest: ModuleManifest = {
     },
   ],
   shortcuts: [{ command: "requests.open", chord: "Mod+1" }],
+  settings: [
+    {
+      id: "requests.settings",
+      title: "Requests",
+      order: 40,
+      view: () => import("./components/RequestsSettings.svelte"),
+    },
+  ],
   intents: [
     {
       intent: "requests.newRequest",

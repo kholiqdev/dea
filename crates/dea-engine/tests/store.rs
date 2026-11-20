@@ -319,6 +319,24 @@ fn ui_state_without_tab_environments_still_loads() {
 }
 
 #[test]
+fn settings_without_requests_get_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    // A settings file from before the request editor.
+    let older = r#"{"version": 1, "appearance": {"theme": "dark"}, "shortcuts": {}}"#;
+    fs::write(dir.path().join("settings.json"), older).unwrap();
+    let store = Store::new(dir.path());
+
+    let s = store.load_settings();
+    assert!(!s.requests.autosave);
+    assert_eq!(
+        s.appearance.theme,
+        ThemePreference::Dark,
+        "the file was kept"
+    );
+    assert!(!dir.path().join("settings.json.damaged").exists());
+}
+
+#[test]
 fn older_settings_get_the_default_vault_minutes() {
     let dir = tempfile::tempdir().unwrap();
     let older = r#"{"version": 1, "appearance": {"theme": "dark"}, "shortcuts": {}}"#;

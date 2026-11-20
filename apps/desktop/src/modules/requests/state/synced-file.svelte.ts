@@ -1,8 +1,13 @@
 // What a request tab and a folder tab share: a file read into a draft, kept
 // in step with the disk, and written back (F1-FON-05).
 
+import { projectApi } from "$app/contributions/project-api";
 import { shellApi } from "$app/contributions/shell-api";
+import { settings } from "$lib/settings/settings.svelte";
 import { errorMessage, isIpcError } from "$lib/ipc/errors";
+
+/** How long after the last edit an autosave writes, in milliseconds. */
+export const AUTOSAVE_DELAY = 1000;
 
 const isMissing = (e: unknown) => isIpcError(e) && e.kind === "missing";
 
@@ -29,6 +34,7 @@ export abstract class SyncedFile<T> {
   #version = 0;
   // A check of the file after a move, which a save waits for.
   #settling: Promise<void> = Promise.resolve();
+  #autosave: ReturnType<typeof setTimeout> | undefined;
 
   constructor(path: string) {
     this.path = path;
@@ -109,6 +115,41 @@ export abstract class SyncedFile<T> {
     this.#theirs = null;
     this.outside = null;
     this.error = null;
+  }
+
+  /** Whether the edits are fit to write on their own; false holds an autosave back. */
+  protected autosavable(): boolean {
+    return true;
+  }
+
+  /**
+   * Saves `AUTOSAVE_DELAY` ms after the last call, when autosave is on. The
+   * conditions are looked at again then, not now.
+   */
+  scheduleAutosave(): void {
+    clearTimeout(this.#autosave);
+    if (!settings.requests.autosave) return;
+    this.#autosave = setTimeout(() => this.#autosaveNow(), AUTOSAVE_DELAY);
+  }
+
+  cancelAutosave(): void {
+    clearTimeout(this.#autosave);
+  }
+
+  #autosaveNow(): void {
+    const saved = this.saved;
+    if (
+      !settings.requests.autosave ||
+      projectApi().info?.readOnly === true ||
+      this.outside !== null ||
+      !saved ||
+      // What would be written is what is there: nothing to do (a half-set
+      // client certificate is dirty but writes nothing).
+      this.same(this.draft, saved) ||
+      !this.autosavable()
+    )
+      return;
+    this.save().catch((e: unknown) => shellApi().toast(errorMessage(e)));
   }
 
   /** Follows a rename or move from the sidebar. The edits stay. */

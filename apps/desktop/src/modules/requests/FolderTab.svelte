@@ -15,6 +15,7 @@
   import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
   import type { TlsSettings } from "$lib/ipc/bindings/TlsSettings";
   import { errorMessage } from "$lib/ipc/errors";
+  import { settings } from "$lib/settings/settings.svelte";
   import CertificateOptions from "./components/CertificateOptions.svelte";
   import KeyValueTable from "./components/KeyValueTable.svelte";
   import NetworkOptions from "./components/NetworkOptions.svelte";
@@ -76,6 +77,15 @@
   });
 
   $effect(() => shell.setTabDirty(id, state.dirty));
+
+  // Autosaves a second after the last edit, or after an outside change is
+  // answered. Leaving the tab does not cancel it: the state outlives the view.
+  $effect(() => {
+    void JSON.stringify(state.draft);
+    void state.outside;
+    void settings.requests.autosave;
+    untrack(() => state.scheduleAutosave());
+  });
 
   // A closed tab takes its edits with it; reopening it reads the file.
   $effect(() => () => pruneFolderStates());
