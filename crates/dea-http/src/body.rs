@@ -19,8 +19,10 @@ use tokio_util::io::poll_read_buf;
 use crate::error::HttpError;
 use crate::request::{Body, Part, PartValue};
 
-/// Files are read this much at a time.
-const CHUNK: u64 = 64 * 1024;
+/// The most a frame of the body holds. Files are read this much at a time,
+/// and bytes in memory are handed out in pieces this size, so upload
+/// progress moves with every piece the connection takes.
+const CHUNK: usize = 64 * 1024;
 const OCTET_STREAM: &str = "application/octet-stream";
 const BOUNDARY_LEN: usize = 32;
 const ALPHANUMERIC: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -263,21 +265,21 @@ impl hyper::body::Body for WireBody {
             match this.queue.front_mut() {
                 None => return Poll::Ready(None),
                 Some(Source::Bytes(data)) => {
-                    let data = std::mem::take(data);
-                    this.queue.pop_front();
                     if data.is_empty() {
+                        this.queue.pop_front();
                         continue;
                     }
-                    this.remaining -= data.len() as u64;
+                    let frame = data.split_to(data.len().min(CHUNK));
+                    this.remaining -= frame.len() as u64;
                     this.progress.mark();
-                    return Poll::Ready(Some(Ok(Frame::data(data))));
+                    return Poll::Ready(Some(Ok(Frame::data(frame))));
                 }
                 Some(Source::File { file, left }) => {
                     if *left == 0 {
                         this.queue.pop_front();
                         continue;
                     }
-                    let want = (*left).min(CHUNK);
+                    let want = (*left).min(CHUNK as u64);
                     let mut buf = BytesMut::with_capacity(usize::try_from(want).unwrap_or(0));
                     let read = match poll_read_buf(Pin::new(file), cx, &mut buf) {
                         Poll::Pending => return Poll::Pending,

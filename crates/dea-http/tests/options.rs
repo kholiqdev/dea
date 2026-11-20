@@ -331,6 +331,49 @@ async fn steady_upload_is_not_a_timeout() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn steady_in_memory_upload_is_not_a_timeout() {
+    // As `steady_upload_is_not_a_timeout`, with the body in memory.
+    const SIZE: usize = 48 * 1024 * 1024;
+    let server = TestServer::start(Tls::None).await;
+    let request = Request {
+        body: Body::Bytes {
+            data: vec![b'x'; SIZE].into(),
+            content_type: None,
+        },
+        ..request(
+            "POST",
+            &server.url(&format!("/throttle/{}", 16 * 1024 * 1024)),
+            with_timeout(1500),
+        )
+    };
+    let started = Instant::now();
+    let response = send(&client(), request).await.unwrap();
+    assert!(started.elapsed() > Duration::from_secs(2));
+    assert_eq!(
+        response.body.read_all().unwrap(),
+        SIZE.to_string().as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn stalled_file_upload_times_out() {
+    let server = TestServer::start(Tls::None).await;
+    let dir = tempfile::tempdir().unwrap();
+    // More than the socket buffers hold, to a server that never reads it.
+    let request = Request {
+        body: Body::File {
+            path: file_of(dir.path(), 32 * 1024 * 1024),
+            content_type: None,
+        },
+        ..request("POST", &server.url("/throttle/0"), with_timeout(300))
+    };
+    let started = Instant::now();
+    let result = send(&client(), request).await;
+    assert!(matches!(result, Err(HttpError::Timeout(_))), "{result:?}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
 #[tokio::test]
 async fn stalled_upload_times_out() {
     let server = TestServer::start(Tls::None).await;
