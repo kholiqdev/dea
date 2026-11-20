@@ -49,63 +49,162 @@ function lineColumn(
   return { line, column: offset - (before.lastIndexOf("\n") + 1) + 1 };
 }
 
-function canContinue(prefix: string): boolean {
-  try {
-    JSON.parse(prefix);
-    return true;
-  } catch (error) {
-    return /end of JSON input|Unterminated|Unexpected end/i.test(String(error));
-  }
+interface ScanError {
+  offset: number;
+  message: string;
 }
 
-function errorOffset(masked: string, message: string): number {
-  const position = /position (\d+)/.exec(message);
-  if (position) return Number(position[1]);
-  const lc = /line (\d+) column (\d+)/.exec(message);
-  if (lc) {
-    const lines = masked.split("\n");
-    let offset = 0;
-    for (let i = 0; i < Number(lc[1]) - 1; i++)
-      offset += (lines[i] ?? "").length + 1;
-    return offset + Number(lc[2]) - 1;
+const WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
+const LITERALS = ["true", "false", "null"];
+
+function isDigit(c: string | undefined): boolean {
+  return c !== undefined && c >= "0" && c <= "9";
+}
+
+/** Returns the offset after the string starting at `start`, or an error. */
+function scanString(text: string, start: number): number | ScanError {
+  const unterminated = { offset: start, message: "Unterminated string" };
+  for (let i = start + 1; i < text.length; i++) {
+    const c = text[i] as string;
+    if (c === '"') return i + 1;
+    if (c < " ") return unterminated;
+    if (c !== "\\") continue;
+    i++;
+    const escape = text[i];
+    if (escape === undefined) return unterminated;
+    if (escape === "u") {
+      for (let k = 1; k <= 4; k++) {
+        if (!/[0-9a-fA-F]/.test(text[i + k] ?? "")) {
+          return {
+            offset: Math.min(i + k, text.length),
+            message: "Invalid escape sequence",
+          };
+        }
+      }
+      i += 4;
+    } else if (!'"\\/bfnrt'.includes(escape)) {
+      return { offset: i, message: "Invalid escape sequence" };
+    }
   }
-  if (/end of JSON input/i.test(message)) return masked.length;
-  const token =
-    /Unexpected (?:token|non-whitespace character after JSON at position) ?'?(.)'?/.exec(
-      message,
-    );
-  if (token) {
-    for (let i = 0; i < masked.length; i++) {
-      if (
-        masked[i] === token[1] &&
-        canContinue(masked.slice(0, i)) &&
-        !canContinue(masked.slice(0, i + 1))
-      ) {
-        return i;
+  return unterminated;
+}
+
+function scanNumber(text: string, start: number): number | ScanError {
+  let i = start;
+  const bad = (): ScanError => ({ offset: i, message: "Invalid number" });
+  if (text[i] === "-") i++;
+  if (text[i] === "0") i++;
+  else if (isDigit(text[i])) while (isDigit(text[i])) i++;
+  else return bad();
+  if (text[i] === ".") {
+    i++;
+    if (!isDigit(text[i])) return bad();
+    while (isDigit(text[i])) i++;
+  }
+  if (text[i] === "e" || text[i] === "E") {
+    i++;
+    if (text[i] === "+" || text[i] === "-") i++;
+    if (!isDigit(text[i])) return bad();
+    while (isDigit(text[i])) i++;
+  }
+  return i;
+}
+
+type Expect =
+  "value" | "valueOrClose" | "keyOrClose" | "key" | "colon" | "after";
+
+/** Linear JSON scanner: finds the first invalid offset, or null when the text is valid. */
+function scanJson(text: string): ScanError | null {
+  const stack: string[] = [];
+  let expect: Expect = "value";
+  let i = 0;
+  const unexpected = (): ScanError => ({
+    offset: i,
+    message: `Unexpected character "${text[i]}"`,
+  });
+  for (;;) {
+    while (i < text.length && WHITESPACE.has(text[i] as string)) i++;
+    if (i >= text.length) {
+      return expect === "after" && stack.length === 0
+        ? null
+        : { offset: text.length, message: "Unexpected end of input" };
+    }
+    const c = text[i] as string;
+    const top = stack[stack.length - 1];
+    switch (expect) {
+      case "valueOrClose":
+      case "value": {
+        if (expect === "valueOrClose" && c === "]") {
+          stack.pop();
+          expect = "after";
+          i++;
+        } else if (c === "{" || c === "[") {
+          stack.push(c);
+          expect = c === "{" ? "keyOrClose" : "valueOrClose";
+          i++;
+        } else if (c === '"' || c === "-" || isDigit(c)) {
+          const end = c === '"' ? scanString(text, i) : scanNumber(text, i);
+          if (typeof end !== "number") return end;
+          i = end;
+          expect = "after";
+        } else {
+          const literal = LITERALS.find((l) => text.startsWith(l, i));
+          if (!literal) return unexpected();
+          i += literal.length;
+          expect = "after";
+        }
+        break;
+      }
+      case "keyOrClose":
+      case "key": {
+        if (expect === "keyOrClose" && c === "}") {
+          stack.pop();
+          expect = "after";
+          i++;
+        } else if (c === '"') {
+          const end = scanString(text, i);
+          if (typeof end !== "number") return end;
+          i = end;
+          expect = "colon";
+        } else {
+          return {
+            offset: i,
+            message:
+              expect === "key"
+                ? "Expected a property name"
+                : 'Expected a property name or "}"',
+          };
+        }
+        break;
+      }
+      case "colon": {
+        if (c !== ":") return { offset: i, message: 'Expected ":"' };
+        i++;
+        expect = "value";
+        break;
+      }
+      case "after": {
+        if (top === undefined) return unexpected();
+        const close = top === "{" ? "}" : "]";
+        if (c === ",") {
+          expect = top === "{" ? "key" : "value";
+          i++;
+        } else if (c === close) {
+          stack.pop();
+          i++;
+        } else {
+          return { offset: i, message: `Expected "," or "${close}"` };
+        }
+        break;
       }
     }
   }
-  for (let i = 0; i <= masked.length; i++) {
-    if (!canContinue(masked.slice(0, i))) return Math.max(0, i - 1);
-  }
-  return masked.length;
 }
 
 export function lintJson(text: string): JsonLintError | null {
-  const masked = maskVariables(text);
-  try {
-    JSON.parse(masked);
-    return null;
-  } catch (error) {
-    const raw = error instanceof Error ? error.message : String(error);
-    const offset = Math.min(errorOffset(masked, raw), text.length);
-    return {
-      ...lineColumn(text, offset),
-      message: raw
-        .replace(/,\s*(?:\.\.\.)?".*"\s*is not valid JSON$/s, "")
-        .replace(/\s+in JSON at position.*$/, ""),
-    };
-  }
+  const error = scanJson(maskVariables(text));
+  if (!error) return null;
+  return { ...lineColumn(text, error.offset), message: error.message };
 }
 
 /** Pretty-prints with two spaces, keeping variables and number literals as written. */
@@ -133,10 +232,11 @@ export function formatJson(text: string): string | null {
       i = end;
     } else if (c === "{" || c === "[") {
       const close = c === "{" ? "}" : "]";
-      const next = text.slice(i + 1).search(/\S/);
-      if (next !== -1 && text[i + 1 + next] === close) {
+      let next = i + 1;
+      while (WHITESPACE.has(text[next] as string)) next++;
+      if (text[next] === close) {
         out += c + close;
-        i += 1 + next;
+        i = next;
       } else {
         depth++;
         out += c + indent();

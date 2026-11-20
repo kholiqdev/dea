@@ -41,6 +41,7 @@
   let text = $state("");
 
   const languageCompartment = new Compartment();
+  const lintCompartment = new Compartment();
   const readonlyCompartment = new Compartment();
 
   function languageExtension(name: Props["language"]) {
@@ -99,25 +100,32 @@
     ".cm-var-tooltip-detail": { color: "var(--text-2)" },
   });
 
-  const jsonLinter = linter(
-    (editor): Diagnostic[] => {
-      const error = lintJson(editor.state.doc.toString());
-      if (!error) return [];
-      const line = editor.state.doc.line(
-        Math.min(error.line, editor.state.doc.lines),
-      );
-      const from = Math.min(line.from + error.column - 1, line.to);
-      return [
-        {
-          from,
-          to: Math.min(from + 1, editor.state.doc.length),
-          severity: "error",
-          message: error.message,
-        },
-      ];
-    },
-    { delay: 200 },
-  );
+  const jsonLinter = [
+    lintGutter(),
+    linter(
+      (editor): Diagnostic[] => {
+        const error = lintJson(editor.state.doc.toString());
+        if (!error) return [];
+        const line = editor.state.doc.line(
+          Math.min(error.line, editor.state.doc.lines),
+        );
+        const from = Math.min(line.from + error.column - 1, line.to);
+        return [
+          {
+            from,
+            to: Math.min(from + 1, editor.state.doc.length),
+            severity: "error",
+            message: error.message,
+          },
+        ];
+      },
+      { delay: 200 },
+    ),
+  ];
+
+  function lintExtension(name: Props["language"]) {
+    return name === "json" ? jsonLinter : [];
+  }
 
   function format(editor: EditorView): boolean {
     if (language !== "json") return false;
@@ -147,8 +155,7 @@
           ]),
           syntaxHighlighting(highlightStyle),
           theme,
-          lintGutter(),
-          jsonLinter,
+          lintCompartment.of(lintExtension(language)),
           variableExtension(variables),
           languageCompartment.of(languageExtension(language)),
           readonlyCompartment.of([
@@ -186,7 +193,10 @@
 
   $effect(() => {
     view?.dispatch({
-      effects: languageCompartment.reconfigure(languageExtension(language)),
+      effects: [
+        languageCompartment.reconfigure(languageExtension(language)),
+        lintCompartment.reconfigure(lintExtension(language)),
+      ],
     });
   });
 
