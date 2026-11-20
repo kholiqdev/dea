@@ -79,6 +79,28 @@ test("a secret shows dots and its vault source", async () => {
   expect(tip).toHaveTextContent("Vault, staging. The value stays hidden");
 });
 
+test("a Vault name the inspection leaves undefined is marked, however it is spaced", async () => {
+  // Dea names an undefined placeholder as written; a found secret as
+  // `vault:<name>`.
+  const lookup = lookupFrom(
+    { ...SHIPPING, undefined: ["vault: tokn"] },
+    "staging",
+  );
+  render(VariableField, {
+    value: "{{vault: tokn}} {{ vault: token }}",
+    label: "Value",
+    variables: lookup,
+    oninput: () => {},
+  });
+  const [misspelt, spaced] = document.querySelectorAll(".variable");
+  expect(misspelt).toHaveClass("undefined-var");
+  expect(spaced).not.toHaveClass("undefined-var");
+  await fireEvent.mouseEnter(spaced as Element);
+  expect(screen.getByRole("tooltip")).toHaveTextContent(
+    "Vault, staging. The value stays hidden",
+  );
+});
+
 test("hovering a chip shows its value and source", async () => {
   render(VariableField, {
     value: "{{baseUrl}}/ships",
