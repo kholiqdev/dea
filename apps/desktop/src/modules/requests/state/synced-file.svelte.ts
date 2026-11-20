@@ -46,6 +46,14 @@ export abstract class SyncedFile<T> {
   protected taken(file: T): void {
     void file;
   }
+  /** Called with a file the disk has that says the same as the saved one. */
+  protected adopt(file: T): void {
+    void file;
+  }
+  /** The file as it is about to be written; may look at the disk again. */
+  protected prepare(file: T): Promise<T> {
+    return Promise.resolve(file);
+  }
   /**
    * A change on disk that needs no question, such as a rename from the
    * sidebar. Returns whether it was dealt with.
@@ -87,7 +95,7 @@ export abstract class SyncedFile<T> {
     await this.#settling;
     // Nothing was read, so there is nothing to write.
     if (!this.saved) return;
-    const file = this.clean(this.snapshot());
+    const file = await this.prepare(this.clean(this.snapshot()));
     this.#version++;
     try {
       await this.writeFile(this.path, file);
@@ -97,6 +105,7 @@ export abstract class SyncedFile<T> {
       this.#version++;
     }
     this.saved = file;
+    this.adopt(file);
     this.#theirs = null;
     this.outside = null;
     this.error = null;
@@ -165,7 +174,7 @@ export abstract class SyncedFile<T> {
     this.error = null;
     this.#theirs = null;
     this.outside = null;
-    if (this.same(disk, saved)) return;
+    if (this.same(disk, saved)) return this.adopt(disk);
     if (this.quiet(disk, saved)) return;
     if (!this.dirty || this.same(disk, this.draft)) return this.take(disk);
     this.#theirs = disk;

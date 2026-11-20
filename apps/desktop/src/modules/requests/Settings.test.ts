@@ -144,3 +144,26 @@ test("cookies are a request setting", async () => {
     screen.getByRole("switch", { name: "Use the cookie jar" }),
   ).toBeChecked();
 });
+
+test("a number can be retyped without snapping to the inherited value", async () => {
+  const ipc = setUp({ options: { timeoutMs: 500 } });
+  await openSettings();
+  const timeout = screen.getByRole("spinbutton", { name: "Timeout" });
+  await userEvent.clear(timeout);
+  // Empty while typing: the field stays empty rather than showing 30000.
+  expect(timeout).toHaveValue(null);
+  await userEvent.type(timeout, "8000");
+  expect(timeout).toHaveValue(8000);
+  await userEvent.click(screen.getByRole("button", { name: "Save request" }));
+  expect(ipc.saved.at(-1)?.options).toEqual({ timeoutMs: 8000 });
+});
+
+test("a field left empty goes back to inherited", async () => {
+  setUp({ options: { timeoutMs: 500 } });
+  await openSettings();
+  const timeout = screen.getByRole("spinbutton", { name: "Timeout" });
+  await userEvent.clear(timeout);
+  await userEvent.tab();
+  await waitFor(() => expect(timeout).toHaveValue(30000));
+  expect(row("Timeout").getByText("Inherited")).toBeInTheDocument();
+});
