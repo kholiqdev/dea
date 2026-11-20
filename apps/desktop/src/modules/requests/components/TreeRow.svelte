@@ -10,12 +10,19 @@
     row,
     id,
     selected,
+    dragging = false,
     onclick,
+    onpointerdown,
+    oncontextmenu,
   }: {
     row: TreeRowData;
     id: string;
     selected: boolean;
+    /** The row is being dragged. */
+    dragging?: boolean;
     onclick: () => void;
+    onpointerdown?: (e: PointerEvent) => void;
+    oncontextmenu?: (e: MouseEvent) => void;
   } = $props();
 </script>
 
@@ -23,6 +30,7 @@
   {id}
   class="row"
   class:selected
+  class:dragging
   role="treeitem"
   tabindex="-1"
   aria-level={row.depth + 1}
@@ -32,6 +40,8 @@
   aria-selected={selected}
   style:padding-left="calc(var(--s-2) + {row.depth * 14}px)"
   {onclick}
+  {onpointerdown}
+  {oncontextmenu}
   onkeydown={() => {}}
 >
   {#if row.kind === "folder"}<span class="chevron"
@@ -60,6 +70,7 @@
     color: var(--text-2);
     cursor: default;
     outline: none;
+    user-select: none;
   }
 
   .row:hover {
@@ -71,6 +82,12 @@
     background: var(--bg-3);
     box-shadow: var(--highlight);
     color: var(--text-1);
+    /* Room for the More actions button over the row. */
+    padding-right: 32px;
+  }
+
+  .dragging {
+    opacity: 0.5;
   }
 
   .chevron {

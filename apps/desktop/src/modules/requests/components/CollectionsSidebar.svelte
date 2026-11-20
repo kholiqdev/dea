@@ -1,13 +1,22 @@
 <!-- The Requests sidebar: the collection tree with a filter, and the environments. -->
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import { environmentColor, projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
-  import { treeState, type TreeRowData } from "../state/tree.svelte";
+  import { TreeDrag } from "../state/drag.svelte";
+  import {
+    ROOT,
+    ROW_HEIGHT as ROW,
+    treeState,
+    type TreeRowData,
+  } from "../state/tree.svelte";
+  import DeleteItem from "./DeleteItem.svelte";
+  import MoveItem from "./MoveItem.svelte";
+  import RenameRow from "./RenameRow.svelte";
+  import TreeMenu from "./TreeMenu.svelte";
   import TreeRow from "./TreeRow.svelte";
 
-  const ROW = 28;
   const OVERSCAN = 10;
   const FALLBACK_HEIGHT = 800;
 
@@ -20,6 +29,7 @@
   let scroller = $state<HTMLElement>();
   let tree = $state<HTMLElement>();
   let filterInput = $state<HTMLInputElement>();
+  let newCollection = $state<HTMLButtonElement>();
 
   const height = $derived(clientHeight || FALLBACK_HEIGHT);
   const start = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN));
@@ -30,6 +40,24 @@
   const activeIndex = $derived(
     rows.findIndex((r) => r.path === treeState.selected),
   );
+  const active = $derived(rows[activeIndex]);
+  const renamingIndex = $derived(
+    treeState.renaming
+      ? rows.findIndex((r) => r.path === treeState.renaming)
+      : -1,
+  );
+
+  const drag = new TreeDrag(treeState);
+  // The click that ends a drag on the row it started on opens nothing.
+  let dragEnded = false;
+
+  /** The active row's menu, and where a right click opened it. */
+  let menuOpen = $state(false);
+  let menuAt = $state<{ x: number; y: number } | null>(null);
+  /** The tree's own menu, open at this point. */
+  let areaMenuAt = $state<{ x: number; y: number } | null>(null);
+  let deleting = $state<TreeRowData | null>(null);
+  let moving = $state<TreeRowData | null>(null);
 
   // jsdom has no ResizeObserver; the height then stays 0 and the fallback is used.
   function measure(el: HTMLElement): (() => void) | void {
@@ -41,13 +69,19 @@
   }
 
   onMount(() => {
-    void treeState.load();
+    void treeState.reload();
     return clearTimings;
   });
 
   $effect(() => {
     if (project.changed.some((p) => p.startsWith("requests/")))
-      void treeState.load();
+      void treeState.reload();
+  });
+
+  // An item being named is scrolled into view.
+  $effect(() => {
+    const index = renamingIndex;
+    if (index >= 0) untrack(() => select(index));
   });
 
   // The timings of one search stay until it ends: the filter is emptied or
@@ -76,6 +110,12 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && drag.source) {
+      drag.cancel();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey)
       return;
     if (isEditable(event.target)) return;
@@ -117,9 +157,17 @@
 
   function onTreeKeydown(event: KeyboardEvent): void {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (isEditable(event.target)) return;
     const index = activeIndex;
     const row = rows[index];
     switch (event.key) {
+      case "F2":
+        if (row) treeState.renaming = row.path;
+        break;
+      case "F10":
+        if (!event.shiftKey) return;
+        openMenu(null);
+        break;
       case "ArrowDown":
         select(Math.min(rows.length - 1, index + 1));
         break;
@@ -154,14 +202,132 @@
 
   function onRowClick(index: number): void {
     const row = rows[index];
-    if (!row) return;
+    if (!row || dragEnded) return;
     select(index);
     tree?.focus();
     open(row);
   }
+
+  /**
+   * Opens the active row's menu at a point, or under its button; with no
+   * active row, the tree's own menu.
+   */
+  function openMenu(at: { x: number; y: number } | null): void {
+    if (activeIndex < 0) {
+      const box = (tree ?? scroller)?.getBoundingClientRect();
+      areaMenuAt = at ?? { x: box?.left ?? 0, y: box?.top ?? 0 };
+      return;
+    }
+    select(activeIndex);
+    menuAt = at;
+    menuOpen = true;
+  }
+
+  function onRowContextMenu(event: MouseEvent, index: number): void {
+    if (isEditable(event.target)) return;
+    event.preventDefault();
+    select(index);
+    openMenu({ x: event.clientX, y: event.clientY });
+  }
+
+  // A right click on the empty part of the list, or the menu key on the tree.
+  function onAreaContextMenu(event: MouseEvent): void {
+    if (event.defaultPrevented || isEditable(event.target)) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest(".actions, .over")
+    )
+      return;
+    event.preventDefault();
+    if (event.target === tree) openMenu(null);
+    else areaMenuAt = { x: event.clientX, y: event.clientY };
+  }
+
+  function setMenuOpen(value: boolean): void {
+    menuOpen = value;
+    if (!value) menuAt = null;
+  }
+
+  // Focus that went back to a menu's button, or to whatever opened a
+  // dialog, belongs in the tree.
+  function backToTree(): void {
+    (tree ?? newCollection)?.focus();
+  }
+
+  function closeDialog(): void {
+    deleting = null;
+    moving = null;
+    // After the dialog has given the focus back.
+    void tick().then(backToTree);
+  }
+
+  function finishRename(): void {
+    void tick().then(() => {
+      const focused = document.activeElement;
+      if (!focused || focused === document.body) tree?.focus();
+    });
+  }
+
+  function rename(path: string, name: string): void {
+    void treeState.rename(path, name);
+    finishRename();
+  }
+
+  function cancelRename(): void {
+    treeState.renaming = null;
+    finishRename();
+  }
+
+  function confirmDelete(): void {
+    const row = deleting;
+    closeDialog();
+    if (row) void treeState.remove(row.path);
+  }
+
+  function moveTo(folder: string): void {
+    const row = moving;
+    closeDialog();
+    if (!row) return;
+    // To the end of the folder, which does not hold it now.
+    const index = treeState.itemsOf(folder)?.length ?? 0;
+    void treeState.move(row.path, folder, index);
+  }
+
+  /** Pixels from the top of the list. */
+  function listY(clientY: number): number {
+    if (!scroller) return clientY;
+    return clientY - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  }
+
+  function onRowPointerDown(event: PointerEvent, row: TreeRowData): void {
+    if (event.button !== 0) return;
+    drag.press(row, event.clientX, listY(event.clientY));
+  }
+
+  function onWindowPointerMove(event: PointerEvent): void {
+    if (drag.pressed) drag.point(event.clientX, listY(event.clientY), rows);
+  }
+
+  function onWindowPointerUp(event: PointerEvent): void {
+    if (!drag.pressed) return;
+    drag.point(event.clientX, listY(event.clientY), rows);
+    const dragged = drag.source !== null;
+    const drop = drag.release();
+    if (dragged) {
+      dragEnded = true;
+      setTimeout(() => (dragEnded = false));
+    }
+    if (drop) void treeState.move(drop.path, drop.folder, drop.index);
+  }
 </script>
 
-<svelte:window onkeydown={onWindowKeydown} />
+<svelte:window
+  onkeydown={onWindowKeydown}
+  onpointermove={onWindowPointerMove}
+  onpointerup={onWindowPointerUp}
+  onpointercancel={() => drag.cancel()}
+  onblur={() => drag.cancel()}
+/>
 
 <div class="sidebar">
   <div class="head">
@@ -171,6 +337,7 @@
       class="icon"
       aria-label="New request"
       title="New request"
+      onclick={() => void treeState.newRequest()}
     >
       <Plus size={16} strokeWidth={1.5} />
     </button>
@@ -191,16 +358,24 @@
   </div>
 
   {#if treeState.info && treeState.info.collections.length === 0}
-    <div class="empty">
+    <div class="empty" role="presentation" oncontextmenu={onAreaContextMenu}>
       <p>No requests yet</p>
-      <button type="button" class="action">New collection</button>
+      <button
+        type="button"
+        class="action"
+        bind:this={newCollection}
+        onclick={() => void treeState.newFolder(ROOT)}>New collection</button
+      >
     </div>
   {:else if treeState.info}
     <div
       class="scroller"
+      class:dragging={drag.source !== null}
+      role="presentation"
       bind:this={scroller}
       {@attach measure}
       onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
+      oncontextmenu={onAreaContextMenu}
     >
       <div class="spacer" style:height="{rows.length * ROW}px">
         <div
@@ -220,12 +395,89 @@
               {row}
               id="request-row-{start + i}"
               selected={row.path === treeState.selected}
+              dragging={row.path === drag.source?.path}
               onclick={() => onRowClick(start + i)}
+              onpointerdown={(e: PointerEvent) => onRowPointerDown(e, row)}
+              oncontextmenu={(e: MouseEvent) => onRowContextMenu(e, start + i)}
             />
           {/each}
         </div>
+        {#if active && !drag.source && active.path !== treeState.renaming}
+          <div class="actions" style:top="{activeIndex * ROW}px">
+            <TreeMenu
+              row={active}
+              bind:open={() => menuOpen, setMenuOpen}
+              at={menuAt}
+              onmove={(row: TreeRowData) => (moving = row)}
+              ondelete={(row: TreeRowData) => (deleting = row)}
+              onclose={backToTree}
+            />
+          </div>
+        {/if}
+        {#if renamingIndex >= 0 && rows[renamingIndex]}
+          {@const row = rows[renamingIndex]}
+          {#key row.path}
+            <div class="over" style:top="{renamingIndex * ROW}px">
+              <RenameRow
+                {row}
+                onrename={(name: string) => rename(row.path, name)}
+                oncancel={cancelRename}
+              />
+            </div>
+          {/key}
+        {/if}
+        {#if drag.drop?.line}
+          <div
+            class="drop-line"
+            data-drop="line"
+            aria-hidden="true"
+            style:top="{drag.drop.line.at * ROW}px"
+            style:left="calc(var(--s-2) + {drag.drop.line.depth * 14}px)"
+          ></div>
+        {:else if drag.drop?.into !== undefined}
+          <div
+            class="drop-into"
+            data-drop="into"
+            aria-hidden="true"
+            style:top="{drag.drop.into * ROW}px"
+          ></div>
+        {/if}
       </div>
     </div>
+  {/if}
+
+  {#if areaMenuAt}
+    <TreeMenu
+      row={null}
+      hidden
+      bind:open={
+        () => areaMenuAt !== null,
+        (value) => {
+          if (!value) areaMenuAt = null;
+        }
+      }
+      at={areaMenuAt}
+      onmove={() => {}}
+      ondelete={() => {}}
+      onclose={backToTree}
+    />
+  {/if}
+
+  {#if deleting}
+    <DeleteItem
+      row={deleting}
+      ondelete={confirmDelete}
+      oncancel={closeDialog}
+    />
+  {/if}
+
+  {#if moving}
+    <MoveItem
+      row={moving}
+      targets={treeState.moveTargets(moving.path)}
+      onmove={moveTo}
+      oncancel={closeDialog}
+    />
   {/if}
 
   <div class="envs">
@@ -349,6 +601,44 @@
 
   .tree {
     outline: none;
+  }
+
+  .scroller.dragging {
+    cursor: grabbing;
+  }
+
+  .over {
+    position: absolute;
+    left: 0;
+    right: 0;
+  }
+
+  .actions {
+    position: absolute;
+    right: var(--s-1);
+    height: 28px;
+    display: flex;
+    align-items: center;
+  }
+
+  .drop-line {
+    position: absolute;
+    right: 0;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 1px;
+    background: var(--focus);
+    pointer-events: none;
+  }
+
+  .drop-into {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 28px;
+    border-radius: var(--r-ctl);
+    box-shadow: inset 0 0 0 1px var(--focus);
+    pointer-events: none;
   }
 
   .tree:focus-visible {

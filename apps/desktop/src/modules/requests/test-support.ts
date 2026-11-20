@@ -10,6 +10,7 @@ import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { RequestLeaf } from "$lib/ipc/bindings/RequestLeaf";
 import type { RequestNode } from "$lib/ipc/bindings/RequestNode";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
+import type { IpcError } from "$lib/ipc/errors";
 
 export interface RequestsIpc {
   calls: [string, Record<string, unknown>][];
@@ -17,6 +18,8 @@ export interface RequestsIpc {
   /** The request files `save_request` wrote, by path. */
   files: Map<string, RequestFile>;
   folders: Map<string, FolderFile>;
+  /** Commands that reject, with the error each rejects with. */
+  failures: Map<string, IpcError>;
 }
 
 export function leaf(
@@ -101,6 +104,16 @@ function recount(node: RequestNode): number {
   return node.requestCount;
 }
 
+/** Gives a node, and everything in a folder, the path under `to`. */
+function repath(node: RequestNode, to: string): void {
+  const from = node.path;
+  const visit = (n: RequestNode) => {
+    n.path = to + n.path.slice(from.length);
+    if (n.kind === "folder") n.items.forEach(visit);
+  };
+  visit(node);
+}
+
 function slug(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "-");
 }
@@ -113,6 +126,7 @@ export function fakeRequestsIpc(
     tree: opts.tree ?? { collections: [], errors: [] },
     files: new Map(),
     folders: new Map(),
+    failures: new Map(),
   };
   if (opts.errors) ipc.tree.errors = opts.errors;
   const trash = new Map<
@@ -136,6 +150,10 @@ export function fakeRequestsIpc(
   mockIPC((cmd, raw) => {
     const args = (raw ?? {}) as Record<string, unknown>;
     ipc.calls.push([cmd, args]);
+    const failure = ipc.failures.get(cmd);
+    // Dea's commands reject with a plain { kind, message }.
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
+    if (failure) throw failure;
     switch (cmd) {
       case "request_tree":
         return structuredClone(ipc.tree);
@@ -192,10 +210,12 @@ export function fakeRequestsIpc(
         if (!node) return path;
         const name = args.name as string;
         node.name = name;
-        node.path =
+        repath(
+          node,
           node.kind === "folder"
             ? `${parentOf(path)}/${slug(name)}`
-            : `${parentOf(path)}/${slug(name)}.yaml`;
+            : `${parentOf(path)}/${slug(name)}.yaml`,
+        );
         return node.path;
       }
       case "duplicate_request_item": {
@@ -206,7 +226,7 @@ export function fakeRequestsIpc(
         if (!original) return path;
         const copy = structuredClone(original);
         copy.name = `${copy.name} copy`;
-        copy.path = path.replace(/(\.yaml)?$/, "-copy$1");
+        repath(copy, path.replace(/(\.yaml)?$/, "-copy$1"));
         hit.list.splice(hit.index + 1, 0, copy);
         refresh();
         return copy.path;
@@ -218,7 +238,10 @@ export function fakeRequestsIpc(
         if (!hit || !target) return path;
         const [node] = hit.list.splice(hit.index, 1);
         if (!node) return path;
-        node.path = `${args.folder as string}/${path.slice(path.lastIndexOf("/") + 1)}`;
+        repath(
+          node,
+          `${args.folder as string}/${path.slice(path.lastIndexOf("/") + 1)}`,
+        );
         target.splice(args.index as number, 0, node);
         refresh();
         return node.path;

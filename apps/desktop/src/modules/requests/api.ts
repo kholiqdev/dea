@@ -1,3 +1,12 @@
 // The Requests module's calls to Dea.
 
-export { requestTree } from "$lib/ipc/requests";
+export {
+  createFolder,
+  createRequest,
+  deleteRequestItem,
+  duplicateRequestItem,
+  moveRequestItem,
+  renameRequestItem,
+  requestTree,
+  restoreRequestItem,
+} from "$lib/ipc/requests";
