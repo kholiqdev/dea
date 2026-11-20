@@ -48,6 +48,22 @@ function typingIn(target: EventTarget | null): boolean {
   );
 }
 
+/** Runs the newest toast action bound to `chord`; whether one ran. */
+function runToastChord(chord: Chord): boolean {
+  const toast = toasts.items.findLast((t) => {
+    if (!t.action?.chord) return false;
+    try {
+      return sameChord(parseChord(t.action.chord), chord);
+    } catch {
+      return false;
+    }
+  });
+  if (!toast?.action) return false;
+  toast.action.run();
+  toasts.dismiss(toast.id);
+  return true;
+}
+
 /**
  * A keydown handler for `window` (capture phase) that runs the command
  * bound to the pressed chord. Call while a component initialises, so the
@@ -78,6 +94,11 @@ export function createHotkeyHandler(
     if (!chord) return;
     // Plain keys belong to whatever the person is typing in.
     if (!chord.mod && !chord.alt && typingIn(e.target)) return;
+    if (!typingIn(e.target) && runToastChord(chord)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const hit = parsed.find((b) => sameChord(b.chord, chord));
     const command = hit
       ? ctx.registry.commands.find((c) => c.id === hit.command)

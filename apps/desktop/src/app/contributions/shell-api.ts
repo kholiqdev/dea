@@ -17,8 +17,16 @@ export interface ShellApi {
     params: unknown,
     opts?: OpenTabOptions,
   ): string;
-  /** The id of an open tab of `tabType`, if there is one. */
-  findTab(tabType: string): string | undefined;
+  /**
+   * The id of an open tab of `tabType`, if there is one. With `match`, the
+   * first such tab whose params it accepts.
+   */
+  findTab(
+    tabType: string,
+    match?: (params: unknown) => boolean,
+  ): string | undefined;
+  /** Changes a tab's title or params without remounting its view. */
+  updateTab(id: string, patch: { title?: string; params?: unknown }): void;
   /** Shows an open tab; false when no tab has that id. */
   activateTab(id: string): boolean;
   /** Closes a tab, asking first when it has unsaved changes. */
@@ -32,8 +40,19 @@ export interface ShellApi {
   openModule(id: string): Promise<void>;
   /** Runs a registered command, as its shortcut would. */
   runCommand(id: string): Promise<void>;
-  /** Shows a short notice at the bottom of the window. */
-  toast(text: string): void;
+  /**
+   * Shows a short notice at the bottom of the window and returns its id. An
+   * action may have a chord, which runs it while the notice shows and no
+   * text field has the focus.
+   */
+  toast(
+    text: string,
+    opts?: {
+      action?: { label: string; run: () => void; chord?: string };
+      timeout?: number;
+    },
+  ): number;
+  dismissToast(id: number): void;
 }
 
 let current: ShellApi | null = null;

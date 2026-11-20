@@ -260,6 +260,11 @@
     "TabTypeData": {
       "additionalProperties": false,
       "properties": {
+        "environment": {
+          "const": "window",
+          "description": "`\"window\"`: the tab shows the window's active environment, and follows it when it changes.",
+          "type": "string"
+        },
         "icon": {
           "type": "string"
         },

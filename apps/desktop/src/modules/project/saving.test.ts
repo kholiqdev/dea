@@ -60,12 +60,14 @@ beforeEach(() => {
       return "t";
     },
     findTab: () => undefined,
+    updateTab: () => {},
     activateTab: () => true,
     closeTab: () => Promise.resolve(true),
     setTabDirty: () => {},
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
-    toast: () => {},
+    toast: () => 0,
+    dismissToast: () => {},
     runCommand: () => Promise.resolve(),
   });
   clearMocks();

@@ -2,8 +2,10 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test } from "vitest";
 import { settings } from "$lib/settings/settings.svelte";
+import { toasts } from "../prompts/toasts.svelte";
 import { closeQuestion } from "../prompts/confirm-close.svelte";
 import { Tabs } from "../tabs/tabs.svelte";
+import { shellModule } from "./shell-module";
 import ShellView from "./Shell.svelte";
 import { Shell } from "./shell-state.svelte";
 import {
@@ -207,4 +209,96 @@ test("marking a tab dirty keeps its view mounted", async () => {
   await new Promise((resolve) => setTimeout(resolve, 10));
   expect(screen.getByText("notes view")).toBeInTheDocument();
   expect(mounts).toBe(1);
+});
+
+function setupWithShellCommands(...modules: Parameters<typeof registryWith>) {
+  const registry = registryWith(...modules);
+  const shell = new Shell(registry);
+  const tabs = new Tabs(registry, shell, { confirmClose: closeQuestion.ask });
+  const project = openProject();
+  registry.register(shellModule(shell, tabs, project));
+  render(ShellView, { registry, shell, tabs, project });
+  return { registry, shell, tabs };
+}
+
+const noteModule = () =>
+  railModule("notes", 1, {
+    tabTypes: [
+      { id: "notes.note", title: "Note", icon: "file", view: view("notes") },
+    ],
+  });
+
+test("Mod+S saves the active tab through its type's save handler", async () => {
+  const saved: string[] = [];
+  const { tabs } = setupWithShellCommands(noteModule());
+  tabs.setSaveHandler("notes.note", (id) => {
+    saved.push(id);
+    return Promise.resolve();
+  });
+  const id = tabs.open("notes.note", "Note", null);
+  await userEvent.keyboard("{Control>}s{/Control}");
+  await waitFor(() => expect(saved).toEqual([id]));
+});
+
+test("Mod+S does nothing for a tab type without a save handler", async () => {
+  const { tabs } = setupWithShellCommands(noteModule());
+  tabs.open("notes.note", "Note", null);
+  await userEvent.keyboard("{Control>}s{/Control}");
+  expect(tabs.tabs).toHaveLength(1);
+});
+
+test("a toast action runs from its chord while no field has focus", async () => {
+  setup(noteModule());
+  let undone = 0;
+  const id = toasts.show("Deleted Update status", {
+    action: { label: "Undo", run: () => undone++, chord: "Mod+Z" },
+    timeout: 10_000,
+  });
+  expect(await screen.findByText(/Ctrl\+Z/)).toBeInTheDocument();
+  await userEvent.keyboard("{Control>}z{/Control}");
+  expect(undone).toBe(1);
+  expect(toasts.items.some((t) => t.id === id)).toBe(false);
+});
+
+test("a toast chord is ignored while typing", async () => {
+  setup(noteModule());
+  let undone = 0;
+  const id = toasts.show("Deleted Update status", {
+    action: { label: "Undo", run: () => undone++, chord: "Mod+Z" },
+    timeout: 10_000,
+  });
+  const field = document.createElement("input");
+  document.body.append(field);
+  field.focus();
+  await userEvent.keyboard("{Control>}z{/Control}");
+  expect(undone).toBe(0);
+  field.remove();
+  toasts.dismiss(id);
+});
+
+test("window environment tabs follow the active environment", async () => {
+  const registry = registryWith(
+    railModule("notes", 1, {
+      tabTypes: [
+        {
+          id: "notes.note",
+          title: "Note",
+          icon: "file",
+          view: view("notes"),
+          environment: "window",
+        },
+      ],
+    }),
+  );
+  const shell = new Shell(registry);
+  const tabs = new Tabs(registry, shell, { confirmClose: closeQuestion.ask });
+  const project = openProject();
+  await project.setEnvironment("staging");
+  render(ShellView, { registry, shell, tabs, project });
+  tabs.open("notes.note", "Note", null);
+  const pill = await screen.findByText("staging", { selector: ".tab-env" });
+  expect(pill).not.toHaveClass("env-prod");
+  await project.setEnvironment("production");
+  const prod = await screen.findByText("production", { selector: ".tab-env" });
+  expect(prod).toHaveClass("env-prod");
 });

@@ -46,7 +46,6 @@ export const manifest: ModuleManifest = {
       action: { type: "openModule", module: "project" },
     },
   ],
-  shortcuts: [{ command: "project.saveEnvironments", chord: "Mod+S" }],
   searchSources: [
     {
       id: "project.searchEnvironments",

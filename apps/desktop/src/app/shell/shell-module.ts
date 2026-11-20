@@ -68,6 +68,13 @@ export function shellModule(
       run: () => (tabs.active ? tabs.close(tabs.active.id) : undefined),
     },
     {
+      id: "shell.save",
+      title: "Save",
+      chord: "Mod+S",
+      scope: "project",
+      run: () => tabs.saveActive(),
+    },
+    {
       id: "shell.reopenTab",
       title: "Reopen closed tab",
       chord: "Mod+Shift+T",

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from "@dea/ui/Button.svelte";
+  import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
   import { toasts } from "./toasts.svelte";
 </script>
 
@@ -9,13 +10,19 @@
       <span>{toast.text}</span>
       {#if toast.action}
         {@const action = toast.action}
+        {@const chord = action.chord
+          ? formatChordText(action.chord, currentPlatform())
+          : null}
         <Button
           size="small"
           onclick={() => {
             action.run();
             toasts.dismiss(toast.id);
-          }}>{action.label}</Button
+          }}
         >
+          {action.label}
+          {#if chord}<kbd class="kc">{chord}</kbd>{/if}
+        </Button>
       {/if}
     </div>
   {/each}

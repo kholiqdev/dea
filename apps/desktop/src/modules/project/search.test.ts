@@ -27,13 +27,15 @@ beforeEach(() => {
   setShellApi({
     openTab: () => "t",
     findTab: () => undefined,
+    updateTab: () => {},
     activateTab: () => true,
     closeTab: () => Promise.resolve(true),
     setTabDirty: () => {},
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
     runCommand: () => Promise.resolve(),
-    toast: (text) => void toasts.push(text),
+    toast: (text) => toasts.push(text),
+    dismissToast: () => {},
   });
 });
 

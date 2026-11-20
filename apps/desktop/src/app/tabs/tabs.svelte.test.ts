@@ -243,3 +243,28 @@ test("marking a tab dirty again changes nothing", () => {
   // Views that report their state on every change rely on this to settle.
   expect(tabs.tabs).toBe(before);
 });
+
+test("update changes the title and params", () => {
+  const { tabs } = setup();
+  const id = tabs.open("requests.request", "Old", { n: 1 });
+  tabs.update(id, { title: "New" });
+  expect(tabs.tabs[0]).toMatchObject({ title: "New", params: { n: 1 } });
+  tabs.update(id, { params: { n: 2 } });
+  expect(tabs.tabs[0]).toMatchObject({ title: "New", params: { n: 2 } });
+  expect(tabs.snapshot().tabs[0]).toMatchObject({
+    title: "New",
+    params: { n: 2 },
+  });
+});
+
+test("find matches on params", () => {
+  const { tabs } = setup();
+  const a = tabs.open("requests.request", "A", { id: "a" });
+  const b = tabs.open("requests.request", "B", { id: "b" });
+  const match = (want: string) => (p: unknown) =>
+    (p as { id: string }).id === want;
+  expect(tabs.find("requests.request")).toBe(a);
+  expect(tabs.find("requests.request", match("b"))).toBe(b);
+  expect(tabs.find("requests.request", match("c"))).toBeUndefined();
+  expect(tabs.find("database.query")).toBeUndefined();
+});

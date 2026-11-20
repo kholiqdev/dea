@@ -59,12 +59,14 @@ beforeEach(() => {
   setShellApi({
     openTab: () => "t",
     findTab: () => undefined,
+    updateTab: () => {},
     activateTab: () => true,
     closeTab: () => Promise.resolve(true),
     setTabDirty: (id, d) => (dirty[id] = d),
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
-    toast: () => {},
+    toast: () => 0,
+    dismissToast: () => {},
     runCommand: () => Promise.resolve(),
   });
   clearMocks();

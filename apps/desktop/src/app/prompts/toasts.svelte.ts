@@ -4,6 +4,8 @@
 export interface ToastAction {
   label: string;
   run: () => void;
+  /** A chord such as `Mod+Z` that runs the action while the toast shows. */
+  chord?: string;
 }
 
 export interface Toast {
