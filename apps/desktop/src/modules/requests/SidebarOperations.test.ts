@@ -329,6 +329,8 @@ test("menus offer what fits the item", async () => {
     "Rename",
     "Duplicate",
     "Move to…",
+    "Move up  Alt+ArrowUp",
+    "Move down  Alt+ArrowDown",
     "Collection settings",
     "Delete…",
   ]);
@@ -339,6 +341,8 @@ test("menus offer what fits the item", async () => {
     "Rename",
     "Duplicate",
     "Move to…",
+    "Move up  Alt+ArrowUp",
+    "Move down  Alt+ArrowDown",
     "Folder settings",
     "Delete…",
   ]);
@@ -347,6 +351,8 @@ test("menus offer what fits the item", async () => {
     "Rename",
     "Duplicate",
     "Move to…",
+    "Move up  Alt+ArrowUp",
+    "Move down  Alt+ArrowDown",
     "Delete…",
   ]);
   await userEvent.keyboard("{Escape}");
@@ -624,6 +630,97 @@ test("move dialog moves with the keyboard", async () => {
     expect(row("List shipments")).toHaveAttribute("aria-selected", "true"),
   );
   expect(row("Carriers")).toHaveAttribute("aria-expanded", "true");
+});
+
+const moveUp = () => screen.getByRole("menuitem", { name: /^Move up/ });
+const moveDown = () => screen.getByRole("menuitem", { name: /^Move down/ });
+
+test("Move up and Move down move an item one place, but not past the ends", async () => {
+  const ipc = fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  await openMenu("Update status");
+  await userEvent.click(moveUp());
+  expect(calls(ipc, "move_request_item")).toEqual([
+    {
+      path: "requests/shipments/update-status.yaml",
+      folder: "requests/shipments",
+      index: 0,
+    },
+  ]);
+  await waitFor(() =>
+    expect(rowNames().slice(0, 4)).toEqual([
+      "Shipments3",
+      "PATCHUpdate status",
+      "GETList shipments",
+      "POSTCreate shipment",
+    ]),
+  );
+  expect(row("Update status")).toHaveAttribute("aria-selected", "true");
+
+  // The first item cannot go up, the last cannot go down.
+  await openMenu("Update status");
+  expect(moveUp()).toBeDisabled();
+  expect(moveDown()).toBeEnabled();
+  await userEvent.keyboard("{Escape}");
+  await openMenu("Create shipment");
+  expect(moveUp()).toBeEnabled();
+  expect(moveDown()).toBeDisabled();
+  await userEvent.keyboard("{Escape}");
+
+  await openMenu("List shipments");
+  await userEvent.click(moveDown());
+  expect(calls(ipc, "move_request_item").at(-1)).toEqual({
+    path: "requests/shipments/list.yaml",
+    folder: "requests/shipments",
+    index: 2,
+  });
+  await waitFor(() =>
+    expect(rowNames().slice(1, 4)).toEqual([
+      "PATCHUpdate status",
+      "POSTCreate shipment",
+      "GETList shipments",
+    ]),
+  );
+});
+
+test("Alt+ArrowUp and Alt+ArrowDown move the selected row, collections too", async () => {
+  const ipc = fakeRequestsIpc({ tree: shipments() });
+  const tree = await showTree();
+  await userEvent.click(row("List shipments"));
+  expect(tree).toHaveFocus();
+
+  // Already first: nothing to do.
+  await userEvent.keyboard("{Alt>}{ArrowUp}{/Alt}");
+  expect(calls(ipc, "move_request_item")).toEqual([]);
+  await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+  expect(calls(ipc, "move_request_item")).toEqual([
+    {
+      path: "requests/shipments/list.yaml",
+      folder: "requests/shipments",
+      index: 1,
+    },
+  ]);
+  await waitFor(() =>
+    expect(rowNames().slice(1, 3)).toEqual([
+      "PATCHUpdate status",
+      "GETList shipments",
+    ]),
+  );
+  expect(row("List shipments")).toHaveAttribute("aria-selected", "true");
+  expect(tree).toHaveFocus();
+
+  // A collection moves among the collections.
+  await userEvent.keyboard("{Home}{Alt>}{ArrowDown}{/Alt}");
+  expect(calls(ipc, "move_request_item").at(-1)).toEqual({
+    path: "requests/shipments",
+    folder: "requests",
+    index: 1,
+  });
+  await waitFor(() => expect(rowNames()[0]).toBe("Tracking2"));
+  expect(row("Shipments")).toHaveAttribute("aria-selected", "true");
+  // Now last: nothing to do.
+  await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+  expect(calls(ipc, "move_request_item")).toHaveLength(2);
 });
 
 test("the move dialog has Cancel and Move buttons", async () => {
