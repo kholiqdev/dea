@@ -490,7 +490,8 @@ fn unquoted_scalars_in_body_and_auth_are_text() {
     let root = dir.path();
     let head = "name: R\nmethod: POST\nurl: http://h\n";
     let scalars = "    - name: 7\n      value: 20\n    - name: b\n      value: true\n    \
-                   - name: e\n      value:\n    - name: z\n      value: 007\n";
+                   - name: e\n      value:\n    - name: z\n      value: 007\n    \
+                   - name: n\n      value: null\n";
     write(
         root,
         "requests/a/urlencoded.yaml",
@@ -524,7 +525,13 @@ fn unquoted_scalars_in_body_and_auth_are_text() {
     );
     write(root, "requests/b/r.yaml", &simple("r"));
 
-    let expected = [("7", "20"), ("b", "true"), ("e", ""), ("z", "007")];
+    let expected = [
+        ("7", "20"),
+        ("b", "true"),
+        ("e", ""),
+        ("z", "007"),
+        ("n", "null"),
+    ];
     let urlencoded = load_one(root, "requests/a/urlencoded.yaml");
     let Some(Body::Urlencoded { fields }) = &urlencoded.body else {
         panic!("{:?}", urlencoded.body);
@@ -594,9 +601,253 @@ fn unquoted_scalars_in_body_and_auth_are_text() {
         "value: '20'",
         "value: 'true'",
         "value: ''",
+        "value: 'null'",
         "value: '12345'",
     ] {
         assert!(saved.contains(quoted), "{quoted} in {saved}");
     }
     assert_eq!(load_one(root, "requests/a/urlencoded.yaml"), urlencoded);
+}
+
+/// Scalars that YAML reads as numbers or booleans, in forms that would come
+/// back different if they were read as such.
+const LOOKALIKES: [&str; 7] = [
+    "1.50",
+    "10.00",
+    "0x1F",
+    "0o17",
+    "TRUE",
+    "1e3",
+    "123456789012345678901234567890",
+];
+
+#[test]
+fn every_text_in_body_and_auth_reads_as_written() {
+    let mut wrong = Vec::new();
+    for v in LOOKALIKES {
+        let dir = tempfile::tempdir().unwrap();
+        let project = project(dir.path());
+        let root = dir.path();
+        let head = "name: R\nmethod: POST\nurl: http://h\n";
+        let files = [
+            (
+                "urlencoded",
+                format!(
+                    "{head}body:\n  mode: urlencoded\n  fields:\n  \
+                     - name: {v}\n    value: {v}\n    description: {v}\n\
+                     auth:\n  type: apiKey\n  key: {v}\n  value: {v}\n  in: header\n"
+                ),
+            ),
+            (
+                "form",
+                format!(
+                    "{head}body:\n  mode: formData\n  fields:\n  \
+                     - name: {v}\n    value: {v}\n    contentType: {v}\n    description: {v}\n  \
+                     - name: f\n    file: {v}\n\
+                     auth:\n  type: basic\n  username: {v}\n  password: {v}\n"
+                ),
+            ),
+            (
+                "json",
+                format!(
+                    "{head}body:\n  mode: json\n  text: {v}\nauth:\n  type: bearer\n  token: {v}\n"
+                ),
+            ),
+            (
+                "raw",
+                format!("{head}body:\n  mode: raw\n  language: text\n  text: {v}\n"),
+            ),
+            (
+                "binary",
+                format!("{head}body:\n  mode: binary\n  file: {v}\n"),
+            ),
+        ];
+        for (name, text) in &files {
+            write(root, &format!("requests/a/{name}.yaml"), text);
+        }
+        write(
+            root,
+            "requests/a/_folder.yaml",
+            &format!("auth:\n  type: apiKey\n  key: k\n  value: {v}\n  in: query\n"),
+        );
+
+        let loaded = load_requests(root).unwrap();
+        for error in &loaded.errors {
+            wrong.push(format!("{v}: {error}"));
+        }
+        let Some(folder) = loaded.tree.collections.first() else {
+            continue;
+        };
+        let folder_auth = Auth::ApiKey {
+            key: "k".into(),
+            value: v.into(),
+            location: ApiKeyLocation::Query,
+        };
+        if folder.settings.auth != folder_auth {
+            wrong.push(format!(
+                "{v}: _folder.yaml auth is {:?}",
+                folder.settings.auth
+            ));
+        }
+        let row = KeyValue {
+            description: Some(v.into()),
+            ..kv(v, v)
+        };
+        let expected = [
+            (
+                "urlencoded",
+                Body::Urlencoded { fields: vec![row] },
+                Auth::ApiKey {
+                    key: v.into(),
+                    value: v.into(),
+                    location: ApiKeyLocation::Header,
+                },
+            ),
+            (
+                "form",
+                Body::FormData {
+                    fields: vec![
+                        FormField {
+                            name: v.into(),
+                            value: Some(v.into()),
+                            file: None,
+                            content_type: Some(v.into()),
+                            description: Some(v.into()),
+                            enabled: true,
+                        },
+                        FormField {
+                            name: "f".into(),
+                            value: None,
+                            file: Some(v.into()),
+                            content_type: None,
+                            description: None,
+                            enabled: true,
+                        },
+                    ],
+                },
+                Auth::Basic {
+                    username: v.into(),
+                    password: v.into(),
+                },
+            ),
+            (
+                "json",
+                Body::Json { text: v.into() },
+                Auth::Bearer { token: v.into() },
+            ),
+            (
+                "raw",
+                Body::Raw {
+                    language: RawLanguage::Text,
+                    text: v.into(),
+                },
+                Auth::Inherit,
+            ),
+            ("binary", Body::Binary { file: v.into() }, Auth::Inherit),
+        ];
+        for (name, body, auth) in expected {
+            let rel = format!("requests/a/{name}.yaml");
+            let Some(found) = loaded.tree.find(Path::new(&rel)) else {
+                continue;
+            };
+            let request = &found.entry.request;
+            if request.body.as_ref() != Some(&body) || request.auth != auth {
+                wrong.push(format!(
+                    "{v}: {name} has {:?} and {:?}",
+                    request.body, request.auth
+                ));
+                continue;
+            }
+            // Saving writes the same text, quoted.
+            save_request(&project, Path::new(&rel), request).unwrap();
+            let saved = fs::read_to_string(root.join(&rel)).unwrap();
+            if !saved.contains(&format!("'{v}'")) || saved.contains(&format!(" {v}\n")) {
+                wrong.push(format!("{v}: {name} is saved as {saved}"));
+            }
+            let again = load_requests(root).unwrap();
+            let reloaded = again.tree.find(Path::new(&rel)).map(|l| &l.entry.request);
+            if reloaded != Some(request) {
+                wrong.push(format!("{v}: {name} reloads as {reloaded:?}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The message of the one error from loading a request ending in `tail`.
+fn load_error(tail: &str) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(
+        root,
+        "requests/a/r.yaml",
+        &format!("name: R\nmethod: POST\nurl: http://h\n{tail}"),
+    );
+    let loaded = load_requests(root).unwrap();
+    assert_eq!(loaded.tree.requests().count(), 0, "{tail}");
+    assert_eq!(loaded.errors.len(), 1, "{tail}: {:?}", loaded.errors);
+    assert_eq!(loaded.errors[0].path, Path::new("requests/a/r.yaml"));
+    loaded.errors[0].message.clone()
+}
+
+#[test]
+fn fields_of_another_mode_or_type_are_refused() {
+    for (tail, field) in [
+        (
+            "body:\n  mode: urlencoded\n  fields: []\n  text: x\n",
+            "text",
+        ),
+        (
+            "body:\n  mode: json\n  text: x\n  language: xml\n",
+            "language",
+        ),
+        ("body:\n  mode: binary\n  file: f\n  fields: []\n", "fields"),
+        (
+            "body:\n  mode: urlencoded\n  fields:\n  - name: a\n    value: b\n    file: c\n",
+            "file",
+        ),
+        (
+            "body:\n  mode: urlencoded\n  fields:\n  - name: a\n    value: b\n    contentType: c\n",
+            "contentType",
+        ),
+        (
+            "auth:\n  type: bearer\n  token: t\n  username: u\n",
+            "username",
+        ),
+        (
+            "auth:\n  type: basic\n  username: u\n  password: p\n  token: t\n",
+            "token",
+        ),
+        ("auth:\n  type: bearer\n  token: t\n  in: query\n", "in"),
+        ("auth:\n  type: none\n  token: t\n", "token"),
+    ] {
+        let message = load_error(tail);
+        assert!(
+            message.contains(&format!("unknown field `{field}`")),
+            "{tail}: {message}"
+        );
+    }
+}
+
+#[test]
+fn missing_required_fields_are_refused() {
+    for (tail, field) in [
+        ("body:\n  mode: json\n", "text"),
+        ("body:\n  mode: raw\n  text: x\n", "language"),
+        ("body:\n  mode: urlencoded\n", "fields"),
+        (
+            "body:\n  mode: urlencoded\n  fields:\n  - name: a\n",
+            "value",
+        ),
+        ("body:\n  mode: formData\n  fields:\n  - value: a\n", "name"),
+        ("auth:\n  type: apiKey\n  key: k\n  value: v\n", "in"),
+        ("auth:\n  type: basic\n  username: u\n", "password"),
+        ("auth:\n  token: t\n", "type"),
+    ] {
+        let message = load_error(tail);
+        assert!(
+            message.contains(&format!("missing field `{field}`")),
+            "{tail}: {message}"
+        );
+    }
 }
