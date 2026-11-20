@@ -7,7 +7,12 @@ import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
 import type { TlsSettings } from "$lib/ipc/bindings/TlsSettings";
 import { readFolder, saveFolder } from "../api";
 import { normalized, written } from "./drafts.svelte";
-import { openTabs, SyncedFile, syncedFor } from "./synced-file.svelte";
+import {
+  openTabs,
+  SyncedFile,
+  syncedFor,
+  watchDisk,
+} from "./synced-file.svelte";
 
 /** What a request uses when no folder and no request says otherwise. */
 export const DEFAULT_OPTIONS: OptionsInfo = {
@@ -81,6 +86,10 @@ export class RequestFolderState extends SyncedFile<FolderFile> {
   draft = $state<FolderFile>({});
   /** What the folders above set for the network options, else the defaults. */
   inherited = $state.raw<OptionsInfo>(DEFAULT_OPTIONS);
+
+  get noun(): string {
+    return this.isCollection ? "collection" : "folder";
+  }
 
   protected snapshot(): FolderFile {
     return $state.snapshot(this.draft);
@@ -201,8 +210,23 @@ export function pruneFolderStates(): void {
     }
 }
 
+/**
+ * Looks at the folders a change on disk touched, shown or not: their own
+ * file, or one above that they inherit from.
+ */
+function followDisk(changed: readonly string[]): void {
+  pruneFolderStates();
+  const settings = changed.some((p) => p.endsWith("/_folder.yaml"));
+  for (const state of folderStates.values()) {
+    const own = `${state.path}/_folder.yaml`;
+    if (changed.some((p) => p === own || p === state.path)) void state.check();
+    if (settings) void state.loadInherited();
+  }
+}
+
 /** The state of the folder tab `id` as it is shown. */
 export function folderStateFor(id: string, path: string): RequestFolderState {
+  watchDisk(followDisk);
   pruneFolderStates();
   const state = syncedFor(
     folderStates,

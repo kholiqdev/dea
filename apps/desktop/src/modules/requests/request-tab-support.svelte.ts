@@ -24,6 +24,8 @@ export class FakeShell implements ShellApi {
   toasts: string[] = [];
   /** Every tab closeTab was asked to close. */
   closing: string[] = [];
+  /** Every tab activateTab was asked to show. */
+  activated: string[] = [];
   #opened = 0;
 
   tab(id: string): FakeTab {
@@ -69,6 +71,7 @@ export class FakeShell implements ShellApi {
   }
 
   activateTab(id: string): boolean {
+    this.activated.push(id);
     return this.tabs.some((t) => t.id === id);
   }
 

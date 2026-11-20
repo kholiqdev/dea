@@ -12,16 +12,13 @@
   /** What the banner needs of a draft: a request's, or a folder's. */
   interface Outside {
     outside: "changed" | "deleted" | null;
+    noun: string;
     keepMine(): void;
     takeTheirs(): Promise<void>;
-    save(): Promise<void>;
+    saveAgain(): Promise<void>;
   }
 
-  let {
-    draft,
-    onclose,
-    noun = "request",
-  }: { draft: Outside; onclose: () => void; noun?: string } = $props();
+  let { draft, onclose }: { draft: Outside; onclose: () => void } = $props();
 
   function attempt(action: Promise<void>): void {
     action.catch((e: unknown) => shellApi().toast(errorMessage(e)));
@@ -40,17 +37,17 @@
         size={16}
         strokeWidth={1.5}
       />{/snippet}
-    This {noun} changed on disk.
+    This {draft.noun} changed on disk.
   </FileBanner>
 {:else if draft.outside === "deleted"}
   <FileBanner
     tone="warning"
     actions={[
-      { label: "Save again", onclick: () => attempt(draft.save()) },
+      { label: "Save again", onclick: () => attempt(draft.saveAgain()) },
       { label: "Close tab", variant: "ghost", onclick: onclose },
     ]}
   >
     {#snippet icon()}<FileX size={16} strokeWidth={1.5} />{/snippet}
-    This {noun} was deleted on disk.
+    This {draft.noun} was deleted on disk.
   </FileBanner>
 {/if}

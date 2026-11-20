@@ -223,6 +223,72 @@ test("keep mine keeps the edits and saves them over the disk", async () => {
   });
 });
 
+test("a tab that is not shown learns of a change on disk at once", async () => {
+  const ipc = shipmentsIpc();
+  const { id, unmount } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "/events");
+  unmount();
+
+  ipc.files.set(BY_ID, { ...byId(), method: "POST" });
+  project.change([BY_ID]);
+  await waitFor(() => expect(drafts.get(id)?.outside).toBe("changed"));
+});
+
+test("Save from the close dialog does not write over a change on disk", async () => {
+  const ipc = shipmentsIpc();
+  const { id, unmount } = openRequestTab(BY_ID);
+  await userEvent.type(await urlField(), "/events");
+  unmount();
+  ipc.files.set(BY_ID, { ...byId(), method: "POST" });
+  project.change([BY_ID]);
+  await waitFor(() => expect(drafts.get(id)?.outside).toBe("changed"));
+
+  // The shell keeps a tab open when its save rejects.
+  await expect(shell.save(id)).rejects.toThrow(
+    "This request changed on disk. Choose Keep mine or Take theirs first.",
+  );
+  expect(calls(ipc, "save_request")).toEqual([]);
+  expect(ipc.files.get(BY_ID)?.method).toBe("POST");
+  // The tab is shown, so its banner can be answered.
+  expect(shell.activated).toEqual([id]);
+
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Keep mine" }),
+  );
+  await shell.save(id);
+  expect(ipc.files.get(BY_ID)).toMatchObject({
+    method: "GET",
+    url: `${BASE}/events`,
+  });
+});
+
+test("a rename that keeps the file name is kept when a hidden tab saves", async () => {
+  const path = "requests/shipments/get-user.yaml";
+  const ipc = fakeRequestsIpc({
+    tree: {
+      collections: [
+        folder("requests/shipments", "Shipments", [
+          leaf(path, "get user", "GET", BASE),
+        ]),
+      ],
+      errors: [],
+    },
+    files: { [path]: { name: "get user", method: "GET", url: BASE } },
+  });
+  const { id, unmount } = openRequestTab(path, "get user");
+  await userEvent.type(await urlField(), "/events");
+  unmount();
+
+  await treeState.rename(path, "Get user");
+  expect(shell.tab(id).params.path).toBe(path);
+  await shell.save(id);
+  expect(calls(ipc, "save_request").at(-1)).toMatchObject({
+    path,
+    request: { name: "Get user", url: `${BASE}/events` },
+  });
+});
+
 test("clean_draft_reloads_silently_on_outside_change", async () => {
   const ipc = shipmentsIpc();
   const { id } = openRequestTab(BY_ID, "Shipment by ID");

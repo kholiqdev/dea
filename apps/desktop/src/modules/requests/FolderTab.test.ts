@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test } from "vitest";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
 import { openFolderTab, setUpRequestTabs } from "./request-tab-support.svelte";
+import { folderStates } from "./state/folders.svelte";
 import { resetTreeState, treeState } from "./state/tree.svelte";
 import {
   fakeRequestsIpc,
@@ -28,10 +29,11 @@ function tree(): RequestTreeInfo {
 }
 
 let shell: ReturnType<typeof setUpRequestTabs>["shell"];
+let project: ReturnType<typeof setUpRequestTabs>["project"];
 
 beforeEach(() => {
   resetTreeState();
-  ({ shell } = setUpRequestTabs());
+  ({ shell, project } = setUpRequestTabs());
 });
 
 async function setUp(secrets: string[] = []): Promise<RequestsIpc> {
@@ -204,6 +206,28 @@ test("a rename from the sidebar keeps its name while the tab has edits", async (
     name: "Cargo",
     headers: [{ name: "X-Team" }],
   });
+});
+
+test("a folder tab that is not shown learns of a change on disk and is not saved over it", async () => {
+  const ipc = await setUp();
+  const { id, unmount } = openFolderTab(SHIPMENTS, "Shipments");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add header" }),
+  );
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Header of row 1" }),
+    "X-Team",
+  );
+  unmount();
+
+  ipc.folders.set(SHIPMENTS, { variables: [{ name: "region", value: "eu" }] });
+  project.change([`${SHIPMENTS}/_folder.yaml`]);
+  await waitFor(() => expect(folderStates.get(id)?.outside).toBe("changed"));
+  await expect(shell.save(id)).rejects.toThrow(
+    "This collection changed on disk. Choose Keep mine or Take theirs first.",
+  );
+  expect(ipc.calls.filter(([c]) => c === "save_folder")).toEqual([]);
+  expect(shell.activated).toEqual([id]);
 });
 
 test("a new request keeps the folder's order while the tab has edits", async () => {
