@@ -132,7 +132,11 @@ function same(a: Environment, b: Environment): boolean {
 export class EnvironmentDraft {
   #saved = $state.raw<Environment | null>(null);
   draft = $state<Environment>({ name: "", production: false });
-  dirty = $derived(!this.#saved || !same(this.draft, this.#saved));
+  // Getters, not `$derived`: the editor outlives the tab that first made
+  // it, and a derived made inside that tab stops updating once it closes.
+  get dirty(): boolean {
+    return !this.#saved || !same(this.draft, this.#saved);
+  }
   /** The file it was read from, relative to the project. */
   file = $state<string | null>(null);
   /** Set while a change outside Dea waits for a decision. */
@@ -211,7 +215,9 @@ export class EnvironmentsEditor {
   drafts = $state.raw<EnvironmentDraft[]>([]);
   selected = $state<EnvironmentDraft | null>(null);
   error = $state<string | null>(null);
-  dirty = $derived(this.drafts.some((d) => d.dirty));
+  get dirty(): boolean {
+    return this.drafts.some((d) => d.dirty);
+  }
 
   constructor(info: ProjectInfo | null) {
     this.load(info);

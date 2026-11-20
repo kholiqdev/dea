@@ -194,3 +194,37 @@ test("renaming the window's environment keeps the window on it", async () => {
     ),
   ).toBeInTheDocument();
 });
+
+test("the first variable of an environment without any can be saved", async () => {
+  project.info = projectWith([
+    env("local", "http://localhost:8080"),
+    { name: "staging", production: false },
+  ]);
+  resetEnvironmentsEditor();
+  // Leaving the module and coming back mounts the tab again over the same
+  // drafts.
+  render(EnvironmentsTab, { tab: { id: "env-tab" } }).unmount();
+  render(EnvironmentsTab, { tab: { id: "env-tab" } });
+  await userEvent.click(screen.getByRole("button", { name: /^staging/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Add variable" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Name of variable 1" }),
+    "baseUrl",
+  );
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Value of baseUrl" }),
+    "https://staging.example.com",
+  );
+  const row = screen.getByRole("button", { name: /^staging/ });
+  expect(
+    within(row).getByRole("img", { name: "Unsaved changes" }),
+  ).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(saves.map((s) => s.environment)).toEqual([
+    {
+      name: "staging",
+      production: false,
+      variables: [{ name: "baseUrl", value: "https://staging.example.com" }],
+    },
+  ]);
+});
