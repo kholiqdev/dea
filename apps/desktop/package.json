@@ -15,6 +15,7 @@
     "e2e": "wdio run tests/e2e/wdio.conf.ts"
   },
   "dependencies": {
+    "@dea/editor": "workspace:*",
     "@dea/ui": "workspace:*",
     "@lucide/svelte": "^1.74.0",
     "@tauri-apps/api": "^2.12.4"
