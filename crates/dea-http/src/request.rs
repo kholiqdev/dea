@@ -5,9 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
-use hyper::header::{
-    ACCEPT, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue, PROXY_AUTHORIZATION, USER_AGENT,
-};
+use hyper::header::{HOST, HeaderMap, HeaderName, HeaderValue, PROXY_AUTHORIZATION};
 use hyper::{Method, Uri};
 use url::Url;
 use zeroize::Zeroizing;
@@ -33,6 +31,33 @@ pub struct Request {
     pub body: Body,
     pub options: Options,
     pub tls: TlsConfig,
+}
+
+/// The headers Dea adds when the request does not have them, in the order
+/// they are shown. `None` is a value known only when the request is sent.
+/// This is the single source for what goes on the wire and for what the
+/// editor shows. `Content-Type` is listed when `content_type` is given;
+/// `Content-Length` is added by the connection from the body's size.
+#[must_use]
+pub fn automatic_headers(
+    url: &Url,
+    content_type: Option<&str>,
+    user_agent: &str,
+) -> Vec<(&'static str, Option<String>)> {
+    let host = url.host_str().map(|host| match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    });
+    let mut headers = vec![
+        ("Host", host),
+        ("User-Agent", Some(user_agent.to_owned())),
+        ("Accept", Some("*/*".to_owned())),
+    ];
+    if let Some(content_type) = content_type {
+        headers.push(("Content-Type", Some(content_type.to_owned())));
+    }
+    headers.push(("Content-Length", None));
+    headers
 }
 
 /// Headers that always carry credentials.
@@ -225,7 +250,7 @@ struct PlainProxy {
 }
 
 impl Prepared {
-    pub(crate) fn new(request: &Request, user_agent: &HeaderValue) -> Result<Self, HttpError> {
+    pub(crate) fn new(request: &Request, user_agent: &str) -> Result<Self, HttpError> {
         let method = Method::from_bytes(request.method.as_bytes()).map_err(|_| {
             HttpError::InvalidRequest(format!("invalid method {:?}", request.method))
         })?;
@@ -279,25 +304,22 @@ impl Prepared {
 
         let body = Plan::new(&request.body)?;
         let mut headers = Vec::with_capacity(user.len() + 3);
-        if !user_wrote(&USER_AGENT) {
-            headers.push((USER_AGENT, user_agent.clone()));
-        }
-        if !user_wrote(&ACCEPT) {
-            headers.push((ACCEPT, HeaderValue::from_static("*/*")));
-        }
-        if let Some(content_type) = body.content_type()
-            && !user_wrote(&CONTENT_TYPE)
-        {
-            let value = HeaderValue::from_str(content_type).map_err(|_| {
-                HttpError::InvalidRequest("the body content type has a control character".into())
+        let mut host = None;
+        for (name, value) in automatic_headers(url, body.content_type(), user_agent) {
+            let Some(value) = value else { continue };
+            let header = HeaderName::from_bytes(name.as_bytes()).map_err(|_| not_sendable())?;
+            if user_wrote(&header) {
+                continue;
+            }
+            let value = HeaderValue::from_str(&value).map_err(|_| {
+                HttpError::InvalidRequest(format!("the {name} header has a control character"))
             })?;
-            headers.push((CONTENT_TYPE, value));
+            if header == HOST {
+                host = Some(value);
+            } else {
+                headers.push((header, value));
+            }
         }
-        let host = if user_wrote(&HOST) {
-            None
-        } else {
-            Some(HeaderValue::from_str(&authority).map_err(|_| not_sendable())?)
-        };
         headers.extend(user);
 
         Ok(Prepared {
@@ -384,6 +406,8 @@ impl Prepared {
 
 #[cfg(test)]
 mod tests {
+    use hyper::header::{ACCEPT, USER_AGENT};
+
     use super::*;
 
     #[test]
@@ -449,7 +473,7 @@ mod tests {
             options: Options::default(),
             tls: TlsConfig::default(),
         };
-        let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
+        let prepared = Prepared::new(&request, "Dea/test").unwrap();
         let wire = prepared.to_wire(HttpVersion::Http11).unwrap();
         assert_eq!(wire.uri(), "/a?b=1");
         assert_eq!(wire.headers().get_all(HOST).iter().count(), 1);
@@ -474,7 +498,7 @@ mod tests {
             options: Options::default(),
             tls: TlsConfig::default(),
         };
-        let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
+        let prepared = Prepared::new(&request, "Dea/test").unwrap();
         assert_eq!(
             prepared.to_wire(HttpVersion::Http2).unwrap().uri(),
             "https://example.com:8443/"
@@ -496,7 +520,7 @@ mod tests {
             options: Options::default(),
             tls: TlsConfig::default(),
         };
-        let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
+        let prepared = Prepared::new(&request, "Dea/test").unwrap();
         let wire = prepared.to_wire(HttpVersion::Http11).unwrap();
         assert_eq!(wire.headers()[HOST], "odd host/secret-path");
         let Err(HttpError::InvalidRequest(message)) = prepared.to_wire(HttpVersion::Http2) else {
@@ -523,7 +547,7 @@ mod tests {
             options: Options::default(),
             tls: TlsConfig::default(),
         };
-        let prepared = Prepared::new(&request, &HeaderValue::from_static("Dea/test")).unwrap();
+        let prepared = Prepared::new(&request, "Dea/test").unwrap();
         for version in [HttpVersion::Http11, HttpVersion::Http2] {
             let wire = prepared.to_wire(version).unwrap();
             let sensitive = |name: &str| wire.headers()[name].is_sensitive();

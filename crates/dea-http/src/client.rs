@@ -51,7 +51,7 @@ pub struct Client {
 }
 
 struct Inner {
-    user_agent: HeaderValue,
+    user_agent: String,
     spill_dir: PathBuf,
     proxy: ProxyConfig,
     pool: Pool,
@@ -245,18 +245,24 @@ struct Failure {
 
 impl Client {
     pub fn new(config: ClientConfig) -> Result<Client, HttpError> {
-        let user_agent = HeaderValue::from_str(&config.user_agent).map_err(|_| {
+        HeaderValue::from_str(&config.user_agent).map_err(|_| {
             HttpError::InvalidRequest("the user agent has a control character".into())
         })?;
         Ok(Client {
             inner: Arc::new(Inner {
-                user_agent,
+                user_agent: config.user_agent,
                 spill_dir: config.spill_dir,
                 proxy: config.proxy,
                 pool: Pool::default(),
                 tls: Arc::default(),
             }),
         })
+    }
+
+    /// The `User-Agent` sent when a request has none of its own.
+    #[must_use]
+    pub fn user_agent(&self) -> &str {
+        &self.inner.user_agent
     }
 
     /// Sends `request`, follows redirects when the options say so, and

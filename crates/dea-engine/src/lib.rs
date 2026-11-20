@@ -6,6 +6,7 @@
 mod clipboard;
 mod clock;
 mod error;
+mod inspection;
 pub mod projects;
 mod prompt;
 pub mod requests;
@@ -16,6 +17,7 @@ mod vault_app;
 pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
 pub use clock::{Clock, SystemClock};
 pub use error::UseError;
+pub use inspection::{AutomaticHeader, Inspection, OptionsInfo, VariableInfo};
 pub use prompt::{PasswordPrompt, PromptProblem, Prompter, SendAnswer, SendConfirmation};
 pub use requests::{PreparedRequest, RequestService, SendError, Sent};
 pub use vault::{

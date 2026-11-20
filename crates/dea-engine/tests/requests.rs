@@ -10,11 +10,13 @@ use std::sync::{Arc, Mutex};
 
 use dea_engine::requests::{PreparedRequest, RequestService, SendError, Sent};
 use dea_engine::store::Store;
-use dea_engine::{PasswordPrompt, Prompter, SendAnswer, SendConfirmation, VaultService};
+use dea_engine::{
+    Inspection, PasswordPrompt, Prompter, SendAnswer, SendConfirmation, VaultService,
+};
 use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
-    ApiKeyLocation, Auth, Environment, KeyValue, Project, RequestFile, RequestTree, SecretKind,
-    SendOptions, Variable, create_project, load_requests, save_request,
+    ApiKeyLocation, Auth, Body, Environment, KeyValue, Project, RequestFile, RequestTree,
+    SecretKind, SendOptions, Variable, create_project, load_requests, save_request,
 };
 use dea_testkit::http::{Received, TestServer, Tls};
 use dea_testkit::{canary, find_canary};
@@ -746,4 +748,203 @@ async fn timeout_zero_means_no_limit() {
     let response = f.send_prepared(prepared).await;
 
     assert_eq!(response.status, 200);
+}
+
+/// The Vault stayed locked, was never asked, and nothing was shown.
+fn assert_untouched(f: &Fixture) {
+    assert!(f.vault.status().locked, "the Vault was unlocked");
+    assert!(f.log().is_empty(), "something was asked: {:?}", f.log());
+    assert!(f.prompter.asked().is_empty());
+}
+
+fn inspect(
+    f: &Fixture,
+    path: &Path,
+    draft: &RequestFile,
+    environment: Option<&str>,
+) -> Result<Inspection, SendError> {
+    f.service
+        .inspect(&f.project, &f.tree, path, draft, environment)
+}
+
+#[tokio::test]
+async fn inspect_reports_values_sources_and_undefined_without_the_vault() {
+    let mut f = Fixture::new().await;
+    f.project.environments[0].variables.push(Variable {
+        name: "token".into(),
+        value: "{{vault:access_token}}".into(),
+        description: None,
+    });
+    let draft = request(
+        "GET",
+        "{{baseUrl}}/{{carrierCode}}?t={{token}}&id={{$guid}}",
+    );
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    let find = |name: &str| {
+        inspection
+            .variables
+            .iter()
+            .find(|v| v.name == name)
+            .unwrap()
+    };
+    let base = find("baseUrl");
+    assert_eq!(base.shown, f.server.url(""));
+    assert_eq!(base.source, "Environment staging");
+    assert!(!base.secret);
+    // A scope variable that holds a secret keeps its scope as the source.
+    let token = find("token");
+    assert_eq!((token.shown.as_str(), token.secret), ("••••••••", true));
+    assert_eq!(token.source, "Environment staging");
+    let vault = find("vault:access_token");
+    assert_eq!((vault.shown.as_str(), vault.secret), ("••••••••", true));
+    assert_eq!(vault.source, "Vault, staging. The value stays hidden");
+    let dynamic = find("$guid");
+    assert_eq!(dynamic.source, "Dynamic, new on each send");
+    assert_eq!(inspection.undefined, ["carrierCode"]);
+    let json = format!(
+        "{inspection:?}{}",
+        serde_json::to_string(&inspection).unwrap()
+    );
+    assert!(
+        !json.contains(&f.secret) && !json.contains("[secret:"),
+        "{json}"
+    );
+    assert_untouched(&f);
+}
+
+#[tokio::test]
+async fn inspect_names_the_folder_and_collection_of_a_variable() {
+    let mut f = Fixture::new().await;
+    fs::write(
+        f.project_dir.path().join("requests/shipments/_folder.yaml"),
+        "name: Shipments\nvariables:\n  - name: carrier\n    value: acme\n",
+    )
+    .unwrap();
+    let inner = f.project_dir.path().join("requests/shipments/eu");
+    fs::create_dir_all(&inner).unwrap();
+    fs::write(
+        inner.join("_folder.yaml"),
+        "variables:\n  - name: region\n    value: fr\n",
+    )
+    .unwrap();
+    f.tree = load_requests(f.project_dir.path()).unwrap().tree;
+    let draft = request("GET", "{{baseUrl}}/{{carrier}}/{{region}}");
+
+    let path = Path::new("requests/shipments/eu/new.yaml");
+    let inspection = inspect(&f, path, &draft, Some("staging")).unwrap();
+
+    let source = |name: &str| {
+        inspection
+            .variables
+            .iter()
+            .find(|v| v.name == name)
+            .map(|v| v.source.as_str())
+    };
+    assert_eq!(source("carrier"), Some("Collection Shipments"));
+    assert_eq!(source("region"), Some("Folder eu"));
+    assert!(inspection.undefined.is_empty());
+}
+
+#[tokio::test]
+async fn inspect_lists_automatic_headers_and_marks_replaced_ones() {
+    let f = Fixture::new().await;
+    let mut draft = request("POST", "{{baseUrl}}/x");
+    draft.body = Some(Body::Json { text: "{}".into() });
+    draft.headers = vec![row("content-type", "text/plain")];
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    let names: Vec<&str> = inspection
+        .automatic_headers
+        .iter()
+        .map(|h| h.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Host",
+            "User-Agent",
+            "Accept",
+            "Content-Type",
+            "Content-Length"
+        ]
+    );
+    let header = |name: &str| {
+        inspection
+            .automatic_headers
+            .iter()
+            .find(|h| h.name == name)
+            .unwrap()
+    };
+    assert!(header("Content-Type").replaced);
+    assert_eq!(
+        header("Content-Type").value.as_deref(),
+        Some("application/json")
+    );
+    assert!(!header("User-Agent").replaced);
+    assert_eq!(
+        header("User-Agent").value.as_deref(),
+        Some(ClientConfig::default().user_agent.as_str())
+    );
+    assert_eq!(header("Content-Length").value, None);
+    let host = f.server.url("").replace("http://", "");
+    assert_eq!(header("Host").value.as_deref(), Some(host.as_str()));
+}
+
+#[tokio::test]
+async fn inspect_leaves_the_host_open_while_the_url_is_unfinished() {
+    let f = Fixture::new().await;
+    let draft = request("GET", "{{missingHost}}/x");
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert_eq!(inspection.undefined, ["missingHost"]);
+    assert_eq!(inspection.automatic_headers[0].name, "Host");
+    assert_eq!(inspection.automatic_headers[0].value, None);
+}
+
+#[tokio::test]
+async fn inspect_uses_the_draft_not_the_file() {
+    let f = Fixture::new().await;
+    // The saved file uses {{baseUrl}}; the draft uses only {{draftOnly}}.
+    let draft = request("GET", "https://x.test/{{draftOnly}}");
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert_eq!(inspection.undefined, ["draftOnly"]);
+    assert!(inspection.variables.iter().all(|v| v.name != "baseUrl"));
+    assert_eq!(
+        inspection.automatic_headers[0].value.as_deref(),
+        Some("x.test")
+    );
+}
+
+#[tokio::test]
+async fn inspect_reports_inherited_options() {
+    let mut f = Fixture::new().await;
+    fs::write(
+        f.project_dir.path().join("requests/shipments/_folder.yaml"),
+        "options:\n  timeoutMs: 8000\n  cookies: false\n",
+    )
+    .unwrap();
+    f.tree = load_requests(f.project_dir.path()).unwrap().tree;
+    let mut draft = request("GET", "{{baseUrl}}/x");
+    draft.options.max_redirects = Some(2);
+
+    let o = inspect(&f, Path::new(LIST), &draft, Some("staging"))
+        .unwrap()
+        .options;
+
+    assert_eq!(
+        (
+            o.timeout_ms,
+            o.max_redirects,
+            o.cookies,
+            o.follow_redirects,
+            o.verify_tls
+        ),
+        (8000, 2, false, true, true)
+    );
 }

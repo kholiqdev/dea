@@ -9,7 +9,7 @@ use base64::engine::general_purpose::STANDARD;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use crate::local_files::{LocalFiles, is_local_ref};
-use crate::request::{ApiKeyLocation, Auth, Body, KeyValue, RawLanguage, SendOptions};
+use crate::request::{ApiKeyLocation, Auth, Body, KeyValue, RawLanguage, RequestFile, SendOptions};
 use crate::{
     DynamicSource, Folder, Project, RequestTree, ResolveContext, ResolveError, Scope, ScopeKind,
     SecretLookup, SecretLookupError, UsedVariable, ValueSource, Variable, resolve,
@@ -235,7 +235,7 @@ impl Resolver<'_> {
             self.note_unresolved(name);
         }
         for used in resolution.used {
-            if !self.used.contains(&used) {
+            if !self.used.iter().any(|u| u.same_variable(&used)) {
                 self.used.push(used);
             }
         }
@@ -438,7 +438,6 @@ fn encode(value: &str) -> String {
 /// [`RequestError::LocalFileMissing`] for a `local:` reference this device
 /// has no file for;
 /// [`RequestError::Resolve`] for a variable cycle or an unreadable secret.
-#[allow(clippy::too_many_lines)]
 pub fn resolve_request(
     path: &Path,
     ctx: &mut RequestContext,
@@ -447,11 +446,35 @@ pub fn resolve_request(
         .tree
         .find(path)
         .ok_or_else(|| RequestError::NotFound(path.to_path_buf()))?;
-    if let Some(broken) = location.folders.iter().find(|f| f.broken) {
+    resolve_draft(path, &location.entry.request, ctx)
+}
+
+/// Resolves `draft` as if it were saved at `path`: the folders around
+/// `path` apply, but the file itself is not read, and `path` need not
+/// exist in the tree yet.
+///
+/// # Errors
+///
+/// [`RequestError::NotFound`] when `path` is in no collection; otherwise
+/// the errors of [`resolve_request`].
+#[allow(clippy::too_many_lines)]
+pub fn resolve_draft(
+    path: &Path,
+    draft: &RequestFile,
+    ctx: &mut RequestContext,
+) -> Result<ResolvedRequest, RequestError> {
+    let folders = path
+        .parent()
+        .map(|dir| ctx.tree.folder_chain(dir))
+        .unwrap_or_default();
+    if folders.is_empty() {
+        return Err(RequestError::NotFound(path.to_path_buf()));
+    }
+    if let Some(broken) = folders.iter().find(|f| f.broken) {
         return Err(RequestError::BrokenFolder(broken.dir.clone()));
     }
-    let folders = &location.folders;
-    let request = &location.entry.request;
+    let folders = &folders;
+    let request = draft;
     let root = &ctx.project.root;
     let local_files = ctx.local_files;
 
