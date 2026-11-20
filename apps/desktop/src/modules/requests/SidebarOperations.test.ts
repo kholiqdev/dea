@@ -32,6 +32,8 @@ interface ShownToast {
 }
 
 let tabs: OpenTab[];
+/** Every tab closeTab was asked to close. */
+let closing: string[];
 let modules: string[];
 const toasts = {
   items: [] as ShownToast[],
@@ -94,6 +96,7 @@ beforeEach(() => {
   treeState.expanded.add("requests/shipments");
   treeState.expanded.add("requests/tracking");
   tabs = [];
+  closing = [];
   modules = [];
   toasts.items = [];
   setProjectApi(new FakeProject([{ name: "local", production: false }]));
@@ -112,6 +115,7 @@ beforeEach(() => {
     activateTab: (id) => tabs.some((t) => t.id === id),
     // Like the shell: a tab with unsaved changes asks, and here stays open.
     closeTab: (id) => {
+      closing.push(id);
       const tab = tabs.find((t) => t.id === id);
       if (!tab || tab.dirty) return Promise.resolve(false);
       tabs = tabs.filter((t) => t !== tab);
@@ -121,6 +125,7 @@ beforeEach(() => {
       const tab = tabs.find((t) => t.id === id);
       if (tab) tab.dirty = dirty;
     },
+    isTabDirty: (id) => tabs.some((t) => t.id === id && t.dirty),
     setSaveHandler: () => {},
     openModule: (id) => {
       modules.push(id);
@@ -199,12 +204,11 @@ async function drag(from: HTMLElement, to: HTMLElement, place: Place) {
 test("delete asks first, then offers Undo for 10 seconds", async () => {
   const ipc = fakeRequestsIpc({ tree: shipments() });
   await showTree();
-  const tab = openTab(
+  openTab(
     "requests.request",
     "Update status",
     "requests/shipments/update-status.yaml",
   );
-  tab.dirty = true;
   await openMenu("Update status");
   await userEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
   const dialog = screen.getByRole("dialog", { name: "Delete Update status?" });
@@ -245,10 +249,39 @@ test("cancel keeps the item and gives the tree the focus", async () => {
   await waitFor(() => expect(tree).toHaveFocus());
 });
 
-test("deleting a folder counts its requests and closes their tabs", async () => {
+test("a deleted request's tab with unsaved edits stays open", async () => {
   fakeRequestsIpc({ tree: shipments() });
   await showTree();
-  openTab("requests.request", "DHL", "requests/tracking/carriers/dhl.yaml");
+  const tab = openTab(
+    "requests.request",
+    "Update status",
+    "requests/shipments/update-status.yaml",
+  );
+  tab.dirty = true;
+  await openMenu("Update status");
+  await userEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+  await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(toasts.last.text).toBe("Deleted Update status"));
+  // Undo brings back only the file: the edits live in the tab.
+  expect(tabs).toEqual([tab]);
+  expect(tab.dirty).toBe(true);
+  expect(closing).toEqual([]);
+});
+
+test("deleting a folder counts its requests and closes their clean tabs", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  const dhl = openTab(
+    "requests.request",
+    "DHL",
+    "requests/tracking/carriers/dhl.yaml",
+  );
+  dhl.dirty = true;
+  openTab(
+    "requests.request",
+    "Tracking events",
+    "requests/tracking/events.yaml",
+  );
   openTab("requests.folder", "Tracking", "requests/tracking");
   openTab("requests.request", "List shipments", "requests/shipments/list.yaml");
   await openMenu("Tracking");
@@ -259,7 +292,9 @@ test("deleting a folder counts its requests and closes their tabs", async () => 
   );
   await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
   await waitFor(() => expect(toasts.last.text).toBe("Deleted Tracking"));
-  expect(tabs.map((t) => t.title)).toEqual(["List shipments"]);
+  expect(tabs.map((t) => t.title)).toEqual(["DHL", "List shipments"]);
+  expect(dhl.dirty).toBe(true);
+  expect(closing).not.toContain(dhl.id);
 });
 
 test("restore failure names the item", async () => {
