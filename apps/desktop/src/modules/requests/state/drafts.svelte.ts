@@ -1,7 +1,6 @@
 // The requests being edited, by tab id. They live in the module, so a tab
 // that is not shown keeps its edits.
 
-import { shellApi } from "$app/contributions/shell-api";
 import type { Inspection } from "$lib/ipc/bindings/Inspection";
 import type { Body } from "$lib/ipc/bindings/Body";
 import type { FormField } from "$lib/ipc/bindings/FormField";
@@ -9,7 +8,7 @@ import type { KeyValue } from "$lib/ipc/bindings/KeyValue";
 import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { Variable } from "$lib/ipc/bindings/Variable";
-import { errorMessage, isIpcError } from "$lib/ipc/errors";
+import { errorMessage } from "$lib/ipc/errors";
 import { inspectRequest, readRequest, saveRequest } from "../api";
 import {
   joinUrl,
@@ -18,6 +17,7 @@ import {
   syncParams,
   syncPathVariables,
 } from "../lib/url";
+import { openTabs, SyncedFile, syncedFor } from "./synced-file.svelte";
 
 /** How long after the last change the draft is inspected, in milliseconds. */
 export const INSPECT_DELAY = 200;
@@ -142,25 +142,12 @@ export function sameRequest(a: RequestFile, b: RequestFile): boolean {
   );
 }
 
-const isMissing = (e: unknown) => isIpcError(e) && e.kind === "missing";
-
-type Read = { file: RequestFile } | { error: unknown };
-
 /** One request as on disk, and as edited in its tab. */
-export class RequestDraft {
-  path = $state("");
-  /** The file as last read or written; null until it has been read. */
-  saved = $state.raw<RequestFile | null>(null);
+export class RequestDraft extends SyncedFile<RequestFile> {
   draft = $state<RequestFile>({ name: "", method: "GET", url: "" });
   inspection = $state.raw<Inspection | null>(null);
   /** Why the draft could not be inspected: a broken folder, a file outside the project. */
   inspectionError = $state<string | null>(null);
-  /** Set while a change on disk waits for a decision. */
-  outside = $state<"changed" | "deleted" | null>(null);
-  /** There is no file: a tab restored after its request was deleted. */
-  missing = $state(false);
-  /** Why the file could not be read. */
-  error = $state<string | null>(null);
   /** The URL bar's text while the person types in it. */
   typedUrl = $state<string | null>(null);
   section = $state<Section>("params");
@@ -169,22 +156,43 @@ export class RequestDraft {
   // Read only when the mode changes, so it is not reactive.
   #bodies: Partial<Record<Body["mode"], Body>> = {};
 
-  #theirs: RequestFile | null = null;
-  // Changes with every write and every file taken, so a read that started
-  // before one is dropped.
-  #version = 0;
   #inspections = 0;
   #timer: ReturnType<typeof setTimeout> | undefined;
-  // A check of the file after a move, which a save waits for.
-  #settling: Promise<void> = Promise.resolve();
 
-  constructor(path: string) {
-    this.path = path;
+  protected snapshot(): RequestFile {
+    return $state.snapshot(this.draft);
   }
 
-  // A getter, not `$derived`: the draft outlives the view that made it.
-  get dirty(): boolean {
-    return this.saved !== null && !sameRequest(this.draft, this.saved);
+  protected readFile(path: string): Promise<RequestFile> {
+    return readRequest(path);
+  }
+
+  protected writeFile(path: string, file: RequestFile): Promise<void> {
+    return saveRequest(path, file);
+  }
+
+  protected clean(file: RequestFile): RequestFile {
+    return cleaned(file);
+  }
+
+  protected same(a: RequestFile, b: RequestFile): boolean {
+    return sameRequest(a, b);
+  }
+
+  protected override taken(): void {
+    this.#bodies = {};
+    this.typedUrl = null;
+  }
+
+  /**
+   * Only the name changed, as a rename from the sidebar does: the draft
+   * takes it unless the name is one of its edits.
+   */
+  protected override quiet(disk: RequestFile, saved: RequestFile): boolean {
+    if (!sameRequest({ ...disk, name: saved.name }, saved)) return false;
+    if (this.draft.name === saved.name) this.draft.name = disk.name;
+    this.saved = disk;
+    return true;
   }
 
   /** The URL bar: the text being typed there, else the URL with its params. */
@@ -214,69 +222,6 @@ export class RequestDraft {
           : null,
       settings: null,
     };
-  }
-
-  /** Reads the file and starts over from it. */
-  async load(): Promise<void> {
-    const read = await this.#read();
-    if (!read) return;
-    if ("file" in read) this.#take(read.file);
-    else this.#failed(read.error);
-  }
-
-  /**
-   * Looks at the file after a change on disk (F1-FON-05): a draft without
-   * edits follows it quietly; one with edits keeps them and asks.
-   */
-  check(): Promise<void> {
-    if (!this.saved) return this.load();
-    return this.#read().then((read) => {
-      if (!read) return;
-      if ("error" in read) this.#failed(read.error);
-      else this.#ondisk(read.file);
-    });
-  }
-
-  /** Writes the draft. A failure rejects with Dea's message. */
-  async save(): Promise<void> {
-    await this.#settling;
-    // Nothing was read, so there is nothing to write.
-    if (!this.saved) return;
-    const request = cleaned($state.snapshot(this.draft));
-    this.#version++;
-    try {
-      await saveRequest(this.path, request);
-    } catch (e) {
-      throw new Error(errorMessage(e), { cause: e });
-    } finally {
-      this.#version++;
-    }
-    this.saved = request;
-    this.#theirs = null;
-    this.outside = null;
-    this.error = null;
-  }
-
-  /**
-   * Follows a rename or move from the sidebar. The edits stay; a rename
-   * wrote a new name into the file, which the check takes.
-   */
-  moveTo(path: string): void {
-    if (path === this.path) return;
-    this.path = path;
-    this.#settling = this.check();
-  }
-
-  /** Drops the edits for the file on disk ("Take theirs"). */
-  takeTheirs(): Promise<void> {
-    return this.load();
-  }
-
-  /** Keeps the edits; the next save writes them over the disk ("Keep mine"). */
-  keepMine(): void {
-    if (this.#theirs) this.saved = this.#theirs;
-    this.#theirs = null;
-    this.outside = null;
   }
 
   /** Text typed in the URL bar: it stays as typed, its query fills the params. */
@@ -360,64 +305,6 @@ export class RequestDraft {
       this.inspectionError = errorMessage(e);
     }
   }
-
-  /** Reads the file; null when a write or a move came in between. */
-  async #read(): Promise<Read | null> {
-    const version = this.#version;
-    const path = this.path;
-    let read: Read;
-    try {
-      read = { file: await readRequest(path) };
-    } catch (error) {
-      read = { error };
-    }
-    return version === this.#version && path === this.path ? read : null;
-  }
-
-  /** Starts over from the file on disk. */
-  #take(file: RequestFile): void {
-    this.#version++;
-    this.saved = file;
-    this.draft = structuredClone(file);
-    this.#bodies = {};
-    this.#theirs = null;
-    this.outside = null;
-    this.typedUrl = null;
-    this.missing = false;
-    this.error = null;
-  }
-
-  /** A missing file asks about the edits; without edits there is nothing to keep. */
-  #failed(error: unknown): void {
-    if (!isMissing(error)) {
-      this.error = errorMessage(error);
-    } else if (this.dirty) {
-      this.outside = "deleted";
-    } else {
-      this.saved = null;
-      this.outside = null;
-      this.missing = true;
-    }
-  }
-
-  #ondisk(disk: RequestFile): void {
-    const saved = this.saved;
-    if (!saved) return this.#take(disk);
-    this.error = null;
-    this.#theirs = null;
-    this.outside = null;
-    if (sameRequest(disk, saved)) return;
-    if (sameRequest({ ...disk, name: saved.name }, saved)) {
-      // Only the name changed, as a rename from the sidebar does: the
-      // draft takes it unless the name is one of its edits.
-      if (this.draft.name === saved.name) this.draft.name = disk.name;
-      this.saved = disk;
-      return;
-    }
-    if (!this.dirty || sameRequest(disk, this.draft)) return this.#take(disk);
-    this.#theirs = disk;
-    this.outside = "changed";
-  }
 }
 
 const TAB_TYPE = "requests.request";
@@ -427,27 +314,9 @@ const TAB_TYPE = "requests.request";
 // eslint-disable-next-line svelte/prefer-svelte-reactivity
 export const drafts = new Map<string, RequestDraft>();
 
-/** The ids of the request tabs the shell has open. */
-function openTabs(): string[] {
-  const shell = shellApi();
-  const ids: string[] = [];
-  const seen: unknown[] = [];
-  for (;;) {
-    let params: unknown;
-    const id = shell.findTab(TAB_TYPE, (p) => {
-      if (seen.includes(p)) return false;
-      params = p;
-      return true;
-    });
-    if (id === undefined) return ids;
-    ids.push(id);
-    seen.push(params);
-  }
-}
-
 /** Forgets the drafts of request tabs that were closed. */
 export function pruneDrafts(): void {
-  const open = openTabs();
+  const open = openTabs(TAB_TYPE);
   for (const [id, draft] of drafts)
     if (!open.includes(id)) {
       draft.cancelInspection();
@@ -461,20 +330,13 @@ export function pruneDrafts(): void {
  */
 export function draftFor(id: string, path: string): RequestDraft {
   pruneDrafts();
-  const known = drafts.get(id);
-  // Reopening a closed tab brings back its id but not its unsaved mark:
-  // the edits were discarded when it closed.
-  const reopened = known?.dirty === true && !shellApi().isTabDirty(id);
-  if (known && !reopened) {
-    if (known.path === path) void known.check();
-    else known.moveTo(path);
-    return known;
-  }
-  known?.cancelInspection();
-  const created = new RequestDraft(path);
-  drafts.set(id, created);
-  void created.load();
-  return created;
+  return syncedFor(
+    drafts,
+    id,
+    path,
+    (p) => new RequestDraft(p),
+    (known) => known.cancelInspection(),
+  );
 }
 
 /** Forgets every draft (tests). */
