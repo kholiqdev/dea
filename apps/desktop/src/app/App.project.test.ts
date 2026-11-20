@@ -48,7 +48,7 @@ test("a window with a project shows its modules and the saved environment", asyn
   });
   // The first module on the rail opens.
   expect(
-    await screen.findByRole("heading", { name: "Requests" }),
+    await screen.findByRole("heading", { level: 1, name: "Requests" }),
   ).toBeInTheDocument();
 });
 

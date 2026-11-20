@@ -5,6 +5,23 @@ export const manifest: ModuleManifest = {
   title: "Requests",
   rail: { icon: "arrow-left-right", group: "main", order: 1 },
   view: () => import("./RequestsView.svelte"),
+  sidebar: () => import("./components/CollectionsSidebar.svelte"),
+  tabTypes: [
+    {
+      id: "requests.request",
+      title: "Request",
+      icon: "arrow-left-right",
+      environment: "window",
+      view: () => import("./RequestTab.svelte"),
+    },
+    {
+      id: "requests.folder",
+      title: "Folder",
+      icon: "arrow-left-right",
+      environment: "window",
+      view: () => import("./FolderTab.svelte"),
+    },
+  ],
   commands: [
     {
       id: "requests.open",
