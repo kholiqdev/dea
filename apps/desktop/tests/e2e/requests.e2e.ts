@@ -100,11 +100,31 @@ async function expand(name: string): Promise<void> {
   );
 }
 
-/** Chooses `entry` from the menu of the row named `name`. */
+/**
+ * Chooses `entry` from the menu of the row named `name`. A right click is
+ * the riskiest step under WebKitGTK, so a request row is clicked and its
+ * More actions button opens the menu. A click would close a folder, so a
+ * folder must be the selected row already, as `expand` leaves it, and
+ * Shift+F10 on the tree opens its menu.
+ */
 async function rowMenu(name: string, entry: string): Promise<void> {
   const item = row(name);
   await item.waitForDisplayed();
-  await item.click({ button: "right" });
+  if ((await item.getAttribute("aria-expanded")) === null) {
+    await item.click();
+    await browser.waitUntil(
+      async () => (await item.getAttribute("aria-selected")) === "true",
+      { timeoutMsg: `${name} was not selected` },
+    );
+    await $('.actions button[title="More actions"]').click();
+  } else {
+    if ((await item.getAttribute("aria-selected")) !== "true")
+      throw new Error(`Select the folder ${name} first: a click closes it`);
+    await browser.execute(() =>
+      document.querySelector<HTMLElement>('[role="tree"]')?.focus(),
+    );
+    await browser.keys([Key.Shift, Key.F10]);
+  }
   const menu = $('[role="menu"]');
   await menu.waitForDisplayed();
   await menu.$(`button*=${entry}`).click();
@@ -172,22 +192,35 @@ describe("the Requests sidebar and editor", () => {
       "the order after create and rename",
     );
 
-    // Duplicate: the copy sits right after the original.
-    await rowMenu("Cancel shipment", "Duplicate");
-    const copy = `${SHIPMENTS}/cancel-shipment-copy.yaml`;
+    // Duplicate one in the middle: the copy sits right after the original.
+    await rowMenu("Create shipment", "Duplicate");
+    const copy = `${SHIPMENTS}/create-shipment-copy.yaml`;
     await until(() => existsSync(join(root, copy)), "the copy");
-    expect(read(root, copy)).toContain("name: Cancel shipment copy");
-    const duplicated = [...created, "cancel-shipment-copy"];
-    expect(orderOf(root, SHIPMENTS)).toEqual(duplicated);
+    expect(read(root, copy)).toContain("name: Create shipment copy");
+    const duplicated = [
+      "list-shipments",
+      "create-shipment",
+      "create-shipment-copy",
+      "get-shipment",
+      "tracking",
+      "cancel-shipment",
+    ];
+    await until(
+      () => orderOf(root, SHIPMENTS).join() === duplicated.join(),
+      "the order after duplicate",
+    );
 
     // Delete, then Undo from the toast.
-    await rowMenu("Cancel shipment copy", "Delete");
-    await waitForText('[role="dialog"]', "Delete Cancel shipment copy?");
+    await rowMenu("Create shipment copy", "Delete");
+    await waitForText('[role="dialog"]', "Delete Create shipment copy?");
     await $('[role="dialog"]').$("button=Delete").click();
     await waitForNoDialog();
     await until(() => !existsSync(join(root, copy)), "the file to go");
-    expect(orderOf(root, SHIPMENTS)).toEqual(created);
-    await waitForText('[role="status"]', "Deleted Cancel shipment copy");
+    await until(
+      () => orderOf(root, SHIPMENTS).join() === created.join(),
+      "the order after delete",
+    );
+    await waitForText('[role="status"]', "Deleted Create shipment copy");
     await $('[role="status"]').$("button*=Undo").click();
     await until(() => existsSync(join(root, copy)), "Undo to bring it back");
     await until(
@@ -196,14 +229,17 @@ describe("the Requests sidebar and editor", () => {
     );
 
     // Delete again, and Undo with Mod+Z, as no text field has the focus.
-    await rowMenu("Cancel shipment copy", "Delete");
+    await rowMenu("Create shipment copy", "Delete");
     await $('[role="dialog"]').$("button=Delete").click();
     await waitForNoDialog();
     await until(() => !existsSync(join(root, copy)), "the file to go again");
-    await waitForText('[role="status"]', "Deleted Cancel shipment copy");
+    await waitForText('[role="status"]', "Deleted Create shipment copy");
     await browser.keys([MOD, "z"]);
     await until(() => existsSync(join(root, copy)), "Mod+Z to bring it back");
-    expect(orderOf(root, SHIPMENTS)).toEqual(duplicated);
+    await until(
+      () => orderOf(root, SHIPMENTS).join() === duplicated.join(),
+      "the order after Mod+Z",
+    );
   });
 
   it("drags_a_request_into_another_folder", async () => {
