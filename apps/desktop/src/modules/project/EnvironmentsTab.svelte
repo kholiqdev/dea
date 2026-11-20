@@ -29,6 +29,10 @@
   const editor = environmentsEditor();
   const selected = $derived(editor.selected);
   const problems = $derived(selected ? editor.problems(selected) : []);
+  const variableCount = $derived.by(() => {
+    const n = selected?.draft.variables?.length ?? 0;
+    return n === 1 ? "1 variable" : `${n} variables`;
+  });
   const readonly = $derived(project.info?.readOnly === true);
   // The window's banner names a missing folder or a broken dea.yaml.
   const fileErrors = $derived(
@@ -189,8 +193,7 @@
         <div class="heading">
           <h1>{selected.draft.name}</h1>
           <span class="meta">
-            {selected.draft.variables?.length ?? 0} variables. A value is plain text
-            or a Vault reference like {"{{vault:name}}"}
+            {variableCount}. A value is plain text or a Vault reference like {"{{vault:name}}"}
           </span>
         </div>
         <div class="end">
