@@ -169,9 +169,12 @@ impl RequestService {
     ///    person stopped the asking for this `GET`, `HEAD` or `OPTIONS`;
     /// 3. when secrets are used, production authentication, or for another
     ///    environment an unlock of a locked Vault;
-    /// 4. the real resolution, with the Vault's values.
+    /// 4. when secrets are used, the real resolution with the Vault's
+    ///    values; otherwise the preview is the request.
     ///
-    /// Blocks: steps 2 and 3 may show dialogs. Nothing is sent.
+    /// The Vault is opened only at step 3, so a request without secrets
+    /// never reaches the keychain. Blocks: steps 2 and 3 may show dialogs.
+    /// Nothing is sent.
     ///
     /// # Errors
     ///
@@ -196,10 +199,15 @@ impl RequestService {
             self.confirm(&scope, env, &preview.method, &url)?;
         }
 
-        // Opened only now, so a cancelled confirmation leaves it untouched.
-        let vault = self.vault.open()?;
         let names = preview.secret_names();
-        if !names.is_empty() {
+        let resolved = if names.is_empty() {
+            // Placeholders only stand in for secrets, so without any the
+            // preview is the request, and the Vault stays closed.
+            preview
+        } else {
+            // Opened only now, so a cancelled confirmation leaves it
+            // untouched.
+            let vault = self.vault.open()?;
             let action = format!(
                 "Send {} {} to {}",
                 preview.method,
@@ -211,10 +219,9 @@ impl RequestService {
             } else if vault.status().locked {
                 vault.unlock(&production_reason(&action, &names))?;
             }
-        }
-
-        let lookup = vault.lookup(project);
-        let resolved = resolve(&self.store, project, tree, path, environment, &lookup)?;
+            let lookup = vault.lookup(project);
+            resolve(&self.store, project, tree, path, environment, &lookup)?
+        };
         let jar = resolved
             .options
             .cookies

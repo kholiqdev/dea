@@ -869,6 +869,24 @@ async fn the_vault_is_opened_only_after_production_is_confirmed() {
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
 }
 
+#[tokio::test]
+async fn a_send_without_secrets_leaves_the_vault_closed() {
+    let mut f = Fixture::new().await;
+    let mut file = request("GET", "{{baseUrl}}/echo");
+    file.auth = Auth::NoAuth;
+    let path = f.add("plain", file);
+    let service = service_with(&f, NeverOpened);
+
+    let staging = service.prepare(&f.project, &f.tree, &path, Some("staging"));
+    assert!(staging.is_ok(), "{staging:?}");
+    f.prompter.answer(SendAnswer::Send);
+    let production = service.prepare(&f.project, &f.tree, &path, Some("production"));
+    assert!(production.is_ok(), "{production:?}");
+
+    let response = f.send_prepared(staging.unwrap()).await;
+    assert_eq!(response.status, 200);
+}
+
 /// A Vault that cannot be opened, as when the keychain is gone.
 struct Unavailable;
 
