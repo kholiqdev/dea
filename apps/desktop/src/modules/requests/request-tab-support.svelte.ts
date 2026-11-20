@@ -22,6 +22,7 @@ export class FakeShell implements ShellApi {
   toasts: string[] = [];
   /** Every tab closeTab was asked to close. */
   closing: string[] = [];
+  #opened = 0;
 
   tab(id: string): FakeTab {
     const tab = this.tabs.find((t) => t.id === id);
@@ -37,7 +38,7 @@ export class FakeShell implements ShellApi {
   }
 
   openTab(tabType: string, title: string, params: unknown): string {
-    const id = `tab-${this.tabs.length + 1}`;
+    const id = `tab-${++this.#opened}`;
     this.tabs.push({
       id,
       tabType,

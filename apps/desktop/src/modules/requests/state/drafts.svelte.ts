@@ -1,6 +1,7 @@
 // The requests being edited, by tab id. They live in the module, so a tab
 // that is not shown keeps its edits.
 
+import { shellApi } from "$app/contributions/shell-api";
 import type { Inspection } from "$lib/ipc/bindings/Inspection";
 import type { KeyValue } from "$lib/ipc/bindings/KeyValue";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
@@ -20,9 +21,9 @@ export const INSPECT_DELAY = 200;
 
 export type Section = "params" | "headers" | "body" | "settings";
 
-/** A row added but not filled in yet. */
+/** A row without a name or a value: not in the URL, and not written. */
 export function isBlank(row: KeyValue): boolean {
-  return row.name === "" && row.value === "" && !row.description;
+  return row.name === "" && row.value === "";
 }
 
 function written(rows: KeyValue[] | undefined): KeyValue[] {
@@ -305,10 +306,17 @@ export class RequestDraft {
     this.error = null;
   }
 
+  /** A missing file asks about the edits; without edits there is nothing to keep. */
   #failed(error: unknown): void {
-    if (!isMissing(error)) this.error = errorMessage(error);
-    else if (this.saved) this.outside = "deleted";
-    else this.missing = true;
+    if (!isMissing(error)) {
+      this.error = errorMessage(error);
+    } else if (this.dirty) {
+      this.outside = "deleted";
+    } else {
+      this.saved = null;
+      this.outside = null;
+      this.missing = true;
+    }
   }
 
   #ondisk(disk: RequestFile): void {
@@ -331,10 +339,62 @@ export class RequestDraft {
   }
 }
 
+const TAB_TYPE = "requests.request";
+
 /** The drafts of the request tabs shown so far, by tab id. */
 // Only looked up by id, never watched, so a plain Map is right here.
 // eslint-disable-next-line svelte/prefer-svelte-reactivity
 export const drafts = new Map<string, RequestDraft>();
+
+/** The ids of the request tabs the shell has open. */
+function openTabs(): string[] {
+  const shell = shellApi();
+  const ids: string[] = [];
+  const seen: unknown[] = [];
+  for (;;) {
+    let params: unknown;
+    const id = shell.findTab(TAB_TYPE, (p) => {
+      if (seen.includes(p)) return false;
+      params = p;
+      return true;
+    });
+    if (id === undefined) return ids;
+    ids.push(id);
+    seen.push(params);
+  }
+}
+
+/** Forgets the drafts of request tabs that were closed. */
+export function pruneDrafts(): void {
+  const open = openTabs();
+  for (const [id, draft] of drafts)
+    if (!open.includes(id)) {
+      draft.cancelInspection();
+      drafts.delete(id);
+    }
+}
+
+/**
+ * The draft of the request tab `id` as it is shown: the one it had, after a
+ * look at the file, or a new one read from `path`.
+ */
+export function draftFor(id: string, path: string): RequestDraft {
+  pruneDrafts();
+  const known = drafts.get(id);
+  // Reopening a closed tab brings back its id but not its unsaved mark:
+  // the edits were discarded when it closed.
+  const reopened = known?.dirty === true && !shellApi().isTabDirty(id);
+  if (known && !reopened) {
+    if (known.path === path) void known.check();
+    else known.moveTo(path);
+    return known;
+  }
+  known?.cancelInspection();
+  const created = new RequestDraft(path);
+  drafts.set(id, created);
+  void created.load();
+  return created;
+}
 
 /** Forgets every draft (tests). */
 export function resetDrafts(): void {

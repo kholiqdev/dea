@@ -16,13 +16,17 @@
   import OutsideChange from "./components/OutsideChange.svelte";
   import ParamsSection from "./components/ParamsSection.svelte";
   import RequestLine from "./components/RequestLine.svelte";
-  import { drafts, RequestDraft, type Section } from "./state/drafts.svelte";
+  import {
+    draftFor,
+    drafts,
+    pruneDrafts,
+    type Section,
+  } from "./state/drafts.svelte";
   import { VariableLookup } from "./state/variables.svelte";
 
   let { tab }: { tab: { id: string; title: string; params: unknown } } =
     $props();
 
-  const TAB_TYPE = "requests.request";
   const SECTIONS: { id: Section; label: string }[] = [
     { id: "params", label: "Params" },
     { id: "headers", label: "Headers" },
@@ -45,38 +49,8 @@
   const counts = $derived(draft.counts);
   let tablist = $state<HTMLElement>();
 
-  function draftFor(id: string, path: string): RequestDraft {
-    const known = drafts.get(id);
-    if (known) {
-      // The file may have changed, or moved, while another tab showed.
-      if (known.path === path) void known.check();
-      else known.moveTo(path);
-      return known;
-    }
-    const created = new RequestDraft(path);
-    drafts.set(id, created);
-    void created.load();
-    return created;
-  }
-
-  /** Whether the shell still has a request tab with this id. */
-  function isOpen(id: string): boolean {
-    const seen: unknown[] = [];
-    for (;;) {
-      let params: unknown;
-      const found = shell.findTab(TAB_TYPE, (p) => {
-        if (seen.includes(p)) return false;
-        params = p;
-        return true;
-      });
-      if (found === undefined) return false;
-      if (found === id) return true;
-      seen.push(params);
-    }
-  }
-
   shell.setSaveHandler(
-    TAB_TYPE,
+    "requests.request",
     (tabId) => drafts.get(tabId)?.save() ?? Promise.resolve(),
   );
 
@@ -119,9 +93,7 @@
   });
 
   // A closed tab takes its edits with it; reopening it reads the file.
-  $effect(() => () => {
-    if (!isOpen(id)) drafts.delete(id);
-  });
+  $effect(() => () => pruneDrafts());
 
   function save(): void {
     draft.save().catch((e: unknown) => shell.toast(errorMessage(e)));
