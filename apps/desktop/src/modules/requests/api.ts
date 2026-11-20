@@ -9,9 +9,11 @@ export {
   inspectRequest,
   moveRequestItem,
   pickRequestFile,
+  readFolder,
   readRequest,
   renameRequestItem,
   requestTree,
   restoreRequestItem,
+  saveFolder,
   saveRequest,
 } from "$lib/ipc/requests";

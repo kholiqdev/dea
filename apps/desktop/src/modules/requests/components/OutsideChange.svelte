@@ -8,10 +8,20 @@
   import FileBanner from "@dea/ui/FileBanner.svelte";
   import { shellApi } from "$app/contributions/shell-api";
   import { errorMessage } from "$lib/ipc/errors";
-  import type { RequestDraft } from "../state/drafts.svelte";
 
-  let { draft, onclose }: { draft: RequestDraft; onclose: () => void } =
-    $props();
+  /** What the banner needs of a draft: a request's, or a folder's. */
+  interface Outside {
+    outside: "changed" | "deleted" | null;
+    keepMine(): void;
+    takeTheirs(): Promise<void>;
+    save(): Promise<void>;
+  }
+
+  let {
+    draft,
+    onclose,
+    noun = "request",
+  }: { draft: Outside; onclose: () => void; noun?: string } = $props();
 
   function attempt(action: Promise<void>): void {
     action.catch((e: unknown) => shellApi().toast(errorMessage(e)));
@@ -30,7 +40,7 @@
         size={16}
         strokeWidth={1.5}
       />{/snippet}
-    This request changed on disk.
+    This {noun} changed on disk.
   </FileBanner>
 {:else if draft.outside === "deleted"}
   <FileBanner
@@ -41,6 +51,6 @@
     ]}
   >
     {#snippet icon()}<FileX size={16} strokeWidth={1.5} />{/snippet}
-    This request was deleted on disk.
+    This {noun} was deleted on disk.
   </FileBanner>
 {/if}

@@ -6,6 +6,7 @@ import type { Inspection } from "$lib/ipc/bindings/Inspection";
 import type { Body } from "$lib/ipc/bindings/Body";
 import type { FormField } from "$lib/ipc/bindings/FormField";
 import type { KeyValue } from "$lib/ipc/bindings/KeyValue";
+import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { Variable } from "$lib/ipc/bindings/Variable";
 import { errorMessage, isIpcError } from "$lib/ipc/errors";
@@ -79,7 +80,7 @@ export function isBlank(row: KeyValue): boolean {
   return row.name === "" && row.value === "";
 }
 
-function written(rows: KeyValue[] | undefined): KeyValue[] {
+export function written(rows: KeyValue[] | undefined): KeyValue[] {
   return (rows ?? [])
     .filter((row) => !isBlank(row))
     .map(({ name, value, description, enabled }) => ({
@@ -121,7 +122,7 @@ export function cleaned(request: RequestFile): RequestFile {
 }
 
 /** Keys in one order, without what the file leaves out (`enabled: true`). */
-function normalized(value: unknown): unknown {
+export function normalized(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalized);
   if (typeof value !== "object" || value === null) return value;
   const out: Record<string, unknown> = {};
@@ -305,6 +306,10 @@ export class RequestDraft {
 
   setHeaders(rows: KeyValue[]): void {
     this.draft.headers = rows;
+  }
+
+  setOptions(options: SendOptions): void {
+    this.draft.options = options;
   }
 
   get bodyMode(): BodyMode {

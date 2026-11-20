@@ -5,8 +5,10 @@ import { render } from "@testing-library/svelte";
 import { setProjectApi } from "$app/contributions/project-api";
 import { setShellApi, type ShellApi } from "$app/contributions/shell-api";
 import { FakeProject } from "./fake-project.svelte";
+import FolderTab from "./FolderTab.svelte";
 import RequestTab from "./RequestTab.svelte";
 import { resetDrafts } from "./state/drafts.svelte";
+import { resetFolderStates } from "./state/folders.svelte";
 
 export interface FakeTab {
   id: string;
@@ -116,6 +118,7 @@ let shell: FakeShell | null = null;
  */
 export function setUpRequestTabs(): { shell: FakeShell; project: FakeProject } {
   resetDrafts();
+  resetFolderStates();
   shell = new FakeShell();
   const project = new FakeProject([
     { name: "local", production: false },
@@ -134,5 +137,16 @@ export function openRequestTab(
   if (!shell) throw new Error("Call setUpRequestTabs first");
   const id = shell.openTab("requests.request", title, { path });
   const { unmount } = render(RequestTab, { props: { tab: shell.tab(id) } });
+  return { id, unmount };
+}
+
+/** Opens a tab for the folder at `path` and shows it, as the shell does. */
+export function openFolderTab(
+  path: string,
+  title = "Folder",
+): { id: string; unmount: () => void } {
+  if (!shell) throw new Error("Call setUpRequestTabs first");
+  const id = shell.openTab("requests.folder", title, { path });
+  const { unmount } = render(FolderTab, { props: { tab: shell.tab(id) } });
   return { id, unmount };
 }
