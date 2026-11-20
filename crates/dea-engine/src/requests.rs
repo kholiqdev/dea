@@ -102,11 +102,30 @@ impl fmt::Debug for PreparedRequest {
     }
 }
 
+/// Gives a [`RequestService`] the Vault when a send first needs it, so the
+/// service can exist before the Vault is opened: opening it reaches the
+/// keychain, which starting Dea or inspecting a request never does.
+pub trait VaultProvider: Send + Sync {
+    /// The Vault, opened the first time.
+    ///
+    /// # Errors
+    ///
+    /// [`UseError::Vault`] when the Vault cannot be opened.
+    fn open(&self) -> Result<Arc<VaultService>, UseError>;
+}
+
+/// A Vault that is already open.
+impl VaultProvider for Arc<VaultService> {
+    fn open(&self) -> Result<Arc<VaultService>, UseError> {
+        Ok(Arc::clone(self))
+    }
+}
+
 /// Sends project requests. One per app, shared by every window.
 pub struct RequestService {
     client: Client,
     store: Arc<Store>,
-    vault: Arc<VaultService>,
+    vault: Box<dyn VaultProvider>,
     prompter: Arc<dyn Prompter>,
     /// Production environments whose `GET`, `HEAD` and `OPTIONS` requests
     /// go out without asking, until Dea quits.
@@ -120,17 +139,19 @@ pub struct RequestService {
 }
 
 impl RequestService {
+    /// A service that opens the Vault with `vault` only when a send needs
+    /// it, never to inspect a request.
     #[must_use]
     pub fn new(
         client: Client,
         store: Arc<Store>,
-        vault: Arc<VaultService>,
+        vault: impl VaultProvider + 'static,
         prompter: Arc<dyn Prompter>,
     ) -> RequestService {
         RequestService {
             client,
             store,
-            vault,
+            vault: Box::new(vault),
             prompter,
             skip: Mutex::default(),
             jars: Mutex::default(),
@@ -175,6 +196,8 @@ impl RequestService {
             self.confirm(&scope, env, &preview.method, &url)?;
         }
 
+        // Opened only now, so a cancelled confirmation leaves it untouched.
+        let vault = self.vault.open()?;
         let names = preview.secret_names();
         if !names.is_empty() {
             let action = format!(
@@ -184,13 +207,13 @@ impl RequestService {
                 environment.unwrap_or_default()
             );
             if production.is_some() {
-                self.vault.authorize_production(&action, &names)?;
-            } else if self.vault.status().locked {
-                self.vault.unlock(&production_reason(&action, &names))?;
+                vault.authorize_production(&action, &names)?;
+            } else if vault.status().locked {
+                vault.unlock(&production_reason(&action, &names))?;
             }
         }
 
-        let lookup = self.vault.lookup(project);
+        let lookup = vault.lookup(project);
         let resolved = resolve(&self.store, project, tree, path, environment, &lookup)?;
         let jar = resolved
             .options
