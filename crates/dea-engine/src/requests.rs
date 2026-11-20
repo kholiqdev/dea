@@ -167,7 +167,7 @@ impl RequestService {
         environment: Option<&str>,
     ) -> Result<PreparedRequest, SendError> {
         let scope = project.vault_scope();
-        let preview = resolve(project, tree, path, environment, &Placeholders)?;
+        let preview = resolve(&self.store, project, tree, path, environment, &Placeholders)?;
         let url = with_scheme(&preview.url).redacted;
         let production = environment.filter(|env| is_production(project, env));
         if let Some(env) = production {
@@ -190,7 +190,7 @@ impl RequestService {
         }
 
         let lookup = self.vault.lookup(project);
-        let resolved = resolve(project, tree, path, environment, &lookup)?;
+        let resolved = resolve(&self.store, project, tree, path, environment, &lookup)?;
         let jar = resolved
             .options
             .cookies
@@ -376,6 +376,7 @@ impl SecretLookup for Placeholders {
 }
 
 fn resolve(
+    store: &Store,
     project: &Project,
     tree: &RequestTree,
     path: &Path,
@@ -383,11 +384,13 @@ fn resolve(
     secrets: &dyn SecretLookup,
 ) -> Result<ResolvedRequest, RequestError> {
     let mut dynamic = SystemDynamicSource;
+    let local_files = store.local_files(&project.vault_scope());
     let mut ctx = RequestContext {
         project,
         tree,
         environment,
         secrets,
+        local_files: &local_files,
         dynamic: &mut dynamic,
     };
     resolve_request(path, &mut ctx)

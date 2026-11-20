@@ -1155,6 +1155,7 @@ dependencies = [
  "dea-project",
  "dea-testkit",
  "dea-vault",
+ "rand",
  "secrecy",
  "serde",
  "serde_json",

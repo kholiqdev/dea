@@ -19,6 +19,7 @@ arboard.workspace = true
 dea-http.workspace = true
 dea-project.workspace = true
 dea-vault.workspace = true
+rand.workspace = true
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

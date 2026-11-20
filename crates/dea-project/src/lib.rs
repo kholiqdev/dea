@@ -5,6 +5,7 @@ mod create;
 mod environments;
 mod error;
 mod load;
+mod local_files;
 mod migrate;
 mod model;
 mod names;
@@ -25,6 +26,7 @@ pub use environments::{
 };
 pub use error::{FileError, ProjectError};
 pub use load::{has_merge_conflict_markers, load_project};
+pub use local_files::{LOCAL_PREFIX, LocalFiles, NoLocalFiles, is_local_ref};
 pub use migrate::{Migration, MigrationOutcome, migrate, migrate_with};
 pub use model::{
     Environment, LoadedProject, MAX_RELATIVE_PATH_LEN, Manifest, Project, SCHEMA_VERSION,

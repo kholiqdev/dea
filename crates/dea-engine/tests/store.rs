@@ -534,3 +534,59 @@ fn clear_project_removes_ui_state_and_cookies() {
     // Clearing a project with nothing saved is fine.
     store.clear_project("never-saved").unwrap();
 }
+
+#[test]
+fn add_local_file_reuses_the_id_for_the_same_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    let a = store
+        .add_local_file("p-1", Path::new("/tmp/a.bin"))
+        .unwrap();
+    let b = store
+        .add_local_file("p-1", Path::new("/tmp/b.bin"))
+        .unwrap();
+    let again = store
+        .add_local_file("p-1", Path::new("/tmp/a.bin"))
+        .unwrap();
+    assert!(dea_project::is_local_ref(&a), "{a}");
+    assert_eq!(a, again);
+    assert_ne!(a, b);
+    let map = Store::new(dir.path()).local_files("p-1");
+    assert_eq!(map.len(), 2);
+    assert_eq!(map[&a], PathBuf::from("/tmp/a.bin"));
+    assert_eq!(map[&b], PathBuf::from("/tmp/b.bin"));
+    assert!(store.local_files("q-2").is_empty());
+}
+
+#[test]
+fn clear_project_forgets_local_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .add_local_file("p-1", Path::new("/tmp/a.bin"))
+        .unwrap();
+    store
+        .add_local_file("q-2", Path::new("/tmp/b.bin"))
+        .unwrap();
+    store.clear_project("p-1").unwrap();
+    assert!(store.local_files("p-1").is_empty());
+    assert_eq!(store.local_files("q-2").len(), 1);
+}
+
+#[test]
+fn damaged_local_files_are_set_aside() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .add_local_file("p-1", Path::new("/tmp/a.bin"))
+        .unwrap();
+    let file = fs::read_dir(dir.path().join("local-files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    fs::write(&file, "not json").unwrap();
+    assert!(store.local_files("p-1").is_empty());
+    assert!(file.with_extension("json.damaged").exists());
+}
