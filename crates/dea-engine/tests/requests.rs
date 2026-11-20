@@ -15,8 +15,8 @@ use dea_engine::{
 };
 use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
-    ApiKeyLocation, Auth, Body, Environment, KeyValue, Project, RequestFile, RequestTree,
-    SecretKind, SendOptions, Variable, create_project, load_requests, save_request,
+    ApiKeyLocation, Auth, Body, Environment, KeyValue, Project, RequestError, RequestFile,
+    RequestTree, SecretKind, SendOptions, Variable, create_project, load_requests, save_request,
 };
 use dea_testkit::http::{Received, TestServer, Tls};
 use dea_testkit::{canary, find_canary};
@@ -947,4 +947,102 @@ async fn inspect_reports_inherited_options() {
         ),
         (8000, 2, false, true, true)
     );
+}
+
+#[tokio::test]
+async fn inspect_lists_no_content_length_without_a_body() {
+    let f = Fixture::new().await;
+    let draft = request("GET", "{{baseUrl}}/x");
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    let names: Vec<&str> = inspection
+        .automatic_headers
+        .iter()
+        .map(|h| h.name.as_str())
+        .collect();
+    assert_eq!(names, ["Host", "User-Agent", "Accept"]);
+}
+
+#[tokio::test]
+async fn inspect_lists_no_content_length_for_an_empty_text_body() {
+    let f = Fixture::new().await;
+    let mut draft = request("POST", "{{baseUrl}}/x");
+    draft.body = Some(Body::Json {
+        text: String::new(),
+    });
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert!(
+        inspection
+            .automatic_headers
+            .iter()
+            .all(|h| h.name != "Content-Length")
+    );
+}
+
+#[tokio::test]
+async fn inspect_works_when_a_local_file_is_not_on_this_device() {
+    let f = Fixture::new().await;
+    let mut draft = request("POST", "{{baseUrl}}/{{carrierCode}}");
+    draft.body = Some(Body::Binary {
+        file: "local:0123456789ab".into(),
+    });
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert!(inspection.variables.iter().any(|v| v.name == "baseUrl"));
+    assert_eq!(inspection.undefined, ["carrierCode"]);
+    let header = |name: &str| {
+        inspection
+            .automatic_headers
+            .iter()
+            .find(|h| h.name == name)
+            .unwrap()
+    };
+    assert_eq!(
+        header("Content-Type").value.as_deref(),
+        Some("application/octet-stream")
+    );
+    assert!(
+        inspection
+            .automatic_headers
+            .iter()
+            .any(|h| h.name == "Content-Length")
+    );
+    // Sending it still fails: the file is not here.
+    let mut f = f;
+    let path = f.add("binary", draft);
+    let result = f.prepare(&path, Some("staging"));
+    assert!(matches!(
+        result,
+        Err(SendError::Request(RequestError::LocalFileMissing(_)))
+    ));
+}
+
+#[tokio::test]
+async fn a_folder_header_replaces_the_automatic_user_agent() {
+    let f = Fixture::new().await;
+    fs::write(
+        f.project_dir.path().join("requests/shipments/_folder.yaml"),
+        "headers:\n  - name: user-agent\n    value: Harbor\n",
+    )
+    .unwrap();
+    let mut f = f;
+    f.tree = load_requests(f.project_dir.path()).unwrap().tree;
+    let draft = request("GET", "{{baseUrl}}/x");
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    let replaced = |name: &str| {
+        inspection
+            .automatic_headers
+            .iter()
+            .find(|h| h.name == name)
+            .unwrap()
+            .replaced
+    };
+    assert!(replaced("User-Agent"));
+    assert!(!replaced("Accept"));
 }

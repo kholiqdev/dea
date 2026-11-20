@@ -94,6 +94,11 @@ impl Plan {
         }
     }
 
+    /// Whether any bytes are sent.
+    pub(crate) fn has_bytes(&self) -> bool {
+        self.len > 0
+    }
+
     /// The `Content-Type` Dea adds unless the user wrote one.
     pub(crate) fn content_type(&self) -> Option<&str> {
         self.content_type.as_deref()

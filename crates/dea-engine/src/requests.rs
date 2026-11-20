@@ -15,9 +15,9 @@ use std::time::Duration;
 
 use dea_http::{Body, ClientIdentity, Options, Part, PartValue, Request, SendContext, TlsConfig};
 use dea_project::{
-    FieldValue, Project, RequestContext, RequestError, RequestFile, RequestTree, Resolved,
-    ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError,
-    SystemDynamicSource, resolve_draft, resolve_request,
+    FieldValue, LocalFiles, Project, RequestContext, RequestError, RequestFile, RequestTree,
+    Resolved, ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError,
+    SystemDynamicSource, is_local_ref, resolve_draft, resolve_request,
 };
 use url::Url;
 use zeroize::Zeroizing;
@@ -231,10 +231,10 @@ impl RequestService {
         environment: Option<&str>,
     ) -> Result<Inspection, SendError> {
         let preview = resolve_with(
-            &self.store,
             project,
             environment,
             &Placeholders,
+            &AnyLocalFile,
             |ctx| resolve_draft(path, draft, ctx),
             tree,
         )?;
@@ -406,6 +406,17 @@ impl SecretLookup for Placeholders {
     }
 }
 
+/// Stands in for this device's file map when inspecting: every well-formed
+/// `local:` reference has a path, because nothing is read. A file picked on
+/// another device is shown elsewhere.
+struct AnyLocalFile;
+
+impl LocalFiles for AnyLocalFile {
+    fn path(&self, id: &str) -> Option<PathBuf> {
+        is_local_ref(id).then(|| PathBuf::from(id))
+    }
+}
+
 fn resolve(
     store: &Store,
     project: &Project,
@@ -414,34 +425,33 @@ fn resolve(
     environment: Option<&str>,
     secrets: &dyn SecretLookup,
 ) -> Result<ResolvedRequest, RequestError> {
+    let local_files = store.local_files(&project.vault_scope());
     resolve_with(
-        store,
         project,
         environment,
         secrets,
+        &local_files,
         |ctx| resolve_request(path, ctx),
         tree,
     )
 }
 
-/// Runs `resolver` with the context of `project`, including the files
-/// this device picked from outside it.
+/// Runs `resolver` with the context of `project`.
 fn resolve_with(
-    store: &Store,
     project: &Project,
     environment: Option<&str>,
     secrets: &dyn SecretLookup,
+    local_files: &dyn LocalFiles,
     resolver: impl FnOnce(&mut RequestContext) -> Result<ResolvedRequest, RequestError>,
     tree: &RequestTree,
 ) -> Result<ResolvedRequest, RequestError> {
     let mut dynamic = SystemDynamicSource;
-    let local_files = store.local_files(&project.vault_scope());
     let mut ctx = RequestContext {
         project,
         tree,
         environment,
         secrets,
-        local_files: &local_files,
+        local_files,
         dynamic: &mut dynamic,
     };
     resolver(&mut ctx)

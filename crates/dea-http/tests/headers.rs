@@ -26,7 +26,12 @@ async fn automatic_headers_match_what_is_sent() {
     let server = TestServer::start(Tls::None).await;
     let client = Client::new(ClientConfig::default()).unwrap();
     let request = json_request(&server.url("/echo"));
-    let listed = automatic_headers(&request.url, Some("application/json"), client.user_agent());
+    let listed = automatic_headers(
+        &request.url,
+        Some("application/json"),
+        true,
+        client.user_agent(),
+    );
 
     let cancel = CancellationToken::new();
     client
@@ -50,7 +55,7 @@ async fn automatic_headers_match_what_is_sent() {
 fn automatic_headers_are_listed_in_order_and_skip_a_missing_content_type() {
     let url: url::Url = "http://api.test:8080/x".parse().unwrap();
     let names = |content_type| -> Vec<&'static str> {
-        automatic_headers(&url, content_type, "Dea/1")
+        automatic_headers(&url, content_type, true, "Dea/1")
             .into_iter()
             .map(|(name, _)| name)
             .collect()
@@ -69,7 +74,29 @@ fn automatic_headers_are_listed_in_order_and_skip_a_missing_content_type() {
             "Content-Length"
         ]
     );
-    let listed = automatic_headers(&url, None, "Dea/1");
+    let listed = automatic_headers(&url, None, true, "Dea/1");
     assert_eq!(listed[0], ("Host", Some("api.test:8080".to_string())));
     assert_eq!(listed[3], ("Content-Length", None));
+}
+
+#[tokio::test]
+async fn a_request_without_a_body_lists_and_sends_no_content_length() {
+    let server = TestServer::start(Tls::None).await;
+    let client = Client::new(ClientConfig::default()).unwrap();
+    let mut request = json_request(&server.url("/echo"));
+    request.method = "GET".into();
+    request.body = Body::Empty;
+    let listed = automatic_headers(&request.url, None, false, client.user_agent());
+
+    let cancel = CancellationToken::new();
+    client
+        .send(request, SendContext::new(&cancel))
+        .await
+        .unwrap();
+    let received = server.requests().pop().unwrap();
+
+    assert!(listed.iter().all(|(name, _)| *name != "Content-Length"));
+    assert_eq!(received.header("content-length"), None);
+    let on_the_wire: Vec<&str> = received.headers.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(on_the_wire, ["host", "user-agent", "accept"]);
 }
