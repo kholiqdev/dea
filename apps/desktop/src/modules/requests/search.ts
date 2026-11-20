@@ -9,9 +9,12 @@ import { ROOT, treeState } from "./state/tree.svelte";
 /** The tab type that shows one request, with its `path` as params. */
 const REQUEST_TAB = "requests.request";
 
-/** Every request of the tree, depth first, as palette items. */
+/**
+ * Every request of the tree, depth first, as palette items. The tree is
+ * read each time, as the sidebar may not be showing it.
+ */
 export default async function requestItems(): Promise<PaletteItem[]> {
-  if (!treeState.info) await treeState.load();
+  await treeState.load();
   const out: PaletteItem[] = [];
   const visit = (nodes: readonly RequestNode[]) => {
     for (const node of nodes) {

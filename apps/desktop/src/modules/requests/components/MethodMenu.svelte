@@ -1,6 +1,7 @@
 <!--
   The request's method: one of the standard seven from the menu, or any
-  other HTTP token typed after choosing Custom… (F1-REQ-02 #1).
+  other HTTP token typed after choosing Custom… (F1-REQ-02 #1). Enter or
+  leaving the field takes a valid token; Escape takes nothing.
 -->
 <script lang="ts">
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -56,6 +57,12 @@
     root?.querySelector<HTMLElement>("button")?.focus();
   }
 
+  /** Leaving the field keeps a valid method, as Enter does. */
+  function leave(): void {
+    if (custom !== null && valid) onchange(custom);
+    custom = null;
+  }
+
   function onkeydown(e: KeyboardEvent): void {
     if (e.key === "Enter" && valid) {
       e.preventDefault();
@@ -84,7 +91,7 @@
       spellcheck="false"
       bind:value={custom}
       {onkeydown}
-      onblur={() => (custom = null)}
+      onblur={leave}
     />
   {:else if disabled}
     <button type="button" class="locked" disabled>{@render label()}</button>

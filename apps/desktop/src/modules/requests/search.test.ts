@@ -3,6 +3,7 @@ import { setShellApi, type ShellApi } from "$app/contributions/shell-api";
 import requestItems from "./search";
 import { resetTreeState, treeState } from "./state/tree.svelte";
 import { fakeRequestsIpc, folder, leaf } from "./test-support";
+import type { RequestNode } from "$lib/ipc/bindings/RequestNode";
 
 let opened: [string, string, unknown][];
 let activated: string[];
@@ -114,4 +115,17 @@ test("a removed request says so", async () => {
   await items[1]?.open("active");
   expect(toasts).toEqual(["Health no longer exists"]);
   expect(opened).toEqual([]);
+});
+
+test("each time the palette opens it lists the requests there are now", async () => {
+  const ipc = fakeRequestsIpc({ tree: shipments() });
+  await requestItems();
+  const harbor = ipc.tree.collections[0]?.items as RequestNode[];
+  harbor.push(leaf("requests/harbor/ports.yaml", "Ports"));
+  const items = await requestItems();
+  expect(items.map((i) => i.title)).toEqual([
+    "Shipment by ID",
+    "Health",
+    "Ports",
+  ]);
 });

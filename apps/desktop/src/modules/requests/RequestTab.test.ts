@@ -413,6 +413,33 @@ test("custom_method_is_accepted_and_shown", async () => {
   expect(ipc.saved.at(-1)?.method).toBe("PURGE");
 });
 
+test("leaving the custom method field keeps a valid method and drops an invalid one", async () => {
+  shipmentsIpc();
+  openRequestTab(BY_ID);
+  const custom = async () => {
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Method: / }),
+    );
+    await userEvent.click(
+      screen.getByRole("menuitemradio", { name: "Custom…" }),
+    );
+    return screen.getByRole("textbox", { name: "Custom method" });
+  };
+  await userEvent.type(await custom(), "PURGE");
+  await userEvent.click(await urlField());
+  expect(
+    screen.getByRole("button", { name: "Method: PURGE" }),
+  ).toBeInTheDocument();
+
+  const input = await custom();
+  await userEvent.clear(input);
+  await userEvent.type(input, "NOT OK");
+  await userEvent.click(await urlField());
+  expect(
+    screen.getByRole("button", { name: "Method: PURGE" }),
+  ).toBeInTheDocument();
+});
+
 test("a standard method is chosen from the menu", async () => {
   shipmentsIpc();
   openRequestTab(BY_ID);
