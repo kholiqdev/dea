@@ -27,6 +27,13 @@ test("marks undefined variables", () => {
   expect(container.querySelector(".cm-var-undefined")).not.toBeNull();
 });
 
+test("an undefined variable is underlined, not only coloured", () => {
+  const { container } = mount();
+  const mark = container.querySelector(".cm-var-undefined") as HTMLElement;
+  expect(getComputedStyle(mark).textDecorationLine).toBe("underline");
+  expect(getComputedStyle(mark).textDecorationStyle).toBe("wavy");
+});
+
 test("marks defined variables", () => {
   const { container } = mount({
     variables: { defined: () => true, describe: () => null },

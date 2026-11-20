@@ -258,7 +258,10 @@
     color: var(--text-2);
   }
 
+  /* Not by colour alone (WCAG 1.4.1). */
   .variable.undefined-var {
     color: var(--negative-text);
+    text-decoration: underline wavy var(--negative-text);
+    text-underline-offset: 3px;
   }
 </style>
