@@ -10,6 +10,15 @@ const WINDOWS_RESERVED: [&str; 22] = [
     "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
 
+/// `path` relative to the project root, with forward slashes on every OS.
+#[must_use]
+pub fn portable_path(path: &Path) -> String {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn trim_edges(s: &str) -> &str {
     s.trim_matches(|c| c == '-' || c == '.' || c == ' ')
 }
