@@ -56,6 +56,9 @@ export class Registry {
         !this.#disabled.has(m.id) && (this.#projectOpen || m.scope === "app"),
     ),
   );
+  // The same objects until the modules change: a tab's view reloads, and
+  // remounts, whenever its tab type is a new object.
+  #tabTypes = $derived(flatten(this.#active, (m) => m.tabTypes));
 
   /** Adds a module. Throws ContributionError and adds nothing if any id is bad. */
   register(m: ModuleManifest): void {
@@ -126,7 +129,7 @@ export class Registry {
   }
 
   tabType(id: string): FromModule<TabTypeContribution> | undefined {
-    return flatten(this.#active, (m) => m.tabTypes).find((t) => t.id === id);
+    return this.#tabTypes.find((t) => t.id === id);
   }
 
   invoke(intent: string, args?: unknown): Promise<IntentResult> {
