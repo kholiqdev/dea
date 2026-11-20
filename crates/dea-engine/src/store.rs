@@ -35,11 +35,14 @@ pub const FONT_SIZES: RangeInclusive<u8> = 11..=20;
 const SETTINGS_FILE: &str = "settings.json";
 const UI_DIR: &str = "ui";
 const COOKIES_DIR: &str = "cookies";
+const LOCAL_FILES_DIR: &str = "local-files";
 const RECENT_FILE: &str = "recent.json";
 /// The recent projects file format this Dea writes.
 pub const RECENT_VERSION: u32 = 1;
 /// The cookie jar file format this Dea writes.
 pub const COOKIES_VERSION: u32 = 1;
+/// The local files map format this Dea writes.
+pub const LOCAL_FILES_VERSION: u32 = 1;
 
 /// The person's settings, shared by every project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,7 +353,48 @@ impl Store {
     pub fn clear_project(&self, scope: &str) -> Result<(), StoreError> {
         let ui = self.clear_ui_state(scope);
         let cookies = remove_dir(&self.cookies_dir(scope));
-        ui.and(cookies)
+        let local = remove_file(&self.local_files_path(scope));
+        ui.and(cookies).and(local)
+    }
+
+    /// The files project `scope` uses from outside the project, by their
+    /// `local:<id>` reference. Empty when there are none. A file that is
+    /// damaged or from a newer Dea is set aside as for
+    /// [`Store::load_settings`].
+    pub fn local_files(&self, scope: &str) -> BTreeMap<String, PathBuf> {
+        read_or_set_aside(&self.local_files_path(scope), |bytes| {
+            let file: LocalFilesFile = serde_json::from_slice(bytes).ok()?;
+            (file.version <= LOCAL_FILES_VERSION).then_some(file.files)
+        })
+        .unwrap_or_default()
+    }
+
+    /// Remembers `path` for project `scope` and gives the `local:<id>`
+    /// reference to write in a request. The same path keeps its reference.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Invalid`] when the path is not valid text;
+    /// [`StoreError::Io`] when the file cannot be written.
+    pub fn add_local_file(&self, scope: &str, path: &Path) -> Result<String, StoreError> {
+        let mut files = self.local_files(scope);
+        if let Some(known) = files.iter().find(|(_, p)| p.as_path() == path) {
+            return Ok(known.0.clone());
+        }
+        let reference = loop {
+            let id: u64 = rand::random_range(0..1 << 48);
+            let reference = format!("{}{id:012x}", dea_project::LOCAL_PREFIX);
+            if !files.contains_key(&reference) {
+                break reference;
+            }
+        };
+        files.insert(reference.clone(), path.to_path_buf());
+        let file = LocalFilesFile {
+            version: LOCAL_FILES_VERSION,
+            files,
+        };
+        write_json(&self.local_files_path(scope), &file)?;
+        Ok(reference)
     }
 
     /// The cookie jar of `environment` of project `scope`; `""` is "No
@@ -457,6 +501,12 @@ impl Store {
         self.dir.join(COOKIES_DIR).join(hashed(scope))
     }
 
+    fn local_files_path(&self, scope: &str) -> PathBuf {
+        self.dir
+            .join(LOCAL_FILES_DIR)
+            .join(format!("{}.json", hashed(scope)))
+    }
+
     fn cookies_path(&self, scope: &str, environment: &str) -> PathBuf {
         self.cookies_dir(scope)
             .join(format!("{}.json", hashed(environment)))
@@ -482,6 +532,23 @@ fn remove_dir(dir: &Path) -> Result<(), StoreError> {
         }),
         _ => Ok(()),
     }
+}
+
+fn remove_file(path: &Path) -> Result<(), StoreError> {
+    match fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(StoreError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// The stored map of a project's local files.
+#[derive(Debug, Serialize, Deserialize)]
+struct LocalFilesFile {
+    version: u32,
+    files: BTreeMap<String, PathBuf>,
 }
 
 /// A stored cookie jar. `cookies` is the jar's own JSON, kept as it is.

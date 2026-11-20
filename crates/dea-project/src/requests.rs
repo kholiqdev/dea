@@ -9,6 +9,7 @@ use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use crate::load::{io_error, parse};
+use crate::local_files::check_file_ref;
 use crate::request::{Body, ClientCertificate};
 use crate::{
     FileError, FolderFile, Project, ProjectError, RequestFile, check_relative_path, to_yaml,
@@ -199,6 +200,15 @@ pub(crate) fn validate_request(request: &RequestFile) -> Result<(), String> {
             request.method
         ));
     }
+    match &request.body {
+        Some(Body::Binary { file }) => check_file_ref(file)?,
+        Some(Body::FormData { fields }) => {
+            for file in fields.iter().filter_map(|f| f.file.as_deref()) {
+                check_file_ref(file)?;
+            }
+        }
+        _ => {}
+    }
     if let Some(Body::FormData { fields }) = &request.body {
         for field in fields {
             if field.value.is_some() == field.file.is_some() {
@@ -236,12 +246,14 @@ pub(crate) fn validate_folder(settings: &FolderFile, root: bool) -> Result<(), S
     {
         return Err("a folder name cannot be blank".into());
     }
-    if let Some(cert) = settings
-        .tls
-        .as_ref()
-        .and_then(|t| t.client_certificate.as_ref())
-    {
-        validate_client_certificate(cert)?;
+    if let Some(tls) = &settings.tls {
+        for ca in &tls.ca_certificates {
+            check_file_ref(ca)?;
+        }
+        if let Some(cert) = &tls.client_certificate {
+            check_file_ref(&cert.certificate)?;
+            validate_client_certificate(cert)?;
+        }
     }
     Ok(())
 }

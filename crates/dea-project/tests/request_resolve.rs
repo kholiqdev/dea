@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use dea_project::{
-    DynamicSource, Environment, FieldValue, Project, RequestContext, RequestError, RequestTree,
-    ResolvedBody, ResolvedRequest, ScopeKind, SecretLookup, SecretLookupError, ValueSource,
-    Variable, create_project, load_requests, resolve_request,
+    DynamicSource, Environment, FieldValue, LocalFiles, NoLocalFiles, Project, RequestContext,
+    RequestError, RequestTree, ResolvedBody, ResolvedRequest, ScopeKind, SecretLookup,
+    SecretLookupError, ValueSource, Variable, create_project, load_requests, resolve_request,
 };
 
 struct Vault(HashMap<String, String>);
@@ -92,12 +92,23 @@ fn run_with(
     environment: Option<&str>,
     secrets: &dyn SecretLookup,
 ) -> Result<ResolvedRequest, RequestError> {
+    run_local(f, path, environment, secrets, &NoLocalFiles)
+}
+
+fn run_local(
+    f: &Fixture,
+    path: &str,
+    environment: Option<&str>,
+    secrets: &dyn SecretLookup,
+    local_files: &dyn LocalFiles,
+) -> Result<ResolvedRequest, RequestError> {
     let mut dynamic = Fixed;
     let mut ctx = RequestContext {
         project: &f.project,
         tree: &f.tree,
         environment,
         secrets,
+        local_files,
         dynamic: &mut dynamic,
     };
     resolve_request(Path::new(path), &mut ctx)
@@ -609,4 +620,100 @@ fn dynamic_variables_in_a_body() {
     };
     assert_eq!(text.text, "{\"id\": \"g-1\", \"n\": 7}");
     assert_eq!(content_type, "application/json");
+}
+
+const LOCAL_ID: &str = "local:0123456789ab";
+
+fn local_fixture() -> Fixture {
+    fixture(&[
+        (
+            "requests/shipments/upload.yaml",
+            &format!(
+                "name: U\nmethod: POST\nurl: http://h\nbody:\n  mode: binary\n  file: {LOCAL_ID}\n"
+            ),
+        ),
+        (
+            "requests/shipments/_folder.yaml",
+            &format!(
+                "tls:\n  caCertificates:\n    - {LOCAL_ID}\n  clientCertificate:\n    \
+                 certificate: {LOCAL_ID}\n    key: '{{{{vault:client_key}}}}'\n"
+            ),
+        ),
+    ])
+}
+
+fn local_map(path: &str) -> BTreeMap<String, PathBuf> {
+    [(LOCAL_ID.to_string(), PathBuf::from(path))].into()
+}
+
+#[test]
+fn local_body_file_resolves_through_the_map() {
+    let f = local_fixture();
+    let resolved = run_local(
+        &f,
+        "requests/shipments/upload.yaml",
+        Some("staging"),
+        &Vault::new(&[("client_key", "k")]),
+        &local_map("/tmp/x/upload.bin"),
+    )
+    .unwrap();
+    assert_eq!(
+        resolved.body,
+        ResolvedBody::File {
+            path: PathBuf::from("/tmp/x/upload.bin"),
+            content_type: "application/octet-stream"
+        }
+    );
+    assert_eq!(
+        resolved.tls.ca_certificates,
+        [PathBuf::from("/tmp/x/upload.bin")]
+    );
+    assert_eq!(
+        resolved.tls.client_certificate.unwrap().certificate,
+        PathBuf::from("/tmp/x/upload.bin")
+    );
+}
+
+#[test]
+fn unknown_local_file_names_it() {
+    let f = local_fixture();
+    let err = run_local(
+        &f,
+        "requests/shipments/upload.yaml",
+        Some("staging"),
+        &Vault::new(&[]),
+        &BTreeMap::new(),
+    )
+    .unwrap_err();
+    assert!(matches!(&err, RequestError::LocalFileMissing(id) if id == LOCAL_ID));
+    assert_eq!(
+        err.to_string(),
+        "the file \"local:0123456789ab\" was picked on another device; choose it again"
+    );
+}
+
+#[test]
+fn local_form_file_resolves_through_the_map() {
+    let f = fixture(&[(
+        "requests/a/form.yaml",
+        &format!(
+            "name: F\nmethod: POST\nurl: http://h\nbody:\n  mode: formData\n  fields:\n    \
+             - name: f\n      file: {LOCAL_ID}\n"
+        ),
+    )]);
+    let resolved = run_local(
+        &f,
+        "requests/a/form.yaml",
+        None,
+        &Vault::new(&[]),
+        &local_map("/tmp/x/a.txt"),
+    )
+    .unwrap();
+    let ResolvedBody::FormData(fields) = &resolved.body else {
+        panic!("form data");
+    };
+    assert!(matches!(
+        &fields[0].value,
+        FieldValue::File { path, .. } if path == Path::new("/tmp/x/a.txt")
+    ));
 }

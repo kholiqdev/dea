@@ -852,3 +852,69 @@ fn missing_required_fields_are_refused() {
         );
     }
 }
+
+#[test]
+fn local_refs_must_be_twelve_hex_digits() {
+    for bad in [
+        "local:xyz",
+        "local:0123456789AB",
+        "local:0123456789abc",
+        "'local:'",
+    ] {
+        let message = load_error(&format!("body:\n  mode: binary\n  file: {bad}\n"));
+        assert!(message.contains("local:"), "{bad}: {message}");
+        let form = load_error(&format!(
+            "body:\n  mode: formData\n  fields:\n    - name: f\n      file: {bad}\n"
+        ));
+        assert!(form.contains("local:"), "{bad}: {form}");
+    }
+}
+
+#[test]
+fn saving_refuses_a_malformed_local_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = project(dir.path());
+    let path = Path::new("requests/a/r.yaml");
+    assert!(matches!(
+        save_request(&project, path, &form_field(None, Some("local:nope"))),
+        Err(ProjectError::InvalidRequest(_))
+    ));
+    save_request(
+        &project,
+        path,
+        &form_field(None, Some("local:0123456789ab")),
+    )
+    .unwrap();
+}
+
+#[test]
+fn ca_certificate_may_be_a_local_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(
+        root,
+        "requests/a/_folder.yaml",
+        "tls:\n  caCertificates:\n    - local:0123456789ab\n",
+    );
+    write(root, "requests/a/r.yaml", &simple("R"));
+    let loaded = load_requests(root).unwrap();
+    assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+    assert_eq!(loaded.tree.requests().count(), 1);
+
+    write(
+        root,
+        "requests/a/_folder.yaml",
+        "tls:\n  caCertificates:\n    - local:nope\n",
+    );
+    let loaded = load_requests(root).unwrap();
+    assert_eq!(loaded.errors.len(), 1, "{:?}", loaded.errors);
+}
+
+#[test]
+fn absolute_paths_are_still_refused() {
+    // Loading keeps them (resolving refuses them, see request_resolve);
+    // only a malformed local ref is a load error.
+    assert!(!dea_project::is_local_ref("/etc/passwd"));
+    assert!(!dea_project::is_local_ref("local:0123456789ab/../x"));
+    assert!(dea_project::is_local_ref("local:0123456789ab"));
+}

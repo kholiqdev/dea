@@ -8,6 +8,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
+use crate::local_files::{LocalFiles, is_local_ref};
 use crate::request::{ApiKeyLocation, Auth, Body, KeyValue, RawLanguage, SendOptions};
 use crate::{
     DynamicSource, Folder, Project, RequestTree, ResolveContext, ResolveError, Scope, ScopeKind,
@@ -37,6 +38,8 @@ pub struct RequestContext<'a> {
     /// Vault is not read.
     pub environment: Option<&'a str>,
     pub secrets: &'a dyn SecretLookup,
+    /// The files this device picked from outside the project.
+    pub local_files: &'a dyn LocalFiles,
     pub dynamic: &'a mut dyn DynamicSource,
 }
 
@@ -195,6 +198,8 @@ pub enum RequestError {
     BrokenFolder(PathBuf),
     #[error("{0} is outside the project: use a path inside the project folder")]
     FileOutsideProject(String),
+    #[error("the file \"{0}\" was picked on another device; choose it again")]
+    LocalFileMissing(String),
     #[error(transparent)]
     Resolve(#[from] ResolveError),
 }
@@ -286,6 +291,21 @@ fn project_path(root: &Path, relative: &str) -> Result<PathBuf, RequestError> {
     }
     // The path as written, so a link keeps its own file name.
     Ok(joined)
+}
+
+/// The file a request names: a `local:` reference goes through this
+/// device's map and is used as it is; anything else is a project path.
+fn file_path(
+    root: &Path,
+    local_files: &dyn LocalFiles,
+    value: &str,
+) -> Result<PathBuf, RequestError> {
+    if is_local_ref(value) {
+        return local_files
+            .path(value)
+            .ok_or_else(|| RequestError::LocalFileMissing(value.to_string()));
+    }
+    project_path(root, value)
 }
 
 fn first_set<T>(values: impl Iterator<Item = Option<T>>) -> Option<T> {
@@ -415,6 +435,8 @@ fn encode(value: &str) -> String {
 /// [`RequestError::BrokenFolder`] when a folder around it could not be
 /// read; [`RequestError::FileOutsideProject`] for a body or certificate
 /// path that is absolute, uses `..` or leads out through a symbolic link;
+/// [`RequestError::LocalFileMissing`] for a `local:` reference this device
+/// has no file for;
 /// [`RequestError::Resolve`] for a variable cycle or an unreadable secret.
 #[allow(clippy::too_many_lines)]
 pub fn resolve_request(
@@ -431,6 +453,7 @@ pub fn resolve_request(
     let folders = &location.folders;
     let request = &location.entry.request;
     let root = &ctx.project.root;
+    let local_files = ctx.local_files;
 
     // Innermost folder first; within a kind the first scope wins.
     let mut scopes = Vec::new();
@@ -591,7 +614,7 @@ pub fn resolve_request(
                 let name = r.part(&field.name)?;
                 let value = match (&field.file, &field.value) {
                     (Some(file), _) => FieldValue::File {
-                        path: project_path(root, file)?,
+                        path: file_path(root, local_files, file)?,
                         content_type: field.content_type.clone(),
                     },
                     (None, value) => FieldValue::Text(r.part(value.as_deref().unwrap_or(""))?),
@@ -601,7 +624,7 @@ pub fn resolve_request(
             ResolvedBody::FormData(out)
         }
         Some(Body::Binary { file }) => ResolvedBody::File {
-            path: project_path(root, file)?,
+            path: file_path(root, local_files, file)?,
             content_type: "application/octet-stream",
         },
     };
@@ -610,11 +633,11 @@ pub fn resolve_request(
     let mut tls = ResolvedTls::default();
     if let Some(settings) = folders.iter().rev().find_map(|f| f.settings.tls.as_ref()) {
         for ca in &settings.ca_certificates {
-            tls.ca_certificates.push(project_path(root, ca)?);
+            tls.ca_certificates.push(file_path(root, local_files, ca)?);
         }
         if let Some(cert) = &settings.client_certificate {
             tls.client_certificate = Some(ResolvedClientCertificate {
-                certificate: project_path(root, &cert.certificate)?,
+                certificate: file_path(root, local_files, &cert.certificate)?,
                 key: r.part(&cert.key)?,
             });
         }
