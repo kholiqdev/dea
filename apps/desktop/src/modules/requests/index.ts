@@ -5,6 +5,7 @@ export const manifest: ModuleManifest = {
   title: "Requests",
   rail: { icon: "arrow-left-right", group: "main", order: 1 },
   view: () => import("./RequestsView.svelte"),
+  sidebarHeader: "module",
   sidebar: () => import("./components/CollectionsSidebar.svelte"),
   tabTypes: [
     {

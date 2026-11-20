@@ -59,7 +59,9 @@
 </script>
 
 <aside class="side" style:width="{width}px" aria-label="{module.title} sidebar">
-  <div class="head"><h2>{module.title}</h2></div>
+  {#if module.sidebarHeader !== "module"}
+    <div class="head"><h2>{module.title}</h2></div>
+  {/if}
   <div class="body">
     {#if module.sidebar}<LazyView loader={module.sidebar} />{/if}
   </div>

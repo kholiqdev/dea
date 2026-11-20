@@ -5,6 +5,7 @@ export const manifest: ModuleManifest = {
   title: "Vault",
   rail: { icon: "key-round", group: "bottom", order: 1 },
   view: () => import("./VaultView.svelte"),
+  sidebarHeader: "module",
   sidebar: () => import("./components/VaultSidebar.svelte"),
   statusItems: [
     {

@@ -52,6 +52,8 @@ function harborTree() {
 }
 
 beforeEach(() => {
+  performance.clearMarks();
+  performance.clearMeasures();
   resetTreeState();
   opened = [];
   activated = [];
@@ -101,8 +103,10 @@ test("5,000 requests filter within 100 ms", async () => {
       performance.getEntriesByName("requests-filter").length,
     ).toBeGreaterThan(0),
   );
-  const last = performance.getEntriesByName("requests-filter").at(-1)!;
-  expect(last.duration).toBeLessThan(100);
+  // Every keystroke counts; the first ones match all 5,000 requests.
+  const entries = performance.getEntriesByName("requests-filter");
+  expect(entries.length).toBe("shipment 4999".length);
+  expect(Math.max(...entries.map((e) => e.duration))).toBeLessThan(100);
   expect(screen.getAllByRole("treeitem").map((r) => r.textContent)).toContain(
     "GETshipment 4999",
   );
@@ -269,4 +273,46 @@ test("/ focuses the filter unless a text field has the focus", async () => {
   expect(filterBox()).toHaveValue("");
   await userEvent.keyboard("a/");
   expect(filterBox()).toHaveValue("a/");
+});
+
+test("rows tell their place among their siblings", async () => {
+  fakeRequestsIpc({
+    tree: {
+      collections: [
+        folder("requests/a", "A", [
+          leaf("requests/a/1.yaml", "one"),
+          leaf("requests/a/2.yaml", "two"),
+          leaf("requests/a/3.yaml", "three"),
+          leaf("requests/a/4.yaml", "four"),
+        ]),
+        folder("requests/b", "B", [leaf("requests/b/1.yaml", "solo")]),
+      ],
+      errors: [],
+    },
+  });
+  render(CollectionsSidebar);
+  await screen.findByRole("tree", { name: "Collections" });
+  await userEvent.click(screen.getByRole("treeitem", { name: /^A/ }));
+  await userEvent.click(screen.getByRole("treeitem", { name: /^B/ }));
+  const three = screen.getByRole("treeitem", { name: /three/ });
+  expect(three).toHaveAttribute("aria-posinset", "3");
+  expect(three).toHaveAttribute("aria-setsize", "4");
+  const solo = screen.getByRole("treeitem", { name: /solo/ });
+  expect(solo).toHaveAttribute("aria-posinset", "1");
+  expect(solo).toHaveAttribute("aria-setsize", "1");
+  expect(screen.getByRole("treeitem", { name: /^B/ })).toHaveAttribute(
+    "aria-posinset",
+    "2",
+  );
+});
+
+test("a row far down a long list keeps its place when scrolled to", async () => {
+  fakeRequestsIpc({ tree: bigTree(5000) });
+  render(CollectionsSidebar);
+  await screen.findByRole("tree", { name: "Collections" });
+  await userEvent.click(screen.getByRole("treeitem", { name: /Shipments/ }));
+  await userEvent.keyboard("{End}");
+  const last = await screen.findByRole("treeitem", { name: /shipment 4999/ });
+  expect(last).toHaveAttribute("aria-posinset", "5000");
+  expect(last).toHaveAttribute("aria-setsize", "5000");
 });
