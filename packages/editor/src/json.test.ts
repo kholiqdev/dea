@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { formatJson, lintJson } from "./json";
 
 describe("json", () => {
@@ -33,5 +33,77 @@ describe("json", () => {
 
   test("format returns null for invalid JSON", () => {
     expect(formatJson('{"a":')).toBeNull();
+  });
+
+  test("lint never calls JSON.parse, so engine messages cannot matter", () => {
+    const parse = vi.spyOn(JSON, "parse").mockImplementation(() => {
+      throw new SyntaxError("JSON Parse error: Unexpected EOF");
+    });
+    try {
+      expect(lintJson('{\n  "a": 1,\n  "b": \n}')).toMatchObject({ line: 4 });
+      expect(lintJson('{"a": 1}')).toBeNull();
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  test("lint finds an error on a later line after a variable", () => {
+    expect(lintJson('{\n  "a": {{one}},\n  "b": 2,\n  "c" 3\n}')).toMatchObject(
+      {
+        line: 4,
+        message: 'Expected ":"',
+      },
+    );
+  });
+
+  test("lint reports an unterminated string", () => {
+    expect(lintJson('{\n  "a": "open\n}')).toMatchObject({
+      line: 2,
+      message: "Unterminated string",
+    });
+  });
+
+  test("lint reports end of input", () => {
+    expect(lintJson('{"a": [1, 2')).toMatchObject({
+      line: 1,
+      message: "Unexpected end of input",
+    });
+  });
+
+  test("lint rejects a trailing comma", () => {
+    expect(lintJson('{\n  "a": [1, 2,],\n  "b": 1\n}')).toMatchObject({
+      line: 2,
+    });
+    expect(lintJson('{"a": 1,}')).toMatchObject({ line: 1 });
+  });
+
+  test("lint rejects trailing content", () => {
+    expect(lintJson('{"a": 1} x')).toMatchObject({
+      message: 'Unexpected character "x"',
+    });
+  });
+
+  test("lint accepts escaped quotes and unicode escapes in strings", () => {
+    expect(lintJson('{"a": "say \\"hi\\" \\u00e9 \\\\"}')).toBeNull();
+  });
+
+  test("lint follows the number grammar", () => {
+    expect(lintJson("[0, -1, 1.5e+3, 2E-2]")).toBeNull();
+    expect(lintJson("[01]")).not.toBeNull();
+    expect(lintJson("[1.]")).not.toBeNull();
+  });
+
+  test("lint and format stay fast on a 1 MB body", () => {
+    const rows = Array.from(
+      { length: 20000 },
+      (_, i) => `{"id":${i},"v":"{{x}}","n":{{n}},"t":[true,null]}`,
+    );
+    const body = `[${rows.join(",")}]`;
+    expect(body.length).toBeGreaterThan(700_000);
+    const start = performance.now();
+    expect(lintJson(body)).toBeNull();
+    expect(performance.now() - start).toBeLessThan(100);
+    expect(formatJson(body)).not.toBeNull();
   });
 });

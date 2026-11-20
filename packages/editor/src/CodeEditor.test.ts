@@ -91,3 +91,14 @@ test("updates variable colours when the state changes", async () => {
   expect(container.querySelector(".cm-var-undefined")).toBeNull();
   expect(container.querySelector(".cm-var")).not.toBeNull();
 });
+
+test("does not lint non-JSON bodies", async () => {
+  const { container } = mount({ value: "<a><b></a>", language: "xml" });
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(container.querySelector("p[aria-live='polite']")?.textContent).toBe(
+    "",
+  );
+  expect(container.querySelector(".cm-lintRange, .cm-lint-marker")).toBeNull();
+  expect(container.querySelector(".cm-gutter-lint")).toBeNull();
+});
