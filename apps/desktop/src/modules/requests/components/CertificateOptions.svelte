@@ -6,6 +6,7 @@
   import X from "@lucide/svelte/icons/x";
   import Plus from "@lucide/svelte/icons/plus";
   import { onMount } from "svelte";
+  import Button from "@dea/ui/Button.svelte";
   import type { TlsSettings } from "$lib/ipc/bindings/TlsSettings";
   import { vaultSecrets } from "$lib/ipc/vault";
   import FileChoice from "./FileChoice.svelte";
@@ -58,6 +59,12 @@
 
   function setAuthorities(next: string[]): void {
     onchange({ ...tls, caCertificates: next });
+  }
+
+  function removeClient(): void {
+    const rest = { ...tls };
+    delete rest.clientCertificate;
+    onchange(rest);
   }
 
   function setClient(patch: { certificate?: string; key?: string }): void {
@@ -133,6 +140,13 @@
         {/each}
       </select>
     </label>
+    {#if client && (client.certificate !== "" || client.key !== "")}
+      <div class="remove-client">
+        <Button variant="ghost" size="small" {disabled} onclick={removeClient}
+          >Remove client certificate</Button
+        >
+      </div>
+    {/if}
     {#if hint}<p class="hint">{hint}</p>{/if}
   </div>
 </div>
@@ -210,6 +224,10 @@
     gap: var(--s-3);
     padding: 0 var(--s-2);
     color: var(--text-2);
+  }
+
+  .remove-client {
+    align-self: flex-start;
   }
 
   .hint {
