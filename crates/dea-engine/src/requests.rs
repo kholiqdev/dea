@@ -15,14 +15,15 @@ use std::time::Duration;
 
 use dea_http::{Body, ClientIdentity, Options, Part, PartValue, Request, SendContext, TlsConfig};
 use dea_project::{
-    FieldValue, Project, RequestContext, RequestError, RequestTree, Resolved, ResolvedBody,
-    ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError, SystemDynamicSource,
-    resolve_request,
+    FieldValue, Project, RequestContext, RequestError, RequestFile, RequestTree, Resolved,
+    ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError,
+    SystemDynamicSource, resolve_draft, resolve_request,
 };
 use url::Url;
 use zeroize::Zeroizing;
 
 use crate::error::UseError;
+use crate::inspection::Inspection;
 use crate::prompt::Prompter;
 use crate::store::{Store, StoreError};
 use crate::vault::{VaultService, is_production, production_reason};
@@ -211,6 +212,36 @@ impl RequestService {
         })
     }
 
+    /// What the editor shows about `draft`, as if it were saved at `path`:
+    /// each variable with its value and source, the placeholders with no
+    /// value, the headers Dea adds, and the options that apply. Secrets are
+    /// placeholders: the Vault is not read and nothing is asked.
+    ///
+    /// # Errors
+    ///
+    /// [`SendError::Request`] when the draft cannot be resolved, for
+    /// example a variable that refers to itself or a folder whose
+    /// `_folder.yaml` cannot be read.
+    pub fn inspect(
+        &self,
+        project: &Project,
+        tree: &RequestTree,
+        path: &Path,
+        draft: &RequestFile,
+        environment: Option<&str>,
+    ) -> Result<Inspection, SendError> {
+        let preview = resolve_with(
+            &self.store,
+            project,
+            environment,
+            &Placeholders,
+            |ctx| resolve_draft(path, draft, ctx),
+            tree,
+        )?;
+        let url = with_scheme(&preview.url).text;
+        Ok(Inspection::new(&preview, &url, self.client.user_agent()))
+    }
+
     /// Sends a prepared request with the cookies of its environment, then
     /// saves the jar if the response changed it or an earlier save failed.
     /// `events` hears the response as it arrives.
@@ -383,6 +414,26 @@ fn resolve(
     environment: Option<&str>,
     secrets: &dyn SecretLookup,
 ) -> Result<ResolvedRequest, RequestError> {
+    resolve_with(
+        store,
+        project,
+        environment,
+        secrets,
+        |ctx| resolve_request(path, ctx),
+        tree,
+    )
+}
+
+/// Runs `resolver` with the context of `project`, including the files
+/// this device picked from outside it.
+fn resolve_with(
+    store: &Store,
+    project: &Project,
+    environment: Option<&str>,
+    secrets: &dyn SecretLookup,
+    resolver: impl FnOnce(&mut RequestContext) -> Result<ResolvedRequest, RequestError>,
+    tree: &RequestTree,
+) -> Result<ResolvedRequest, RequestError> {
     let mut dynamic = SystemDynamicSource;
     let local_files = store.local_files(&project.vault_scope());
     let mut ctx = RequestContext {
@@ -393,7 +444,7 @@ fn resolve(
         local_files: &local_files,
         dynamic: &mut dynamic,
     };
-    resolve_request(path, &mut ctx)
+    resolver(&mut ctx)
 }
 
 /// `url` with `http://` in front when it has no scheme (decision 16).

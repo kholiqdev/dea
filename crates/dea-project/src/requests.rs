@@ -115,6 +115,24 @@ impl RequestTree {
         None
     }
 
+    /// The collection and folders from the collection down to `dir`, as
+    /// deep as they exist. Empty when `dir` is in no collection.
+    pub(crate) fn folder_chain(&self, dir: &Path) -> Vec<&Folder> {
+        let Some(collection) = self.collections.iter().find(|c| dir.starts_with(&c.dir)) else {
+            return Vec::new();
+        };
+        let mut chain = vec![collection];
+        while let Some(inner) = chain.last().and_then(|current| {
+            current.items.iter().find_map(|item| match item {
+                TreeItem::Folder(inner) if dir.starts_with(&inner.dir) => Some(inner),
+                _ => None,
+            })
+        }) {
+            chain.push(inner);
+        }
+        chain
+    }
+
     /// The folder or collection at `dir`, relative to the project root.
     pub(crate) fn folder(&self, dir: &Path) -> Option<&Folder> {
         fn search<'a>(folder: &'a Folder, dir: &Path) -> Option<&'a Folder> {

@@ -44,15 +44,15 @@ pub use request_ops::{
 pub use request_resolve::{
     DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS, EffectiveOptions, FieldValue, RequestContext,
     RequestError, Resolved, ResolvedBody, ResolvedClientCertificate, ResolvedField,
-    ResolvedRequest, ResolvedTls, resolve_request,
+    ResolvedRequest, ResolvedTls, resolve_draft, resolve_request,
 };
 pub use requests::{
     Folder, LoadedRequests, RequestEntry, RequestLocation, RequestTree, TreeItem, load_requests,
     save_request,
 };
 pub use resolve::{
-    DynamicSource, Resolution, ResolveContext, ResolveError, Scope, ScopeKind, SecretLookup,
-    SecretLookupError, SystemDynamicSource, UsedVariable, ValueSource, resolve,
+    DynamicSource, HIDDEN, Resolution, ResolveContext, ResolveError, Scope, ScopeKind,
+    SecretLookup, SecretLookupError, SystemDynamicSource, UsedVariable, ValueSource, resolve,
 };
 pub use schema::json_schemas;
 pub use secrets::save_secret_spec;

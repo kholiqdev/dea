@@ -97,11 +97,25 @@ pub enum ValueSource {
     Dynamic(String),
 }
 
+/// What a secret shows as, where its value must not appear.
+pub const HIDDEN: &str = "••••••••";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsedVariable {
     pub name: String,
     pub source: ValueSource,
+    /// The final value, or [`HIDDEN`] when it is or holds a secret.
+    pub shown: String,
     pub secret: bool,
+}
+
+impl UsedVariable {
+    /// Whether both are the same variable from the same source. A dynamic
+    /// variable has a new value on each use, so `shown` is not compared.
+    #[must_use]
+    pub fn same_variable(&self, other: &UsedVariable) -> bool {
+        self.name == other.name && self.source == other.source
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -256,6 +270,7 @@ impl Resolver<'_, '_> {
                             environment: environment.to_string(),
                             name: name.to_string(),
                         },
+                        shown: HIDDEN.to_string(),
                         secret: true,
                     },
                 );
@@ -287,6 +302,7 @@ impl Resolver<'_, '_> {
             UsedVariable {
                 name: name.to_string(),
                 source: ValueSource::Dynamic(name.to_string()),
+                shown: value.clone(),
                 secret: false,
             },
         );
@@ -332,6 +348,11 @@ impl Resolver<'_, '_> {
                     kind: scope.kind,
                     label: scope.label.clone(),
                 },
+                shown: if value.secret {
+                    HIDDEN.to_string()
+                } else {
+                    value.text.clone()
+                },
                 secret: value.secret,
             },
         );
@@ -340,7 +361,7 @@ impl Resolver<'_, '_> {
 
     /// Adds `used` once, at `position` or at the end, skipping duplicates.
     fn record(&mut self, position: Option<usize>, used: UsedVariable) {
-        if self.used.contains(&used) {
+        if self.used.iter().any(|u| u.same_variable(&used)) {
             return;
         }
         match position {

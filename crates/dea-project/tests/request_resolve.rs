@@ -7,7 +7,8 @@ use base64::engine::general_purpose::STANDARD;
 use dea_project::{
     DynamicSource, Environment, FieldValue, LocalFiles, NoLocalFiles, Project, RequestContext,
     RequestError, RequestTree, ResolvedBody, ResolvedRequest, ScopeKind, SecretLookup,
-    SecretLookupError, ValueSource, Variable, create_project, load_requests, resolve_request,
+    SecretLookupError, ValueSource, Variable, create_project, load_requests, resolve_draft,
+    resolve_request,
 };
 
 struct Vault(HashMap<String, String>);
@@ -716,4 +717,73 @@ fn local_form_file_resolves_through_the_map() {
         &fields[0].value,
         FieldValue::File { path, .. } if path == Path::new("/tmp/x/a.txt")
     ));
+}
+
+#[test]
+fn draft_at_a_new_path_inherits_its_folder() {
+    let f = fixture(&[(
+        "requests/shipping/_folder.yaml",
+        "variables:\n  - name: carrier\n    value: acme\nheaders:\n  - name: X-Team\n    value: dock\n\
+         options:\n  timeoutMs: 8000\n",
+    )]);
+    let draft = dea_project::RequestFile {
+        name: "New".into(),
+        method: "GET".into(),
+        url: "{{baseUrl}}/{{carrier}}".into(),
+        path_variables: Vec::new(),
+        params: Vec::new(),
+        headers: Vec::new(),
+        body: None,
+        auth: dea_project::Auth::Inherit,
+        options: dea_project::SendOptions::default(),
+    };
+    let mut dynamic = Fixed;
+    let mut ctx = RequestContext {
+        project: &f.project,
+        tree: &f.tree,
+        environment: Some("staging"),
+        secrets: &Vault::new(&[]),
+        local_files: &NoLocalFiles,
+        dynamic: &mut dynamic,
+    };
+
+    let resolved =
+        resolve_draft(Path::new("requests/shipping/new.yaml"), &draft, &mut ctx).unwrap();
+
+    assert_eq!(resolved.url.text, "http://localhost:8080/acme");
+    assert_eq!(header(&resolved, "x-team"), ["dock"]);
+    assert_eq!(resolved.options.timeout_ms, 8000);
+    let outside = resolve_draft(Path::new("elsewhere/new.yaml"), &draft, &mut ctx);
+    assert!(matches!(outside, Err(RequestError::NotFound(_))));
+}
+
+#[test]
+fn used_variables_show_their_final_value_and_hide_secrets() {
+    let f = fixture(&[
+        (
+            "requests/shipping/_folder.yaml",
+            "variables:\n  - name: plain\n    value: hello\n  - name: signed\n    \
+         value: 'k={{vault:api_key}}'\n",
+        ),
+        (
+            REQ,
+            "name: E\nmethod: GET\nurl: '{{baseUrl}}/{{plain}}/{{signed}}/{{vault:api_key}}/{{$guid}}'\n",
+        ),
+    ]);
+    let resolved = run_with(
+        &f,
+        REQ,
+        Some("staging"),
+        &Vault::new(&[("api_key", "s3cret")]),
+    )
+    .unwrap();
+    let shown = |name: &str| {
+        let used = resolved.used.iter().find(|u| u.name == name).unwrap();
+        (used.shown.clone(), used.secret)
+    };
+    assert_eq!(shown("plain"), ("hello".to_string(), false));
+    assert_eq!(shown("signed"), ("••••••••".to_string(), true));
+    assert_eq!(shown("api_key"), ("••••••••".to_string(), true));
+    assert_eq!(shown("$guid"), ("g-1".to_string(), false));
+    assert!(!format!("{:?}", resolved.used).contains("s3cret"));
 }
