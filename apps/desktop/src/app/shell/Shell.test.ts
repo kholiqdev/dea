@@ -182,3 +182,29 @@ test("shortcuts do nothing while a dialog is open", async () => {
   await userEvent.keyboard("{Control>}2{/Control}");
   await waitFor(() => expect(shell.activeModule).toBe("database"));
 });
+
+test("marking a tab dirty keeps its view mounted", async () => {
+  let mounts = 0;
+  const counted = view("notes view");
+  const loader = () =>
+    counted().then(({ default: component }) => ({
+      default: ((anchor: never, props: Record<string, unknown>) => {
+        mounts++;
+        return component(anchor, props);
+      }) as typeof component,
+    }));
+  const { tabs } = setup(
+    railModule("notes", 1, {
+      tabTypes: [
+        { id: "notes.note", title: "Note", icon: "file", view: loader },
+      ],
+    }),
+  );
+  const id = tabs.open("notes.note", "Note", null);
+  expect(await screen.findByText("notes view")).toBeInTheDocument();
+  expect(mounts).toBe(1);
+  tabs.setDirty(id, true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(screen.getByText("notes view")).toBeInTheDocument();
+  expect(mounts).toBe(1);
+});
