@@ -3,7 +3,7 @@ use std::path::Path;
 
 use dea_project::{
     FolderFile, Project, ProjectError, RequestFile, create_folder, create_project, create_request,
-    duplicate_item, load_requests, rename_item, save_folder,
+    delete_item, duplicate_item, load_requests, move_item, rename_item, restore_item, save_folder,
 };
 
 fn write(root: &Path, rel: &str, text: &str) {
@@ -315,4 +315,236 @@ fn operations_refuse_read_only_projects_and_paths_outside_requests() {
         Err(ProjectError::ReadOnly)
     ));
     assert!(!dir.path().join("requests/shipments/_folder.yaml").exists());
+}
+
+fn with_tracking(dir: &Path) -> Project {
+    let project = shipments(dir);
+    write(dir, "requests/tracking/events.yaml", &simple("Events"));
+    project
+}
+
+#[test]
+fn moving_into_another_folder_updates_both_orders() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = with_tracking(dir.path());
+    let path = move_item(
+        &project,
+        Path::new("requests/shipments/list.yaml"),
+        Path::new("requests/tracking"),
+        0,
+    )
+    .unwrap();
+    assert_eq!(path, Path::new("requests/tracking/list.yaml"));
+    assert!(!dir.path().join("requests/shipments/list.yaml").exists());
+    assert_eq!(
+        folder_file(dir.path(), "requests/shipments").order,
+        ["by-id"]
+    );
+    assert_eq!(
+        folder_file(dir.path(), "requests/tracking").order,
+        ["list", "events"]
+    );
+}
+
+#[test]
+fn moving_within_a_folder_reorders_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = shipments(dir.path());
+    let path = move_item(
+        &project,
+        Path::new("requests/shipments/by-id.yaml"),
+        Path::new("requests/shipments"),
+        1,
+    )
+    .unwrap();
+    assert_eq!(path, Path::new("requests/shipments/by-id.yaml"));
+    assert_eq!(
+        folder_file(dir.path(), "requests/shipments").order,
+        ["list", "by-id"]
+    );
+}
+
+#[test]
+fn a_folder_cannot_move_into_its_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = shipments(dir.path());
+    create_folder(&project, Path::new("requests/shipments"), "Inner").unwrap();
+    for to in ["requests/shipments", "requests/shipments/inner"] {
+        let err =
+            move_item(&project, Path::new("requests/shipments"), Path::new(to), 0).unwrap_err();
+        assert_eq!(err.to_string(), "a folder cannot move into itself", "{to}");
+    }
+    assert!(dir.path().join("requests/shipments/list.yaml").exists());
+}
+
+#[test]
+fn a_request_cannot_move_to_the_requests_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = shipments(dir.path());
+    let err = move_item(
+        &project,
+        Path::new("requests/shipments/list.yaml"),
+        Path::new("requests"),
+        0,
+    )
+    .unwrap_err();
+    assert!(matches!(err, ProjectError::InvalidRequest(_)), "{err}");
+    assert!(dir.path().join("requests/shipments/list.yaml").exists());
+}
+
+#[test]
+fn moving_onto_a_taken_name_numbers_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = with_tracking(dir.path());
+    write(dir.path(), "requests/tracking/list.yaml", &simple("Other"));
+    let path = move_item(
+        &project,
+        Path::new("requests/shipments/list.yaml"),
+        Path::new("requests/tracking"),
+        5,
+    )
+    .unwrap();
+    assert_eq!(path, Path::new("requests/tracking/list-2.yaml"));
+    assert_eq!(
+        read_request(dir.path(), Path::new("requests/tracking/list.yaml")).name,
+        "Other"
+    );
+    assert_eq!(
+        folder_file(dir.path(), "requests/tracking").order,
+        ["events", "list", "list-2"]
+    );
+}
+
+#[test]
+fn moving_a_folder_takes_its_files_along() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = with_tracking(dir.path());
+    let path = move_item(
+        &project,
+        Path::new("requests/shipments"),
+        Path::new("requests/tracking"),
+        0,
+    )
+    .unwrap();
+    assert_eq!(path, Path::new("requests/tracking/shipments"));
+    assert!(
+        dir.path()
+            .join("requests/tracking/shipments/by-id.yaml")
+            .exists()
+    );
+    assert_eq!(
+        folder_file(dir.path(), "requests/tracking").order,
+        ["shipments", "events"]
+    );
+    assert_eq!(folder_file(dir.path(), "requests").order, ["tracking"]);
+}
+
+#[test]
+fn restore_refuses_to_overwrite_a_new_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = shipments(dir.path());
+    let deleted = delete_item(&project, Path::new("requests/shipments/list.yaml")).unwrap();
+    create_request(&project, Path::new("requests/shipments"), "List").unwrap();
+    let err = restore_item(&project, &deleted).unwrap_err();
+    assert!(err.to_string().contains("already exists"), "{err}");
+    assert_eq!(
+        read_request(dir.path(), Path::new("requests/shipments/list.yaml")).name,
+        "List"
+    );
+}
+
+#[test]
+fn deleted_request_comes_back_at_its_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = shipments(dir.path());
+    let before = fs::read(dir.path().join("requests/shipments/by-id.yaml")).unwrap();
+    let deleted = delete_item(&project, Path::new("requests/shipments/by-id.yaml")).unwrap();
+    assert_eq!(deleted.index, 0);
+    assert!(!dir.path().join("requests/shipments/by-id.yaml").exists());
+    assert_eq!(
+        folder_file(dir.path(), "requests/shipments").order,
+        ["list"]
+    );
+    restore_item(&project, &deleted).unwrap();
+    assert_eq!(
+        fs::read(dir.path().join("requests/shipments/by-id.yaml")).unwrap(),
+        before
+    );
+    assert_eq!(
+        folder_file(dir.path(), "requests/shipments").order,
+        ["by-id", "list"]
+    );
+}
+
+#[test]
+fn deleted_folder_comes_back_with_every_file_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = with_tracking(dir.path());
+    write(
+        dir.path(),
+        "requests/shipments/deep/more.yaml",
+        &simple("More"),
+    );
+    write(
+        dir.path(),
+        "requests/shipments/_folder.yaml",
+        "name: Ships\n",
+    );
+    save_folder(
+        &project,
+        Path::new("requests"),
+        &FolderFile {
+            order: vec!["shipments".into(), "tracking".into()],
+            ..FolderFile::default()
+        },
+    )
+    .unwrap();
+    let deleted = delete_item(&project, Path::new("requests/shipments")).unwrap();
+    assert_eq!(deleted.index, 0);
+    assert!(!dir.path().join("requests/shipments").exists());
+    assert_eq!(folder_file(dir.path(), "requests").order, ["tracking"]);
+    restore_item(&project, &deleted).unwrap();
+    for file in ["list.yaml", "by-id.yaml", "deep/more.yaml", "_folder.yaml"] {
+        assert!(
+            dir.path().join("requests/shipments").join(file).exists(),
+            "{file}"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(dir.path().join("requests/shipments/_folder.yaml")).unwrap(),
+        "name: Ships\n"
+    );
+    assert_eq!(
+        folder_file(dir.path(), "requests").order,
+        ["shipments", "tracking"]
+    );
+}
+
+#[test]
+fn deleted_item_debug_hides_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = shipments(dir.path());
+    let deleted = delete_item(&project, Path::new("requests/shipments/list.yaml")).unwrap();
+    let text = format!("{deleted:?}");
+    assert!(!text.contains("List shipments"), "{text}");
+    assert!(!text.contains("baseUrl"), "{text}");
+}
+
+#[test]
+fn a_failed_move_leaves_the_project_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = with_tracking(dir.path());
+    write(
+        dir.path(),
+        "requests/tracking/_folder.yaml",
+        "order: [unclosed\n",
+    );
+    let err = move_item(
+        &project,
+        Path::new("requests/shipments/list.yaml"),
+        Path::new("requests/tracking"),
+        0,
+    );
+    assert!(err.is_err());
+    assert!(dir.path().join("requests/shipments/list.yaml").exists());
 }
