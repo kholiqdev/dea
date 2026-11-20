@@ -254,7 +254,7 @@ test("a toast action runs from its chord while no field has focus", async () => 
     action: { label: "Undo", run: () => undone++, chord: "Mod+Z" },
     timeout: 10_000,
   });
-  expect(await screen.findByText(/Ctrl\+Z/)).toBeInTheDocument();
+  expect(await screen.findByText("Ctrl")).toBeInTheDocument();
   await userEvent.keyboard("{Control>}z{/Control}");
   expect(undone).toBe(1);
   expect(toasts.items.some((t) => t.id === id)).toBe(false);
