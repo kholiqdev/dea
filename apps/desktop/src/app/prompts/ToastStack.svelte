@@ -31,7 +31,8 @@
           {#each keys as key, i (i)}<kbd class="kc">{key}</kbd>{/each}
         </Button>
         {#if toast.seconds !== undefined}
-          <span class="left">{toast.seconds} s</span>
+          <!-- Read once with the toast, not every second. -->
+          <span class="left" aria-hidden="true">{toast.seconds} s</span>
         {/if}
       {/if}
     </div>
