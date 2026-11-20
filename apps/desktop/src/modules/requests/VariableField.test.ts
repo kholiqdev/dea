@@ -156,3 +156,29 @@ test("typing reports the new value, and enter is reported", async () => {
   expect(oninput).toHaveBeenLastCalledWith("ab");
   expect(onenter).toHaveBeenCalledOnce();
 });
+
+test("a defined variable with no description yet has no popover until it is known", async () => {
+  const { unmount } = render(VariableField, {
+    value: "{{baseUrl}}/ships",
+    label: "URL",
+    variables: lookupFrom(null, "staging"),
+    oninput: () => {},
+  });
+  const input = screen.getByRole<HTMLInputElement>("textbox", { name: "URL" });
+  await fireEvent.mouseEnter(document.querySelector(".variable") as Element);
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  input.focus();
+  input.setSelectionRange(4, 4);
+  await fireEvent.keyUp(input, { key: "ArrowRight" });
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  unmount();
+
+  render(VariableField, {
+    value: "{{baseUrl}}/ships",
+    label: "URL",
+    variables: lookupFrom(SHIPPING, "staging"),
+    oninput: () => {},
+  });
+  await fireEvent.mouseEnter(document.querySelector(".variable") as Element);
+  expect(screen.getByRole("tooltip")).toHaveTextContent("Environment staging");
+});

@@ -66,11 +66,16 @@
         ? insideIndex
         : null,
   );
-  const active = $derived(
-    activeIndex !== null && activeIndex !== dismissed
-      ? (ranges[activeIndex] ?? null)
-      : null,
-  );
+  // A variable that is defined but not described yet (the inspection is
+  // loading, or does not list it) has nothing to show, so no popover.
+  const active = $derived.by(() => {
+    if (activeIndex === null || activeIndex === dismissed) return null;
+    const range = ranges[activeIndex];
+    if (!range) return null;
+    const shown =
+      !variables.defined(range.name) || variables.describe(range.name);
+    return shown ? range : null;
+  });
   const anchor = $derived.by(() => {
     if (activeIndex === null) return 0;
     const chip = layer?.querySelector<HTMLElement>(
@@ -81,6 +86,8 @@
   let layer = $state<HTMLElement>();
 
   function sync(): void {
+    // A selection change can arrive just after the field is gone.
+    if (!input) return;
     scroll = input.scrollLeft;
     const { selectionStart, selectionEnd } = input;
     caret =
@@ -165,7 +172,6 @@
     </div>
   </div>
   {#if active}
-    {@const known = variables.defined(active.name)}
     {@const info = variables.describe(active.name)}
     <VariablePopover
       id={popoverId}
@@ -173,7 +179,7 @@
       left={anchor}
       shown={info?.shown ?? null}
       source={info?.source ?? ""}
-      missing={known && info ? null : variables.undefinedText(active.name)}
+      missing={info ? null : variables.undefinedText(active.name)}
     />
   {/if}
 </div>
