@@ -276,3 +276,51 @@ test("a key without a certificate says so too", async () => {
   ).toBeInTheDocument();
   expect(shell.tab(id).dirty).toBe(true);
 });
+
+test("a certificate picked by mistake can be removed", async () => {
+  fakeRequestsIpc({
+    tree: tree(),
+    pick: {
+      value: "certs/client.pem",
+      name: "client.pem",
+      outside: false,
+      missing: false,
+    },
+  });
+  await treeState.load();
+  const { id } = openFolderTab(SHIPMENTS, "Shipments");
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Client certificate/ }),
+  );
+  expect(shell.tab(id).dirty).toBe(true);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove client certificate" }),
+  );
+  expect(shell.tab(id).dirty).toBe(false);
+  expect(screen.queryByText(/Choose a key from Vault/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Remove client certificate" }),
+  ).toBeNull();
+});
+
+test("removing an existing client certificate is saved", async () => {
+  const ipc = fakeRequestsIpc({ tree: tree(), secrets: ["client_key"] });
+  ipc.folders.set(SHIPMENTS, {
+    tls: {
+      clientCertificate: {
+        certificate: "certs/client.pem",
+        key: "{{vault:client_key}}",
+      },
+    },
+  });
+  await treeState.load();
+  const { id } = openFolderTab(SHIPMENTS, "Shipments");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Remove client certificate" }),
+  );
+  expect(shell.tab(id).dirty).toBe(true);
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(shell.tab(id).dirty).toBe(false));
+  expect(ipc.folders.get(SHIPMENTS)?.tls).toBeUndefined();
+  expect(screen.queryByText(/Choose a/)).toBeNull();
+});
