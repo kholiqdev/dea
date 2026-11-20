@@ -3,6 +3,7 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { FileErrorInfo } from "$lib/ipc/bindings/FileErrorInfo";
+import type { FileRef } from "$lib/ipc/bindings/FileRef";
 import type { FolderFile } from "$lib/ipc/bindings/FolderFile";
 import type { FolderNode } from "$lib/ipc/bindings/FolderNode";
 import type { Inspection } from "$lib/ipc/bindings/Inspection";
@@ -152,6 +153,10 @@ export function fakeRequestsIpc(
     errors?: FileErrorInfo[];
     files?: Record<string, RequestFile>;
     inspection?: FakeInspection;
+    /** What the file chooser answers; `null`, the default, is a cancel. */
+    pick?: FileRef | null;
+    /** What `describe_file_ref` says about a value, over the plain default. */
+    describe?: Record<string, Partial<FileRef>>;
   } = {},
 ): RequestsIpc {
   const ipc: RequestsIpc = {
@@ -334,14 +339,17 @@ export function fakeRequestsIpc(
         }));
       }
       case "pick_request_file":
-        return null;
-      case "describe_file_ref":
+        return opts.pick ?? null;
+      case "describe_file_ref": {
+        const value = args.value as string;
         return {
-          value: args.value as string,
-          name: (args.value as string).split("/").pop() ?? "",
+          value,
+          name: value.split("/").pop() ?? "",
           outside: false,
           missing: false,
+          ...opts.describe?.[value],
         };
+      }
       default:
         return null;
     }

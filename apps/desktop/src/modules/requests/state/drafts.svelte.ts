@@ -3,6 +3,8 @@
 
 import { shellApi } from "$app/contributions/shell-api";
 import type { Inspection } from "$lib/ipc/bindings/Inspection";
+import type { Body } from "$lib/ipc/bindings/Body";
+import type { FormField } from "$lib/ipc/bindings/FormField";
 import type { KeyValue } from "$lib/ipc/bindings/KeyValue";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { Variable } from "$lib/ipc/bindings/Variable";
@@ -18,6 +20,56 @@ import {
 
 /** How long after the last change the draft is inspected, in milliseconds. */
 export const INSPECT_DELAY = 200;
+
+export type BodyMode = "none" | Body["mode"];
+
+/** A form field without a name, a value or a file: not written. */
+export function isBlankField(field: FormField): boolean {
+  return field.name === "" && !field.value && !field.file;
+}
+
+/** What a mode starts with the first time it is chosen. */
+function emptyBody(mode: Body["mode"]): Body {
+  switch (mode) {
+    case "json":
+      return { mode, text: "" };
+    case "raw":
+      return { mode, language: "text", text: "" };
+    case "urlencoded":
+    case "formData":
+      return { mode, fields: [] };
+    case "binary":
+      return { mode, file: "" };
+  }
+}
+
+/** The body as Dea writes it; null when it says nothing to send. */
+function writtenBody(body: Body | undefined): Body | null {
+  switch (body?.mode) {
+    case undefined:
+      return null;
+    case "urlencoded":
+      return { mode: body.mode, fields: written(body.fields) };
+    case "formData":
+      return {
+        mode: body.mode,
+        fields: body.fields
+          .filter((f) => !isBlankField(f))
+          .map(({ name, value, file, contentType, description, enabled }) => ({
+            name,
+            ...(file ? { file } : { value: value ?? "" }),
+            ...(contentType ? { contentType } : {}),
+            ...(description ? { description } : {}),
+            enabled: enabled !== false,
+          })),
+      };
+    case "binary":
+      return body.file === "" ? null : body;
+    case "json":
+    case "raw":
+      return body;
+  }
+}
 
 export type Section = "params" | "headers" | "body" | "settings";
 
@@ -59,7 +111,8 @@ export function cleaned(request: RequestFile): RequestFile {
   if (params.length > 0) out.params = params;
   const headers = written(request.headers);
   if (headers.length > 0) out.headers = headers;
-  if (request.body) out.body = request.body;
+  const body = writtenBody(request.body);
+  if (body) out.body = body;
   if (request.auth && request.auth.type !== "inherit") out.auth = request.auth;
   if (Object.values(request.options ?? {}).some((v) => v !== undefined))
     out.options = request.options;
@@ -110,6 +163,10 @@ export class RequestDraft {
   typedUrl = $state<string | null>(null);
   section = $state<Section>("params");
 
+  // What each body mode held, so switching away and back loses nothing.
+  // Read only when the mode changes, so it is not reactive.
+  #bodies: Partial<Record<Body["mode"], Body>> = {};
+
   #theirs: RequestFile | null = null;
   // Changes with every write and every file taken, so a read that started
   // before one is dropped.
@@ -143,7 +200,7 @@ export class RequestDraft {
   get counts(): Record<Section, number | null> {
     const on = (rows: { enabled?: boolean }[]) =>
       rows.filter((r) => r.enabled !== false).length;
-    const body = this.draft.body;
+    const body = writtenBody(this.draft.body);
     return {
       params:
         pathVariableNames(this.draft.url).length +
@@ -249,6 +306,23 @@ export class RequestDraft {
     this.draft.headers = rows;
   }
 
+  get bodyMode(): BodyMode {
+    return this.draft.body?.mode ?? "none";
+  }
+
+  /** Chooses the body's mode; each mode comes back as it was left. */
+  setBodyMode(mode: BodyMode): void {
+    const current = this.draft.body;
+    if (current) this.#bodies[current.mode] = $state.snapshot(current);
+    if (mode === "none") delete this.draft.body;
+    else
+      this.draft.body = structuredClone(this.#bodies[mode] ?? emptyBody(mode));
+  }
+
+  setBody(body: Body): void {
+    this.draft.body = body;
+  }
+
   setMethod(method: string): void {
     this.draft.method = method;
   }
@@ -299,6 +373,7 @@ export class RequestDraft {
     this.#version++;
     this.saved = file;
     this.draft = structuredClone(file);
+    this.#bodies = {};
     this.#theirs = null;
     this.outside = null;
     this.typedUrl = null;

@@ -202,6 +202,8 @@ function scanJson(text: string): ScanError | null {
 }
 
 export function lintJson(text: string): JsonLintError | null {
+  // Nothing typed yet is "no body", not a mistake.
+  if (text.trim() === "") return null;
   const error = scanJson(maskVariables(text));
   if (!error) return null;
   return { ...lineColumn(text, error.offset), message: error.message };
