@@ -197,11 +197,12 @@ fn collections_follow_the_root_order() {
     write(root, "requests/tracking/b.yaml", &simple("b"));
     write(root, "requests/billing/c.yaml", &simple("c"));
     let loaded = load_requests(root).unwrap();
-    let dirs: Vec<_> = loaded
+    // Paths compare by component, so `/` matches `\` on Windows.
+    let dirs: Vec<&Path> = loaded
         .tree
         .collections
         .iter()
-        .map(|c| c.dir.to_string_lossy().into_owned())
+        .map(|c| c.dir.as_path())
         .collect();
     assert_eq!(
         dirs,
@@ -210,6 +211,7 @@ fn collections_follow_the_root_order() {
             "requests/shipments",
             "requests/billing"
         ]
+        .map(Path::new)
     );
 }
 
@@ -291,12 +293,11 @@ fn find_lists_the_folders_from_the_collection_inwards() {
         .tree
         .find(Path::new("requests/a/b/c/deep.yaml"))
         .unwrap();
-    let dirs: Vec<_> = found
-        .folders
-        .iter()
-        .map(|f| f.dir.to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(dirs, ["requests/a", "requests/a/b", "requests/a/b/c"]);
+    let dirs: Vec<&Path> = found.folders.iter().map(|f| f.dir.as_path()).collect();
+    assert_eq!(
+        dirs,
+        ["requests/a", "requests/a/b", "requests/a/b/c"].map(Path::new)
+    );
     assert!(
         loaded
             .tree
