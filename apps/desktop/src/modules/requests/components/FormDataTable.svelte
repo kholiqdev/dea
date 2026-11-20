@@ -113,6 +113,7 @@
               <FileChoice
                 value={field.file ?? ""}
                 {disabled}
+                label="Choose file for {named(field, i)}"
                 {onerror}
                 onpick={(file: string) => update(i, (f) => ({ ...f, file }))}
               />

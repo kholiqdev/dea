@@ -11,12 +11,15 @@
   let {
     value,
     disabled = false,
+    label,
     onpick,
     onerror,
   }: {
     /** The path or `local:` reference; empty while nothing is chosen. */
     value: string;
     disabled?: boolean;
+    /** The button's accessible name, which starts with its text. */
+    label?: string;
     onpick: (value: string) => void;
     onerror?: (message: string) => void;
   } = $props();
@@ -65,6 +68,7 @@
     <button
       type="button"
       class="choose"
+      aria-label={label}
       {disabled}
       onclick={() => void choose()}>Choose…</button
     >

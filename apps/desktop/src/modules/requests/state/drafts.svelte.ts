@@ -54,7 +54,8 @@ function writtenBody(body: Body | undefined): Body | null {
       return {
         mode: body.mode,
         fields: body.fields
-          .filter((f) => !isBlankField(f))
+          // A file row with no file yet stays in the draft but is not written.
+          .filter((f) => !isBlankField(f) && f.file !== "")
           .map(({ name, value, file, contentType, description, enabled }) => ({
             name,
             ...(file ? { file } : { value: value ?? "" }),
