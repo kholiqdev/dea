@@ -184,3 +184,25 @@ test("a half-set client certificate does not autosave", async () => {
   await vi.advanceTimersByTimeAsync(5000);
   expect(ipc.calls.filter(([c]) => c === "save_folder")).toHaveLength(0);
 });
+
+test("a failed autosave toasts once and waits for the next edit", async () => {
+  const ipc = await setUpIpc();
+  ipc.failures.set("save_request", {
+    kind: "readOnly",
+    message: "this project is read-only",
+  });
+  openRequestTab(BY_ID);
+  const url = await urlBox();
+  const attempts = () => ipc.calls.filter(([c]) => c === "save_request");
+  await user.type(url, "/x");
+  await vi.advanceTimersByTimeAsync(1000);
+  await waitFor(() => expect(setup.shell.toasts).toHaveLength(1));
+  expect(attempts()).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(attempts()).toHaveLength(1);
+  expect(setup.shell.toasts).toHaveLength(1);
+  await user.type(url, "y");
+  await vi.advanceTimersByTimeAsync(1000);
+  await waitFor(() => expect(attempts()).toHaveLength(2));
+  expect(setup.shell.toasts).toHaveLength(2);
+});

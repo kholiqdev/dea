@@ -59,10 +59,6 @@ export class SettingsState {
     return this.#value.requests;
   }
 
-  get requests(): Settings["requests"] {
-    return this.#value.requests;
-  }
-
   /** Reads the saved settings. Outside the app the defaults stay. */
   async load(): Promise<void> {
     try {
@@ -104,7 +100,6 @@ function merged(value: Settings, patch: SettingsPatch): Settings {
     appearance: { ...value.appearance, ...patch.appearance },
     shortcuts: patch.shortcuts ?? value.shortcuts,
     security: { ...value.security, ...patch.security },
-    requests: { ...value.requests, ...patch.requests },
     requests: { ...value.requests, ...patch.requests },
   };
 }

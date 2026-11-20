@@ -28,7 +28,6 @@ export async function resetSettings(): Promise<void> {
     shortcuts: {},
     security: DEFAULT_SETTINGS.security,
     requests: DEFAULT_SETTINGS.requests,
-    requests: DEFAULT_SETTINGS.requests,
   });
 }
 
