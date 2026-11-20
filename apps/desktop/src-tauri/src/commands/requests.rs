@@ -3,7 +3,7 @@
 //! inspection, and picking files for a request. Paths cross as text
 //! relative to the project root, with `/`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -41,7 +41,7 @@ fn tree_of(
 ) -> Result<Arc<LoadedRequests>, IpcError> {
     Ok(app
         .state::<AppState>()
-        .tree(window, || load_requests(&session.root))?)
+        .tree(window, &session.root, || load_requests(&session.root))?)
 }
 
 /// The request at `path` in `loaded`, or why it is not there.
@@ -71,7 +71,17 @@ async fn change<T: Send + 'static>(
     window: &WebviewWindow,
     change: impl FnOnce(&Project) -> Result<T, ProjectError> + Send + 'static,
 ) -> Result<T, IpcError> {
-    let session = writable(app, window.label())?;
+    change_in(app, window, writable(app, window.label())?, change).await
+}
+
+/// [`change`] on the project of `session`, a writable session of the
+/// window.
+async fn change_in<T: Send + 'static>(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    session: Session,
+    change: impl FnOnce(&Project) -> Result<T, ProjectError> + Send + 'static,
+) -> Result<T, IpcError> {
     let app = app.clone();
     let label = window.label().to_string();
     spawn_blocking(move || {
@@ -84,14 +94,17 @@ async fn change<T: Send + 'static>(
     .await?
 }
 
-/// The item `window` deleted as `id`, while Undo can still restore it.
+/// The item `window` deleted as `id` from the project at `root`, while Undo
+/// can still restore it.
 fn kept_item(
     state: &AppState,
     window: &str,
+    root: &Path,
     id: u64,
     now: Instant,
 ) -> Result<DeletedItem, IpcError> {
-    state.deleted_item(window, id, now).ok_or_else(|| IpcError {
+    let item = state.deleted_item(window, root, id, now);
+    item.ok_or_else(|| IpcError {
         kind: IpcErrorKind::Missing,
         message: "the deleted item is no longer kept".into(),
     })
@@ -235,12 +248,14 @@ pub async fn delete_request_item(
     window: WebviewWindow,
     path: String,
 ) -> Result<u64, IpcError> {
-    let item = change(&app, &window, move |project| {
+    let session = writable(&app, window.label())?;
+    let root = session.root.clone();
+    let item = change_in(&app, &window, session, move |project| {
         dea_project::delete_item(project, &rel(&path))
     })
     .await?;
     let state = app.state::<AppState>();
-    Ok(state.keep_deleted(window.label(), item, Instant::now()))
+    Ok(state.keep_deleted(window.label(), &root, item, Instant::now()))
 }
 
 #[tauri::command]
@@ -249,8 +264,11 @@ pub async fn restore_request_item(
     window: WebviewWindow,
     id: u64,
 ) -> Result<(), IpcError> {
-    let item = kept_item(&app.state::<AppState>(), window.label(), id, Instant::now())?;
-    change(&app, &window, move |project| {
+    let session = writable(&app, window.label())?;
+    let state = app.state::<AppState>();
+    let item = kept_item(&state, window.label(), &session.root, id, Instant::now())?;
+    // Restored into the project it was deleted from, which `session` is.
+    change_in(&app, &window, session, move |project| {
         dea_project::restore_item(project, &item)
     })
     .await?;
@@ -384,6 +402,13 @@ mod tests {
         project
     }
 
+    /// Gives `window` the project at `root`, as opening it does.
+    fn open_in(state: &AppState, window: &str, root: &Path) {
+        let scope = root.to_string_lossy().into_owned();
+        state.sessions().bind(window, root.to_path_buf(), scope);
+        state.forget_window(window);
+    }
+
     fn change(path: &str) -> ProjectChange {
         ProjectChange {
             path: path.into(),
@@ -397,25 +422,27 @@ mod tests {
         let root = dir.path().join("p");
         shipments(&root);
         let state = state_in(&dir.path().join("app-data"));
+        open_in(&state, "main", &root);
+        open_in(&state, "project-1", &root);
         let loads = Cell::new(0);
         let load = || {
             loads.set(loads.get() + 1);
             load_requests(&root)
         };
 
-        let first = state.tree("main", load).unwrap();
-        let second = state.tree("main", load).unwrap();
+        let first = state.tree("main", &root, load).unwrap();
+        let second = state.tree("main", &root, load).unwrap();
         assert_eq!(loads.get(), 1);
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(first.tree.requests().count(), 2);
 
         // Another window keeps a tree of its own.
-        state.tree("project-1", load).unwrap();
+        state.tree("project-1", &root, load).unwrap();
         assert_eq!(loads.get(), 2);
 
         // Only a change under requests/ drops the tree.
         state.requests_changed("main", &[change("environments/staging.yaml")]);
-        state.tree("main", load).unwrap();
+        state.tree("main", &root, load).unwrap();
         assert_eq!(loads.get(), 2);
 
         state.requests_changed(
@@ -425,10 +452,99 @@ mod tests {
                 change("requests/x.yaml"),
             ],
         );
-        state.tree("main", load).unwrap();
+        state.tree("main", &root, load).unwrap();
         assert_eq!(loads.get(), 3);
-        state.tree("project-1", load).unwrap();
+        state.tree("project-1", &root, load).unwrap();
         assert_eq!(loads.get(), 3);
+    }
+
+    #[test]
+    fn a_tree_read_for_another_project_is_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (harbor, fleet) = (dir.path().join("harbor"), dir.path().join("fleet"));
+        shipments(&harbor);
+        create_project(&fleet, "fleet").unwrap();
+        write(
+            &fleet,
+            "requests/trucks/list.yaml",
+            "name: Trucks\nmethod: GET\nurl: /t\n",
+        );
+        let state = state_in(&dir.path().join("app-data"));
+        let (harbor_loads, fleet_loads) = (Cell::new(0), Cell::new(0));
+        let load_harbor = || {
+            harbor_loads.set(harbor_loads.get() + 1);
+            load_requests(&harbor)
+        };
+        let load_fleet = || {
+            fleet_loads.set(fleet_loads.get() + 1);
+            load_requests(&fleet)
+        };
+        open_in(&state, "main", &harbor);
+        state.tree("main", &harbor, load_harbor).unwrap();
+
+        // The window opens fleet while a command still holds the harbor
+        // session: the harbor tree it reads is not kept for the window.
+        open_in(&state, "main", &fleet);
+        let stale = state.tree("main", &harbor, load_harbor).unwrap();
+        assert_eq!(stale.tree.requests().count(), 2);
+        let fresh = state.tree("main", &fleet, load_fleet).unwrap();
+        let names: Vec<&str> = fresh
+            .tree
+            .requests()
+            .map(|r| r.request.name.as_str())
+            .collect();
+        assert_eq!(names, ["Trucks"]);
+        state.tree("main", &fleet, load_fleet).unwrap();
+        assert_eq!(fleet_loads.get(), 1);
+
+        // Asking with the harbor root never gets the fleet tree.
+        state.tree("main", &harbor, load_harbor).unwrap();
+        assert_eq!(harbor_loads.get(), 3);
+    }
+
+    #[test]
+    fn a_tree_changed_while_loading_is_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("p");
+        shipments(&root);
+        let state = state_in(&dir.path().join("app-data"));
+        open_in(&state, "main", &root);
+        let loads = Cell::new(0);
+        let load = || {
+            loads.set(loads.get() + 1);
+            load_requests(&root)
+        };
+
+        // The watcher reports a change while the tree is read.
+        state
+            .tree("main", &root, || {
+                state.requests_changed("main", &[change("requests/x.yaml")]);
+                load()
+            })
+            .unwrap();
+        state.tree("main", &root, load).unwrap();
+        state.tree("main", &root, load).unwrap();
+        assert_eq!(loads.get(), 2);
+    }
+
+    #[test]
+    fn an_item_deleted_in_another_project_is_not_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let (harbor, fleet) = (dir.path().join("harbor"), dir.path().join("fleet"));
+        let project = shipments(&harbor);
+        let state = state_in(&dir.path().join("app-data"));
+        let list = delete_item(&project, Path::new("requests/shipments/list.yaml")).unwrap();
+        let now = Instant::now();
+
+        // Deleted in harbor; the window has opened fleet since.
+        let id = state.keep_deleted("main", &harbor, list, now);
+
+        let refused = kept_item(&state, "main", &fleet, id, now).unwrap_err();
+        assert_eq!(
+            serde_json::to_value(&refused).unwrap(),
+            json!({ "kind": "missing", "message": "the deleted item is no longer kept" })
+        );
+        assert!(kept_item(&state, "main", &harbor, id, now).is_ok());
     }
 
     #[test]
@@ -455,35 +571,36 @@ mod tests {
     #[test]
     fn deleted_items_expire_after_fifteen_seconds() {
         let dir = tempfile::tempdir().unwrap();
-        let project = shipments(&dir.path().join("p"));
+        let root = dir.path().join("p");
+        let project = shipments(&root);
         let state = state_in(&dir.path().join("app-data"));
         let list = delete_item(&project, Path::new("requests/shipments/list.yaml")).unwrap();
         let by_id = delete_item(&project, Path::new("requests/shipments/by-id.yaml")).unwrap();
         let start = Instant::now();
         let seconds = |n| start + Duration::from_secs(n);
 
-        let first = state.keep_deleted("main", list, start);
-        let second = state.keep_deleted("main", by_id, seconds(10));
+        let first = state.keep_deleted("main", &root, list, start);
+        let second = state.keep_deleted("main", &root, by_id, seconds(10));
         assert_ne!(first, second);
 
-        let kept = kept_item(&state, "main", first, seconds(14)).unwrap();
+        let kept = kept_item(&state, "main", &root, first, seconds(14)).unwrap();
         assert_eq!(kept.path, Path::new("requests/shipments/list.yaml"));
         // Another window cannot restore it.
-        assert!(kept_item(&state, "project-1", first, seconds(14)).is_err());
+        assert!(kept_item(&state, "project-1", &root, first, seconds(14)).is_err());
 
         // 16 s after the delete the first is gone; the second was kept 6 s
         // ago.
-        let gone = kept_item(&state, "main", first, seconds(16)).unwrap_err();
+        let gone = kept_item(&state, "main", &root, first, seconds(16)).unwrap_err();
         assert_eq!(
             serde_json::to_value(&gone).unwrap(),
             json!({ "kind": "missing", "message": "the deleted item is no longer kept" })
         );
-        assert!(kept_item(&state, "main", second, seconds(16)).is_ok());
+        assert!(kept_item(&state, "main", &root, second, seconds(16)).is_ok());
         // It was dropped, not only hidden.
-        assert!(kept_item(&state, "main", first, start).is_err());
+        assert!(kept_item(&state, "main", &root, first, start).is_err());
 
         state.forget_deleted(second);
-        assert!(kept_item(&state, "main", second, seconds(16)).is_err());
+        assert!(kept_item(&state, "main", &root, second, seconds(16)).is_err());
     }
 
     #[test]

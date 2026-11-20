@@ -18,8 +18,15 @@ use crate::vault::{AppVault, UiPrompter};
 /// it for 10 s; the rest covers a slow click.
 const KEEP_DELETED: Duration = Duration::from_secs(15);
 
-/// A deleted item: the window that deleted it, the item, and when.
-type Deleted = (String, DeletedItem, Instant);
+/// A deleted item: the window that deleted it, the root of the project it
+/// was deleted from, the item, and when.
+type Deleted = (String, PathBuf, DeletedItem, Instant);
+
+/// A window's request tree and the root of the project it was read from.
+struct CachedTree {
+    root: PathBuf,
+    tree: Arc<LoadedRequests>,
+}
 
 fn guard<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -36,7 +43,10 @@ pub struct AppState {
     watchers: Mutex<HashMap<String, ProjectWatcher>>,
     /// The request tree of each window's project, by window label, until a
     /// file under `requests/` changes.
-    trees: Mutex<HashMap<String, Arc<LoadedRequests>>>,
+    trees: Mutex<HashMap<String, CachedTree>>,
+    /// How many trees were dropped, so a tree read while one was dropped is
+    /// not kept. Changed only while `trees` is locked.
+    tree_drops: AtomicU64,
     /// Deleted items that Undo can still restore, by id.
     deleted: Mutex<HashMap<u64, Deleted>>,
     next_deleted: AtomicU64,
@@ -75,6 +85,7 @@ impl AppState {
             sessions: Mutex::new(Sessions::default()),
             watchers: Mutex::new(HashMap::new()),
             trees: Mutex::new(HashMap::new()),
+            tree_drops: AtomicU64::new(0),
             deleted: Mutex::new(HashMap::new()),
             next_deleted: AtomicU64::new(1),
         }
@@ -93,26 +104,42 @@ impl AppState {
         };
     }
 
-    /// The request tree of `window`, loaded with `load` the first time.
-    /// The lock is held while loading, so a change reported meanwhile
-    /// drops the tree after it is stored, never before.
+    /// The request tree of the project at `root` for `window`, read with
+    /// `load` unless the window keeps one of that project. The tree is read
+    /// without holding the lock, and kept only while `root` is still the
+    /// window's project and no tree was dropped meanwhile, so a tree read
+    /// before a change or for a project the window has left is never kept.
     pub fn tree(
         &self,
         window: &str,
+        root: &Path,
         load: impl FnOnce() -> Result<LoadedRequests, ProjectError>,
     ) -> Result<Arc<LoadedRequests>, ProjectError> {
-        let mut trees = guard(&self.trees);
-        if let Some(tree) = trees.get(window) {
-            return Ok(Arc::clone(tree));
-        }
+        let drops = {
+            let trees = guard(&self.trees);
+            if let Some(cached) = trees.get(window).filter(|c| c.root == root) {
+                return Ok(Arc::clone(&cached.tree));
+            }
+            self.tree_drops.load(Ordering::SeqCst)
+        };
         let tree = Arc::new(load()?);
-        trees.insert(window.to_string(), Arc::clone(&tree));
+        let current = self.sessions().get(window).is_some_and(|s| s.root == root);
+        let mut trees = guard(&self.trees);
+        if current && self.tree_drops.load(Ordering::SeqCst) == drops {
+            let cached = CachedTree {
+                root: root.to_path_buf(),
+                tree: Arc::clone(&tree),
+            };
+            trees.insert(window.to_string(), cached);
+        }
         Ok(tree)
     }
 
     /// Drops the request tree of `window`, so the next one is read again.
     pub fn forget_tree(&self, window: &str) {
-        guard(&self.trees).remove(window);
+        let mut trees = guard(&self.trees);
+        trees.remove(window);
+        self.tree_drops.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Drops the request tree of `window` when one of `changes` is under
@@ -127,35 +154,44 @@ impl AppState {
     /// items it can still restore. Called when it opens or closes one.
     pub fn forget_window(&self, window: &str) {
         self.forget_tree(window);
-        guard(&self.deleted).retain(|_, (owner, _, _)| owner != window);
+        self.deleted_at(Instant::now())
+            .retain(|_, (owner, _, _, _)| owner != window);
     }
 
-    /// Keeps `item`, deleted by `window` at `now`, for Undo; returns its id.
-    pub fn keep_deleted(&self, window: &str, item: DeletedItem, now: Instant) -> u64 {
+    /// Keeps `item`, deleted by `window` at `now` from the project at
+    /// `root`, for Undo; returns its id.
+    pub fn keep_deleted(&self, window: &str, root: &Path, item: DeletedItem, now: Instant) -> u64 {
         let id = self.next_deleted.fetch_add(1, Ordering::Relaxed);
-        let mut deleted = self.deleted_at(now);
-        deleted.insert(id, (window.to_string(), item, now));
+        let entry = (window.to_string(), root.to_path_buf(), item, now);
+        self.deleted_at(now).insert(id, entry);
         id
     }
 
-    /// The item `window` deleted as `id`, if it is still kept at `now`.
-    pub fn deleted_item(&self, window: &str, id: u64, now: Instant) -> Option<DeletedItem> {
+    /// The item `window` deleted as `id` from the project at `root`, if it
+    /// is still kept at `now`.
+    pub fn deleted_item(
+        &self,
+        window: &str,
+        root: &Path,
+        id: u64,
+        now: Instant,
+    ) -> Option<DeletedItem> {
         self.deleted_at(now)
             .get(&id)
-            .filter(|(owner, _, _)| owner == window)
-            .map(|(_, item, _)| item.clone())
+            .filter(|(owner, from, _, _)| owner == window && from == root)
+            .map(|(_, _, item, _)| item.clone())
     }
 
     /// Stops keeping item `id`, once it is restored.
     pub fn forget_deleted(&self, id: u64) {
-        guard(&self.deleted).remove(&id);
+        self.deleted_at(Instant::now()).remove(&id);
     }
 
     /// The deleted items, without those kept longer than [`KEEP_DELETED`]
     /// at `now`.
     fn deleted_at(&self, now: Instant) -> MutexGuard<'_, HashMap<u64, Deleted>> {
         let mut deleted = guard(&self.deleted);
-        deleted.retain(|_, (_, _, at)| now.saturating_duration_since(*at) <= KEEP_DELETED);
+        deleted.retain(|_, (_, _, _, at)| now.saturating_duration_since(*at) <= KEEP_DELETED);
         deleted
     }
 }
