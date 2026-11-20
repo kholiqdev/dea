@@ -2,6 +2,7 @@ import { screen } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import { expect, test, vi } from "vitest";
 import { settings } from "$lib/settings/settings.svelte";
+import { shellApi } from "./contributions/shell-api";
 import { fakeIpc } from "./shell/test-support";
 import { start } from "./start";
 
@@ -89,4 +90,15 @@ test("Settings opens with Mod+, and Back returns to Welcome", async () => {
   expect(
     await screen.findByRole("heading", { name: "Start a project" }),
   ).toBeInTheDocument();
+});
+
+test("modules can ask whether a tab has unsaved changes", async () => {
+  const shell = shellApi();
+  const id = shell.openTab("project.environments", "Environments", null);
+  expect(shell.isTabDirty(id)).toBe(false);
+  shell.setTabDirty(id, true);
+  expect(shell.isTabDirty(id)).toBe(true);
+  expect(shell.isTabDirty("no-such-tab")).toBe(false);
+  shell.setTabDirty(id, false);
+  expect(await shell.closeTab(id)).toBe(true);
 });

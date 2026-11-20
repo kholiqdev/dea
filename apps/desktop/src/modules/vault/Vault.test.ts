@@ -115,6 +115,7 @@ beforeEach(() => {
     activateTab: () => true,
     closeTab: () => Promise.resolve(true),
     setTabDirty: () => {},
+    isTabDirty: () => false,
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
     toast: (text) => toasts.push(text),

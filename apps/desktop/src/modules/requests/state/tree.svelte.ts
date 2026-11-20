@@ -157,7 +157,8 @@ export class RequestTreeState {
 
   /**
    * Deletes an item and offers Undo for a while. Its tabs close without
-   * asking: the files come back with Undo.
+   * asking, as the files come back with Undo; a tab with unsaved edits
+   * stays open.
    */
   async remove(path: string): Promise<void> {
     const name = this.find(path)?.name ?? path.slice(path.lastIndexOf("/") + 1);
@@ -262,10 +263,11 @@ export class RequestTreeState {
       if (isWithin(open, path)) this.expanded.delete(open);
     if (this.selected && isWithin(this.selected, path)) this.selected = null;
     if (this.renaming && isWithin(this.renaming, path)) this.renaming = null;
+    // Undo brings back the file, not a tab's unsaved edits: such a tab
+    // stays open as it is.
     const shell = shellApi();
     eachTabWithin(path, (id) => {
-      shell.setTabDirty(id, false);
-      void shell.closeTab(id);
+      if (!shell.isTabDirty(id)) void shell.closeTab(id);
     });
   }
 

@@ -32,6 +32,8 @@ export interface ShellApi {
   /** Closes a tab, asking first when it has unsaved changes. */
   closeTab(id: string): Promise<boolean>;
   setTabDirty(id: string, dirty: boolean): void;
+  /** Whether a tab has unsaved changes; false when no tab has that id. */
+  isTabDirty(id: string): boolean;
   /**
    * Registers how tabs of `tabType` are saved, for the Save choice when a
    * tab with unsaved changes is closed. A rejection keeps the tab open.

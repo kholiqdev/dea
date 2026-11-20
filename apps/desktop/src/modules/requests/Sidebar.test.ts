@@ -80,6 +80,7 @@ beforeEach(() => {
     },
     closeTab: () => Promise.resolve(true),
     setTabDirty: () => {},
+    isTabDirty: () => false,
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
     toast: () => 0,

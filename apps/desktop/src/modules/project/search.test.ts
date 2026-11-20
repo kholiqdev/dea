@@ -31,6 +31,7 @@ beforeEach(() => {
     activateTab: () => true,
     closeTab: () => Promise.resolve(true),
     setTabDirty: () => {},
+    isTabDirty: () => false,
     setSaveHandler: () => {},
     openModule: () => Promise.resolve(),
     runCommand: () => Promise.resolve(),
