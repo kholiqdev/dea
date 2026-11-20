@@ -238,6 +238,12 @@ export function fakeRequestsIpc(
         const name = args.name as string;
         const path = `${args.folder as string}/${slug(name)}.yaml`;
         items?.push(leaf(path, name));
+        // Dea adds the new file to the folder's order.
+        const parent = ipc.folders.get(args.folder as string) ?? {};
+        ipc.folders.set(args.folder as string, {
+          ...parent,
+          order: [...(parent.order ?? []), slug(name)],
+        });
         refresh();
         return path;
       }
@@ -267,6 +273,15 @@ export function fakeRequestsIpc(
         const file = ipc.files.get(path);
         if (file && node.kind === "request") file.name = name;
         moveFiles(ipc.files, path, node.path);
+        // A folder's file keeps its settings, and Dea writes its new name.
+        for (const [at, settings] of [...ipc.folders])
+          if (at === path || at.startsWith(`${path}/`)) {
+            ipc.folders.delete(at);
+            ipc.folders.set(node.path + at.slice(path.length), {
+              ...settings,
+              ...(at === path ? { name } : {}),
+            });
+          }
         return node.path;
       }
       case "duplicate_request_item": {

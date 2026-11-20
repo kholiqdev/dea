@@ -46,6 +46,16 @@
     keyName && !names.includes(keyName) ? [...names, keyName] : names,
   );
 
+  const hint = $derived(
+    !client
+      ? null
+      : client.certificate !== "" && client.key === ""
+        ? "Choose a key from Vault to use this certificate"
+        : client.certificate === "" && client.key !== ""
+          ? "Choose a certificate file to use this key"
+          : null,
+  );
+
   function setAuthorities(next: string[]): void {
     onchange({ ...tls, caCertificates: next });
   }
@@ -123,6 +133,7 @@
         {/each}
       </select>
     </label>
+    {#if hint}<p class="hint">{hint}</p>{/if}
   </div>
 </div>
 
@@ -199,6 +210,14 @@
     gap: var(--s-3);
     padding: 0 var(--s-2);
     color: var(--text-2);
+  }
+
+  .hint {
+    margin: 0;
+    padding: 0 var(--s-2);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--warning-text);
   }
 
   select {

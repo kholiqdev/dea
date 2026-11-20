@@ -3,6 +3,7 @@
   says `Inherited` and shows the value in force; a row it sets has `Reset`.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import type { OptionsInfo } from "$lib/ipc/bindings/OptionsInfo";
   import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
   import { DEFAULT_OPTIONS } from "../state/folders.svelte";
@@ -48,10 +49,23 @@
     change(Object.fromEntries(keys.map((k) => [k, undefined])));
   }
 
-  function setNumber(key: "timeoutMs" | "maxRedirects", text: string): void {
+  type NumberKey = "timeoutMs" | "maxRedirects";
+
+  /** A number typed so far: kept while typing, so the field is not rewritten. */
+  function typed(key: NumberKey, text: string): void {
     const n = Number.parseInt(text, 10);
-    // An empty or invalid field goes back to inheriting.
+    if (Number.isInteger(n) && n >= 0) change({ [key]: n });
+  }
+
+  /** A field left empty or invalid goes back to inheriting. */
+  async function committed(
+    key: NumberKey,
+    input: HTMLInputElement,
+  ): Promise<void> {
+    const n = Number.parseInt(input.value, 10);
     change({ [key]: Number.isInteger(n) && n >= 0 ? n : undefined });
+    await tick();
+    input.value = String(shown[key]);
   }
 </script>
 
@@ -80,7 +94,8 @@
         aria-label="Timeout"
         value={shown.timeoutMs}
         {disabled}
-        oninput={(e) => setNumber("timeoutMs", e.currentTarget.value)}
+        oninput={(e) => typed("timeoutMs", e.currentTarget.value)}
+        onchange={(e) => void committed("timeoutMs", e.currentTarget)}
       />
       <span class="unit">ms</span>
       {#if shown.timeoutMs === 0}<span class="help">No limit</span>{/if}
@@ -109,7 +124,8 @@
           min="0"
           value={shown.maxRedirects}
           disabled={disabled || !shown.followRedirects}
-          oninput={(e) => setNumber("maxRedirects", e.currentTarget.value)}
+          oninput={(e) => typed("maxRedirects", e.currentTarget.value)}
+          onchange={(e) => void committed("maxRedirects", e.currentTarget)}
         />
       </label>
     </div>

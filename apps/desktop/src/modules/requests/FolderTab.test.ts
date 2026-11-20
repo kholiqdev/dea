@@ -181,3 +181,98 @@ test("a network option is saved and Reset takes it back out", async () => {
   );
   expect(shell.tab(id).dirty).toBe(true);
 });
+
+const changedBanner = () => screen.queryByText(/changed on disk/);
+
+test("a rename from the sidebar keeps its name while the tab has edits", async () => {
+  const ipc = await setUp();
+  ipc.folders.set(SHIPMENTS, { name: "Shipments" });
+  const { id } = openFolderTab(SHIPMENTS, "Shipments");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add header" }),
+  );
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Header of row 1" }),
+    "X-Team",
+  );
+  await treeState.rename(SHIPMENTS, "Cargo");
+  await waitFor(() => expect(shell.tab(id).params.path).toBe("requests/cargo"));
+  expect(changedBanner()).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(shell.tab(id).dirty).toBe(false));
+  expect(ipc.folders.get("requests/cargo")).toMatchObject({
+    name: "Cargo",
+    headers: [{ name: "X-Team" }],
+  });
+});
+
+test("a new request keeps the folder's order while the tab has edits", async () => {
+  const ipc = await setUp();
+  ipc.folders.set(SHIPMENTS, { order: ["by-id", "list"] });
+  const { id } = openFolderTab(SHIPMENTS, "Shipments");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add header" }),
+  );
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Header of row 1" }),
+    "X-Team",
+  );
+  await treeState.newRequest(SHIPMENTS);
+  await waitFor(() =>
+    expect(ipc.folders.get(SHIPMENTS)?.order).toContain("new-request"),
+  );
+  expect(changedBanner()).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(shell.tab(id).dirty).toBe(false));
+  expect(ipc.folders.get(SHIPMENTS)?.order).toEqual([
+    "by-id",
+    "list",
+    "new-request",
+  ]);
+});
+
+test("a certificate without a key says so, counts as unsaved and is not written", async () => {
+  const ipc = fakeRequestsIpc({
+    tree: tree(),
+    secrets: ["client_key"],
+    pick: {
+      value: "certs/client.pem",
+      name: "client.pem",
+      outside: false,
+      missing: false,
+    },
+  });
+  await treeState.load();
+  const { id } = openFolderTab(SHIPMENTS, "Shipments");
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Client certificate/ }),
+  );
+  expect(
+    screen.getByText("Choose a key from Vault to use this certificate"),
+  ).toBeInTheDocument();
+  expect(shell.tab(id).dirty).toBe(true);
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(ipc.folders.get(SHIPMENTS)?.tls).toBeUndefined();
+  expect(
+    screen.getByText("Choose a key from Vault to use this certificate"),
+  ).toBeInTheDocument();
+});
+
+test("a key without a certificate says so too", async () => {
+  fakeRequestsIpc({ tree: tree(), secrets: ["client_key"] });
+  await treeState.load();
+  const { id } = openFolderTab(SHIPMENTS, "Shipments");
+  const select = await screen.findByRole("combobox", {
+    name: "Key from Vault",
+  });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("option", { name: "client_key" }),
+    ).toBeInTheDocument(),
+  );
+  await userEvent.selectOptions(select, "client_key");
+  expect(
+    screen.getByText("Choose a certificate file to use this key"),
+  ).toBeInTheDocument();
+  expect(shell.tab(id).dirty).toBe(true);
+});

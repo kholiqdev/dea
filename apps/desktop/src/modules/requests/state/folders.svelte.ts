@@ -56,12 +56,24 @@ export function cleanedFolder(folder: FolderFile): FolderFile {
   return out;
 }
 
-/** Whether two folders would write the same file. */
+/**
+ * Whether two folders would write the same settings. The name and the order
+ * belong to the sidebar, which writes them: this editor never does.
+ */
 export function sameFolder(a: FolderFile, b: FolderFile): boolean {
-  return (
-    JSON.stringify(normalized(cleanedFolder(a))) ===
-    JSON.stringify(normalized(cleanedFolder(b)))
-  );
+  const settings = (folder: FolderFile) => {
+    const { name, order, ...rest } = cleanedFolder(folder);
+    void name;
+    void order;
+    return JSON.stringify(normalized(rest));
+  };
+  return settings(a) === settings(b);
+}
+
+/** A client certificate with its file or its key, but not both. */
+export function halfSetClient(tls: TlsSettings | undefined): boolean {
+  const client = tls?.clientCertificate;
+  return !!client && (client.certificate === "") !== (client.key === "");
 }
 
 /** One folder's settings as on disk, and as edited in its tab. */
@@ -72,6 +84,39 @@ export class RequestFolderState extends SyncedFile<FolderFile> {
 
   protected snapshot(): FolderFile {
     return $state.snapshot(this.draft);
+  }
+
+  // A half-set client certificate is not written, so it would be lost on close.
+  override get dirty(): boolean {
+    return super.dirty || halfSetClient(this.draft.tls);
+  }
+
+  protected override adopt(file: FolderFile): void {
+    this.saved = file;
+    this.#followDisk(file);
+  }
+
+  /** The name and order are the disk's: the latest ones are written back. */
+  protected override async prepare(file: FolderFile): Promise<FolderFile> {
+    let disk: FolderFile = {};
+    try {
+      disk = await readFolder(this.path);
+    } catch {
+      // A missing or unreadable file: nothing of the sidebar's to keep.
+    }
+    const { name, order, ...rest } = file;
+    void name;
+    void order;
+    return {
+      ...(disk.name !== undefined ? { name: disk.name } : {}),
+      ...(disk.order !== undefined ? { order: disk.order } : {}),
+      ...rest,
+    };
+  }
+
+  #followDisk(file: FolderFile): void {
+    this.draft.name = file.name;
+    this.draft.order = file.order;
   }
 
   protected readFile(path: string): Promise<FolderFile> {
