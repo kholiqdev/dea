@@ -25,7 +25,7 @@ pub use environments::{
     ENV_COLORS, EnvReference, delete_environment, duplicate_environment, environment_references,
     is_valid_variable_name, save_environment,
 };
-pub use error::{FileError, ProjectError};
+pub use error::{FileError, FileErrorInfo, ProjectError};
 pub use load::{has_merge_conflict_markers, load_project};
 pub use local_files::{LOCAL_PREFIX, LocalFiles, NoLocalFiles, is_local_ref};
 pub use migrate::{Migration, MigrationOutcome, migrate, migrate_with};
@@ -33,7 +33,9 @@ pub use model::{
     Environment, LoadedProject, MAX_RELATIVE_PATH_LEN, Manifest, Project, SCHEMA_VERSION,
     SecretKind, SecretSpec, Variable, VaultManifest,
 };
-pub use names::{check_relative_path, is_production_name, safe_file_stem, unique_file_stem};
+pub use names::{
+    check_relative_path, is_production_name, portable_path, safe_file_stem, unique_file_stem,
+};
 pub use request::{
     ApiKeyLocation, Auth, Body, ClientCertificate, FolderFile, FormField, KeyValue, RawLanguage,
     RequestFile, SendOptions, TlsSettings,
@@ -47,9 +49,7 @@ pub use request_resolve::{
     RequestError, Resolved, ResolvedBody, ResolvedClientCertificate, ResolvedField,
     ResolvedRequest, ResolvedTls, resolve_draft, resolve_request,
 };
-pub use request_tree_info::{
-    FolderNode, RequestFileError, RequestLeaf, RequestNode, RequestTreeInfo, tree_info,
-};
+pub use request_tree_info::{FolderNode, RequestLeaf, RequestNode, RequestTreeInfo, tree_info};
 pub use requests::{
     Folder, LoadedRequests, RequestEntry, RequestLocation, RequestTree, TreeItem, load_requests,
     save_request,

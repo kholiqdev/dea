@@ -1,6 +1,10 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use serde::Serialize;
+
+use crate::portable_path;
+
 /// A problem in one project file, pointing at the place to fix it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileError {
@@ -23,6 +27,34 @@ impl fmt::Display for FileError {
             }
         }
         write!(f, ": {}", self.message)
+    }
+}
+
+/// A project file that could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub struct FileErrorInfo {
+    /// Path relative to the project root, with forward slashes.
+    pub path: String,
+    pub line: Option<u32>,
+    pub message: String,
+    /// The file still holds git conflict markers; saving over it is refused.
+    pub merge_conflict: bool,
+}
+
+impl From<&FileError> for FileErrorInfo {
+    fn from(e: &FileError) -> Self {
+        FileErrorInfo {
+            path: portable_path(&e.path),
+            line: e.line.and_then(|l| u32::try_from(l).ok()),
+            message: e.message.clone(),
+            merge_conflict: e.merge_conflict,
+        }
     }
 }
 
