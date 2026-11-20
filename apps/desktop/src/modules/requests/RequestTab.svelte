@@ -12,6 +12,7 @@
   import { projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
   import { errorMessage } from "$lib/ipc/errors";
+  import BodySection from "./components/BodySection.svelte";
   import HeadersSection from "./components/HeadersSection.svelte";
   import OutsideChange from "./components/OutsideChange.svelte";
   import ParamsSection from "./components/ParamsSection.svelte";
@@ -175,6 +176,13 @@
         <ParamsSection {draft} {variables} {readonly} />
       {:else if draft.section === "headers"}
         <HeadersSection {draft} {variables} {readonly} />
+      {:else if draft.section === "body"}
+        <BodySection
+          {draft}
+          {variables}
+          {readonly}
+          onerror={(message: string) => shell.toast(message)}
+        />
       {/if}
     </div>
   </div>

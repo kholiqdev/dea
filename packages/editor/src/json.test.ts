@@ -6,6 +6,11 @@ describe("json", () => {
     expect(lintJson('{ "limit": {{limit}}, "id": "{{id}}" }')).toBeNull();
   });
 
+  test("lint treats an empty or whitespace-only body as no body", () => {
+    expect(lintJson("")).toBeNull();
+    expect(lintJson(" \n\t ")).toBeNull();
+  });
+
   test("lint error names the line", () => {
     expect(lintJson('{\n  "a": 1,\n  "b": \n}')).toMatchObject({ line: 4 });
   });
