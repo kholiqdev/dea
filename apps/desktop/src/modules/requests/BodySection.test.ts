@@ -1,9 +1,14 @@
 import { screen, waitFor } from "@testing-library/svelte";
+import { EditorView } from "@codemirror/view";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test } from "vitest";
 import type { Body } from "$lib/ipc/bindings/Body";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
-import { openRequestTab, setUpRequestTabs } from "./request-tab-support.svelte";
+import {
+  openRequestTab,
+  setUpRequestTabs,
+  type FakeShell,
+} from "./request-tab-support.svelte";
 import { resetTreeState } from "./state/tree.svelte";
 import {
   fakeRequestsIpc,
@@ -14,9 +19,11 @@ import {
 
 const UPLOAD = "requests/shipments/upload.yaml";
 
+let shell: FakeShell;
+
 beforeEach(() => {
   resetTreeState();
-  setUpRequestTabs();
+  ({ shell } = setUpRequestTabs());
 });
 
 function uploadIpc(
@@ -48,19 +55,13 @@ async function openBody(): Promise<void> {
   await userEvent.click(await screen.findByRole("tab", { name: /Body/ }));
 }
 
-/** CodeMirror keeps a handle to its view on the content node. */
-interface CmView {
-  state: { doc: { length: number; toString(): string } };
-  dispatch(spec: {
-    changes: { from: number; to: number; insert: string };
-  }): void;
-}
-interface CmNode {
-  cmTile: { root: { view: CmView } };
-}
-async function editor(): Promise<CmView> {
+async function editor(): Promise<EditorView> {
   const content = await screen.findByRole("textbox", { name: "Body" });
-  return (content as unknown as CmNode).cmTile.root.view;
+  const view = EditorView.findFromDOM(
+    content.closest(".cm-editor") as HTMLElement,
+  );
+  if (!view) throw new Error("No editor view");
+  return view;
 }
 
 async function type(text: string): Promise<void> {
@@ -172,7 +173,9 @@ test("form_data_rows_can_be_files", async () => {
     screen.getByRole("combobox", { name: "Type of avatar" }),
     "File",
   );
-  await userEvent.click(screen.getByRole("button", { name: "Choose…" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose file for avatar" }),
+  );
   expect(await screen.findByText("avatar.png")).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Send avatar" })).toBeChecked();
   await userEvent.click(screen.getByRole("button", { name: "Save request" }));
@@ -215,4 +218,53 @@ test("urlencoded_fields_count_in_the_tab_label", async () => {
   await userEvent.click(screen.getByRole("tab", { name: "Body 2" }));
   expect(screen.getByRole("radio", { name: "URL encoded" })).toBeChecked();
   expect(screen.getByRole("button", { name: "Add field" })).toBeInTheDocument();
+});
+
+test("each form data row has its own chooser name", async () => {
+  uploadIpc({
+    mode: "formData",
+    fields: [
+      { name: "avatar", file: "assets/a.png" },
+      { name: "", file: "assets/b.png" },
+    ],
+  });
+  await openBody();
+  expect(
+    await screen.findByRole("button", { name: "Choose file for avatar" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Choose file for row 2" }),
+  ).toBeInTheDocument();
+});
+
+test("a file row with no file chosen is not written as text", async () => {
+  const ipc = uploadIpc({
+    mode: "formData",
+    fields: [{ name: "note", value: "hi" }],
+  });
+  await openBody();
+  await userEvent.selectOptions(
+    await screen.findByRole("combobox", { name: "Type of note" }),
+    "File",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save request" }));
+  expect(ipc.saved.at(-1)?.body).toEqual({ mode: "formData", fields: [] });
+  expect(screen.getByRole("combobox", { name: "Type of note" })).toHaveValue(
+    "file",
+  );
+});
+
+test("switching modes without editing leaves the tab clean", async () => {
+  const ipc = uploadIpc({ mode: "json", text: '{"a":1}' });
+  const { id } = openRequestTab(UPLOAD);
+  await userEvent.click(await screen.findByRole("tab", { name: /Body/ }));
+  await mode("None").then((r) => userEvent.click(r));
+  await mode("JSON").then((r) => userEvent.click(r));
+  await mode("Raw").then((r) => userEvent.click(r));
+  await mode("JSON").then((r) => userEvent.click(r));
+  expect((await editor()).state.doc.toString()).toBe('{"a":1}');
+  expect(shell.isTabDirty(id)).toBe(false);
+  expect(ipc.saved).toHaveLength(0);
+  await type('{"a":2}');
+  await waitFor(() => expect(shell.isTabDirty(id)).toBe(true));
 });
