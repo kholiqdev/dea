@@ -229,10 +229,16 @@ export function fakeRequestsIpc(
         return null;
       }
       case "read_folder":
-        return ipc.folders.get(args.path as string) ?? {};
-      case "save_folder":
-        ipc.folders.set(args.path as string, args.settings as FolderFile);
+      case "save_folder": {
+        const path = args.path as string;
+        // Like Dea, a folder that is not there is missing.
+        if (path !== "requests" && folderAt(path) === null)
+          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          throw { kind: "missing", message: `${path} does not exist` };
+        if (cmd === "read_folder") return ipc.folders.get(path) ?? {};
+        ipc.folders.set(path, args.settings as FolderFile);
         return null;
+      }
       case "create_request": {
         const items = folderAt(args.folder as string);
         const name = args.name as string;

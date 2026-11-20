@@ -1,6 +1,7 @@
 <!--
-  What happened to the request's file outside Dea while it had edits, and
-  what can be done: keep the edits or take the file, or save it again.
+  What happened to the request's or folder's file outside Dea while it had
+  edits, and what can be done: keep the edits or take the file, or save it
+  again (a request only) or close the tab.
 -->
 <script lang="ts">
   import FileExclamationPoint from "@lucide/svelte/icons/file-exclamation-point";
@@ -13,6 +14,7 @@
   interface Outside {
     outside: "changed" | "deleted" | null;
     noun: string;
+    recreatable: boolean;
     keepMine(): void;
     takeTheirs(): Promise<void>;
     saveAgain(): Promise<void>;
@@ -42,10 +44,12 @@
 {:else if draft.outside === "deleted"}
   <FileBanner
     tone="warning"
-    actions={[
-      { label: "Save again", onclick: () => attempt(draft.saveAgain()) },
-      { label: "Close tab", variant: "ghost", onclick: onclose },
-    ]}
+    actions={draft.recreatable
+      ? [
+          { label: "Save again", onclick: () => attempt(draft.saveAgain()) },
+          { label: "Close tab", variant: "ghost", onclick: onclose },
+        ]
+      : [{ label: "Close tab", onclick: onclose }]}
   >
     {#snippet icon()}<FileX size={16} strokeWidth={1.5} />{/snippet}
     This {draft.noun} was deleted on disk.

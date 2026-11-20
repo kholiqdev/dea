@@ -230,6 +230,53 @@ test("a folder tab that is not shown learns of a change on disk and is not saved
   expect(shell.activated).toEqual([id]);
 });
 
+test("a folder deleted on disk says it is gone", async () => {
+  const ipc = await setUp();
+  openFolderTab(ARCHIVE, "Archive");
+  await screen.findByRole("table", { name: "Headers" });
+  // Deleted outside Dea: the folder is the last item of its collection.
+  ipc.tree.collections[0]?.items.pop();
+  project.change([`${ARCHIVE}/_folder.yaml`]);
+  expect(
+    await screen.findByRole("heading", {
+      name: "This folder no longer exists",
+    }),
+  ).toBeInTheDocument();
+});
+
+test("a collection that is gone says so", async () => {
+  await setUp();
+  openFolderTab("requests/cargo", "Cargo");
+  expect(
+    await screen.findByRole("heading", {
+      name: "This collection no longer exists",
+    }),
+  ).toBeInTheDocument();
+});
+
+test("a folder deleted on disk with edits offers only to close its tab", async () => {
+  const ipc = await setUp();
+  const { id } = openFolderTab(ARCHIVE, "Archive");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add header" }),
+  );
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Header of row 1" }),
+    "X-Team",
+  );
+  await treeState.remove(ARCHIVE);
+  project.change([`${ARCHIVE}/_folder.yaml`]);
+
+  await screen.findByText("This folder was deleted on disk.");
+  expect(screen.queryByRole("button", { name: "Save again" })).toBeNull();
+  await expect(shell.save(id)).rejects.toThrow(
+    "This folder was deleted on disk and cannot be saved.",
+  );
+  expect(ipc.calls.filter(([c]) => c === "save_folder")).toEqual([]);
+  await userEvent.click(screen.getByRole("button", { name: "Close tab" }));
+  expect(shell.closing).toEqual([id]);
+});
+
 test("a new request keeps the folder's order while the tab has edits", async () => {
   const ipc = await setUp();
   ipc.folders.set(SHIPMENTS, { order: ["by-id", "list"] });

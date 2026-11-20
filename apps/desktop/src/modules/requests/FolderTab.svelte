@@ -96,7 +96,7 @@
 {/snippet}
 
 {#if state.missing}
-  <Placeholder title="This folder no longer exists" icon={FileX} text="" />
+  <Placeholder title="This {unit} no longer exists" icon={FileX} text="" />
 {:else if !state.saved}
   {#if state.error}{@render problem(state.error)}{/if}
 {:else}

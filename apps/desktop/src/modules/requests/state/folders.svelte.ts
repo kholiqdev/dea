@@ -91,6 +91,11 @@ export class RequestFolderState extends SyncedFile<FolderFile> {
     return this.isCollection ? "collection" : "folder";
   }
 
+  /** Writing `_folder.yaml` alone would not bring back what the folder held. */
+  override get recreatable(): boolean {
+    return false;
+  }
+
   protected snapshot(): FolderFile {
     return $state.snapshot(this.draft);
   }
