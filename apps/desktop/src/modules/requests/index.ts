@@ -29,6 +29,26 @@ export const manifest: ModuleManifest = {
       title: "Open Requests",
       action: { type: "openModule", module: "requests" },
     },
+    {
+      id: "requests.newRequest",
+      title: "New request",
+      action: { type: "intent", intent: "requests.newRequest" },
+    },
+    {
+      id: "requests.newCollection",
+      title: "New collection",
+      action: { type: "intent", intent: "requests.newCollection" },
+    },
   ],
   shortcuts: [{ command: "requests.open", chord: "Mod+1" }],
+  intents: [
+    {
+      intent: "requests.newRequest",
+      handler: () => import("./intents/new-request"),
+    },
+    {
+      intent: "requests.newCollection",
+      handler: () => import("./intents/new-collection"),
+    },
+  ],
 };
