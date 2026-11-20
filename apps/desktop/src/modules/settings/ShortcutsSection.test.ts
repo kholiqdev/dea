@@ -29,7 +29,7 @@ test("every registered command is listed with its shortcut", () => {
 test("a conflicting shortcut is shown before saving and blocks the save", async () => {
   render(ShortcutsSection);
   await userEvent.click(
-    within(row("Open Requests")).getByRole("button", { name: "Change" }),
+    within(row("Open Requests")).getByRole("button", { name: /^Change/ }),
   );
   const capture = screen.getByRole("textbox", {
     name: "New shortcut for Open Requests",
@@ -53,7 +53,7 @@ test("a conflicting shortcut is shown before saving and blocks the save", async 
 test("a free shortcut can be saved", async () => {
   render(ShortcutsSection);
   await userEvent.click(
-    within(row("Open Requests")).getByRole("button", { name: "Change" }),
+    within(row("Open Requests")).getByRole("button", { name: /^Change/ }),
   );
   await userEvent.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -64,7 +64,7 @@ test("a free shortcut can be saved", async () => {
 test("Escape cancels without saving", async () => {
   render(ShortcutsSection);
   await userEvent.click(
-    within(row("Open Requests")).getByRole("button", { name: "Change" }),
+    within(row("Open Requests")).getByRole("button", { name: /^Change/ }),
   );
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
@@ -74,7 +74,7 @@ test("Escape cancels without saving", async () => {
 test("a shortcut can be turned off", async () => {
   render(ShortcutsSection);
   await userEvent.click(
-    within(row("Open Requests")).getByRole("button", { name: "Change" }),
+    within(row("Open Requests")).getByRole("button", { name: /^Change/ }),
   );
   await userEvent.click(screen.getByRole("button", { name: "Turn off" }));
   expect(settings.shortcuts).toEqual({ "requests.open": null });
@@ -87,14 +87,14 @@ test("reset to default restores the manifest chord", async () => {
   expect(row("Open Requests")).toHaveTextContent("CtrlShift1");
   await userEvent.click(
     within(row("Open Requests")).getByRole("button", {
-      name: "Reset to default",
+      name: /^Reset to default/,
     }),
   );
   expect(settings.shortcuts).toEqual({});
   expect(row("Open Requests")).toHaveTextContent("Ctrl1");
   expect(
     within(row("Open Requests")).queryByRole("button", {
-      name: "Reset to default",
+      name: /^Reset to default/,
     }),
   ).toBeNull();
 });
@@ -112,7 +112,7 @@ test("the list can be searched", async () => {
 test("a shortcut needs Mod or Alt, except function keys", async () => {
   render(ShortcutsSection);
   await userEvent.click(
-    within(row("Open Requests")).getByRole("button", { name: "Change" }),
+    within(row("Open Requests")).getByRole("button", { name: /^Change/ }),
   );
   const capture = screen.getByRole("textbox", {
     name: "New shortcut for Open Requests",
@@ -136,4 +136,15 @@ test("resetting every shortcut starts on Cancel", async () => {
   await userEvent.keyboard("{Enter}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(settings.shortcuts).toEqual({ "requests.open": "Mod+Shift+1" });
+});
+
+test("the buttons of a row name the command they change", async () => {
+  await settings.update({ shortcuts: { "requests.open": "Mod+Shift+1" } });
+  render(ShortcutsSection);
+  const buttons = within(row("Open Requests")).getAllByRole("button");
+  expect(buttons).toHaveLength(2);
+  expect(buttons[0]).toHaveAccessibleName(
+    "Reset to default shortcut for Open Requests",
+  );
+  expect(buttons[1]).toHaveAccessibleName("Change shortcut for Open Requests");
 });
