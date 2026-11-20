@@ -131,6 +131,7 @@
                     <Button
                       size="small"
                       variant="ghost"
+                      aria-label="Reset to default shortcut for {row.title}"
                       onclick={() => run(() => resetShortcut(row.command))}
                       >Reset to default</Button
                     >
@@ -138,6 +139,7 @@
                   <Button
                     size="small"
                     variant="ghost"
+                    aria-label="Change shortcut for {row.title}"
                     onclick={() => editor.start(row.command)}>Change</Button
                   >
                 {/if}
