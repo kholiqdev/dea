@@ -90,7 +90,14 @@
     "&.cm-focused": { outline: "none" },
     ".cm-cursor": { borderLeftColor: "var(--text-1)" },
     ".cm-var": { color: "var(--syn-kw)" },
-    ".cm-var-undefined": { color: "var(--negative-text)" },
+    // Not by colour alone (WCAG 1.4.1).
+    ".cm-var-undefined": {
+      color: "var(--negative-text)",
+      textDecorationLine: "underline",
+      textDecorationStyle: "wavy",
+      textDecorationColor: "var(--negative-text)",
+      textUnderlineOffset: "3px",
+    },
     ".cm-tooltip": {
       backgroundColor: "var(--bg-2)",
       color: "var(--text-1)",
