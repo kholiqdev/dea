@@ -13,6 +13,13 @@ const TEXT = [
   "--negative-text",
   "--positive-text",
   "--warning-text",
+  "--method-get",
+  "--method-post",
+  "--method-put",
+  "--method-patch",
+  "--method-delete",
+  "--method-head",
+  "--method-options",
 ];
 const NON_TEXT = ["--focus", "--accent", "--negative", "--positive"];
 const SURFACES = ["--bg-0", "--bg-1", "--bg-2", "--bg-3", "--bg-hover"];
