@@ -34,9 +34,12 @@
 >
   <span class="label">{entry.title}</span>
   {#if entry.environment}
+    <!-- An environment item would otherwise read its name twice. -->
     <span
       class={["tab-env", { "env-prod": entry.environment.production }]}
-      data-env={entry.environment.name}>{entry.environment.name}</span
+      data-env={entry.environment.name}
+      aria-hidden={entry.environment.name === entry.title || undefined}
+      >{entry.environment.name}</span
     >
   {/if}
   {#if entry.meta}<span class="meta">{entry.meta}</span>{/if}
