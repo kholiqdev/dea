@@ -160,8 +160,49 @@ export class Tabs {
     this.#tabs = this.#tabs.map((t) => (t.id === id ? { ...t, dirty } : t));
   }
 
+  /** The first tab of `tabType` whose params `match` accepts, if any. */
+  find(
+    tabType: string,
+    match?: (params: unknown) => boolean,
+  ): string | undefined {
+    return this.#tabs.find(
+      (t) => t.tabType === tabType && (!match || match(t.params)),
+    )?.id;
+  }
+
+  update(id: string, patch: { title?: string; params?: unknown }): void {
+    const tab = this.#tabs.find((t) => t.id === id);
+    if (!tab) return;
+    const next = { ...tab };
+    if (patch.title !== undefined) next.title = patch.title;
+    if ("params" in patch) next.params = patch.params;
+    if (next.title === tab.title && next.params === tab.params) return;
+    this.#tabs = this.#tabs.map((t) => (t.id === id ? next : t));
+  }
+
+  /**
+   * The environment a tab shows: its own, or for a tab type that follows
+   * the window, the window's active one.
+   */
+  environmentOf(
+    tab: TabRecord,
+    windowEnvironment: TabEnvironment | null | undefined,
+  ): TabEnvironment | undefined {
+    if (tab.environment) return tab.environment;
+    if (this.#registry.tabType(tab.tabType)?.environment !== "window")
+      return undefined;
+    return windowEnvironment ?? undefined;
+  }
+
   setSaveHandler(tabType: string, save: SaveHandler): void {
     this.#saveHandlers[tabType] = save;
+  }
+
+  /** Saves the active tab; nothing happens without a handler for its type. */
+  async saveActive(): Promise<void> {
+    const tab = this.#active;
+    const save = tab && this.#saveHandlers[tab.tabType];
+    if (tab && save) await save(tab.id);
   }
 
   reopenLast(): void {

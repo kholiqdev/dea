@@ -22,6 +22,11 @@ export interface TabTypeData {
   id: ContributionId;
   title: string;
   icon: string;
+  /**
+   * `"window"`: the tab shows the window's active environment, and follows
+   * it when it changes.
+   */
+  environment?: "window";
 }
 
 export interface PanelData {

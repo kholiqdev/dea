@@ -120,6 +120,7 @@
     {#each tabs as tab, index (tab.id)}
       {@const Icon = iconOf(tab)}
       {@const active = tab.id === activeId}
+      {@const env = ctx.tabs.environmentOf(tab, ctx.project.environment)}
       <div
         class="tab"
         data-tab={tab.id}
@@ -142,10 +143,10 @@
         >
           {#if Icon}<Icon size={16} strokeWidth={1.5} />{/if}
           <span class="title">{tab.title}</span>
-          {#if tab.environment}
+          {#if env}
             <span
-              class={["tab-env", { "env-prod": tab.environment.production }]}
-              data-env={tab.environment.name}>{tab.environment.name}</span
+              class={["tab-env", { "env-prod": env.production }]}
+              data-env={env.name}>{env.name}</span
             >
           {/if}
           {#if tab.dirty}

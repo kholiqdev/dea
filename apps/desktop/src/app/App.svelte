@@ -17,7 +17,8 @@
   setShellApi({
     openTab: (tabType, title, params, opts) =>
       tabs.open(tabType, title, params, opts),
-    findTab: (tabType) => tabs.tabs.find((t) => t.tabType === tabType)?.id,
+    findTab: (tabType, match) => tabs.find(tabType, match),
+    updateTab: (id, patch) => tabs.update(id, patch),
     activateTab: (id) => {
       if (!tabs.tabs.some((t) => t.id === id)) return false;
       tabs.activate(id);
@@ -31,7 +32,8 @@
       const command = registry.commands.find((c) => c.id === id);
       if (command) await runAction(command.action, { registry, shell });
     },
-    toast: (text) => void toasts.show(text),
+    toast: (text, opts) => toasts.show(text, opts),
+    dismissToast: (id) => toasts.dismiss(id),
   });
 
   // "Match system" follows the OS as it changes.

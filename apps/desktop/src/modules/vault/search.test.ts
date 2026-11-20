@@ -51,6 +51,7 @@ beforeEach(() => {
   setShellApi({
     openTab: () => "t",
     findTab: () => undefined,
+    updateTab: () => {},
     activateTab: () => true,
     closeTab: () => Promise.resolve(true),
     setTabDirty: () => {},
@@ -60,7 +61,8 @@ beforeEach(() => {
       return Promise.resolve();
     },
     runCommand: () => Promise.resolve(),
-    toast: () => {},
+    toast: () => 0,
+    dismissToast: () => {},
   });
   clearMocks();
   mockIPC((cmd) => {
@@ -134,6 +136,7 @@ test("a secret name removed after the palette opened says so", async () => {
   setShellApi({
     openTab: () => "t",
     findTab: () => undefined,
+    updateTab: () => {},
     activateTab: () => true,
     closeTab: () => Promise.resolve(true),
     setTabDirty: () => {},
@@ -143,7 +146,8 @@ test("a secret name removed after the palette opened says so", async () => {
       return Promise.resolve();
     },
     runCommand: () => Promise.resolve(),
-    toast: (text) => void toasts.push(text),
+    toast: (text) => toasts.push(text),
+    dismissToast: () => {},
   });
   const items = secretNames();
   project.info = { ...project.info!, secretNames: ["access_token"] };
