@@ -467,18 +467,13 @@ impl UiPrompter {
         }
     }
 
-    /// Shows prompt `id` in `window`. A confirmation that stopped waiting
-    /// meanwhile is withdrawn once more after it: its withdrawal may have
-    /// reached the window first.
+    /// Shows prompt `id` in `window` if it still waits; false when the
+    /// window is gone. The lock is held while it is sent, so a prompt that
+    /// stops waiting is withdrawn after it reaches the window, and only by
+    /// [`UiPrompter::dismiss`]: once.
     fn show(&self, window: &str, id: u64, prompt: Prompt) -> bool {
-        let confirmation = matches!(prompt, Prompt::Send(_));
-        if !self.windows.show(window, prompt) {
-            return false;
-        }
-        if confirmation && !guard(&self.waiting).contains_key(&id) {
-            self.windows.withdraw(window, id);
-        }
-        true
+        let waiting = guard(&self.waiting);
+        !waiting.contains_key(&id) || self.windows.show(window, prompt)
     }
 
     /// Shows the prompt `prompt` makes from its id in the window this
@@ -845,23 +840,68 @@ mod tests {
     }
 
     #[test]
-    fn a_confirmation_withdrawn_while_shown_is_withdrawn_after_it() {
+    fn a_confirmation_that_stopped_waiting_is_not_shown() {
         let (prompter, _shown, confirms, withdrawn) = recorded(&["main"], None);
-        // Confirmation 99 no longer waits: its withdrawal may have reached
-        // the window before the confirmation did, so it comes again after.
+        // Confirmation 99 no longer waits: it was withdrawn when it stopped,
+        // so showing it now would leave a dialog nobody closes.
         let event = SendConfirmEvent {
             id: 99,
             confirmation: confirmation(),
         };
-        assert!(prompter.show("main", 99, Prompt::Send(event.clone())));
-        assert_eq!(
-            confirms.recv_timeout(WAIT).unwrap(),
-            ("main".to_string(), event)
-        );
-        assert_eq!(
-            withdrawn.recv_timeout(WAIT).unwrap(),
-            ("main".to_string(), 99)
-        );
+        assert!(prompter.show("main", 99, Prompt::Send(event)));
+        assert!(confirms.try_recv().is_err(), "nothing is shown");
+        assert!(withdrawn.try_recv().is_err(), "nor withdrawn again");
+    }
+
+    /// Windows that take a while to finish showing a prompt the page already
+    /// has, as an emit can: a cancel may come meanwhile.
+    struct SlowWindows(RecordingWindows);
+
+    impl PromptWindows for SlowWindows {
+        fn focused(&self) -> Option<String> {
+            self.0.focused()
+        }
+
+        fn show(&self, window: &str, prompt: Prompt) -> bool {
+            let shown = self.0.show(window, prompt);
+            thread::sleep(Duration::from_millis(2));
+            shown
+        }
+
+        fn withdraw(&self, window: &str, id: u64) {
+            self.0.withdraw(window, id);
+        }
+    }
+
+    #[test]
+    fn a_confirmation_is_withdrawn_once_however_a_cancel_races_its_showing() {
+        const ROUNDS: usize = 50;
+        let (windows, _shown, confirms, withdrawn) = RecordingWindows::new(&["main"], None);
+        let prompter = Arc::new(UiPrompter::new(SlowWindows(windows)));
+        let mut seen = Vec::new();
+        for round in 0..ROUNDS {
+            let send = CancellationToken::new();
+            let asked = confirm_from(&prompter, "main", &send);
+            if round % 2 == 0 {
+                // Cancelled as soon as the window has it, while it is shown.
+                seen.push(confirms.recv_timeout(WAIT).unwrap().1.id);
+            }
+            // Otherwise anywhere between asking and showing.
+            send.cancel();
+            prompter.withdraw_cancelled();
+            assert_eq!(asked.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+            while confirms.try_recv().is_ok() {}
+        }
+
+        let mut times: HashMap<u64, usize> = HashMap::new();
+        for (_, id) in withdrawn.try_iter() {
+            *times.entry(id).or_default() += 1;
+        }
+        for id in seen {
+            assert_eq!(times.get(&id), Some(&1), "confirmation {id}");
+        }
+        assert_eq!(times.len(), ROUNDS, "every confirmation is withdrawn");
+        assert!(times.values().all(|&n| n == 1), "once each: {times:?}");
     }
 
     #[test]
