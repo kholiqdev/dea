@@ -1,7 +1,7 @@
 <!--
   The method, the URL, Send (or Cancel once the request left), and Save. In
   production the bar says so where the request leaves: a chip before the
-  method, and a red Send to production.
+  method, and a danger-solid Send to production.
 -->
 <script lang="ts">
   import Save from "@lucide/svelte/icons/save";
@@ -237,8 +237,8 @@
     color: var(--primary-key-text);
   }
 
-  /* No fill: the text keeps the contrast of the solid red, an outline the
-     keycap's shape. */
+  /* No fill: the text keeps the contrast of the solid negative fill, an outline
+     the keycap's shape. */
   .kc.danger {
     background: none;
     box-shadow: inset 0 0 0 1px
