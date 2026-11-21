@@ -1,6 +1,7 @@
 // IPC fakes for the Requests tests: an in-memory request tree that answers
 // every request command and records the calls.
 
+import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { FileErrorInfo } from "$lib/ipc/bindings/FileErrorInfo";
 import type { FileRef } from "$lib/ipc/bindings/FileRef";
@@ -10,6 +11,9 @@ import type { Inspection } from "$lib/ipc/bindings/Inspection";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { RequestNode } from "$lib/ipc/bindings/RequestNode";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
+import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
+import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
+import type { SendOutcome } from "$lib/ipc/bindings/SendOutcome";
 import { VariableLookup } from "./state/variables.svelte";
 import type { IpcError } from "$lib/ipc/errors";
 
@@ -36,6 +40,51 @@ export interface RequestsIpc {
   /** Commands that reject, with the error each rejects with. */
   failures: Map<string, IpcError>;
   inspection: FakeInspection;
+  /** Every `send_request`, in order. */
+  sends: { id: string; path: string; request: RequestFile }[];
+  /** How `send_request` answers; may change between sends. */
+  send: FakeSend;
+  /** Ends every held send, with `outcome` or else `send.outcome`. */
+  finishSends(outcome?: SendOutcome): void;
+}
+
+/**
+ * How `send_request` answers: `events` go to its channel at once, then
+ * `outcome` ends it, unless `hold` keeps it running until `finishSends` or
+ * `cancel_send` (which ends it `cancelled`, as Dea does).
+ */
+export interface FakeSend {
+  outcome: SendOutcome;
+  events: SendEvent[];
+  hold: boolean;
+}
+
+/** A 200 response of an empty JSON array, with `over` on top. */
+export function responseInfo(over: Partial<ResponseInfo> = {}): ResponseInfo {
+  return {
+    status: 200,
+    reason: "OK",
+    version: "HTTP/1.1",
+    headers: [{ name: "content-type", value: "application/json" }],
+    cookies: [],
+    size: 2,
+    contentType: "application/json",
+    kind: "json",
+    large: false,
+    truncated: false,
+    timing: {
+      dnsMs: 4,
+      connectMs: 12,
+      tlsMs: 18,
+      waitingMs: 96,
+      downloadMs: 18,
+      totalMs: 148,
+      reused: false,
+    },
+    redirects: [],
+    cookiesNotSaved: null,
+    ...over,
+  };
 }
 
 export function leaf(
@@ -159,8 +208,20 @@ export function fakeRequestsIpc(
     describe?: Record<string, Partial<FileRef>>;
     /** The names `vault_secrets` lists (one row each, in `local`). */
     secrets?: string[];
+    /** How `send_request` answers; a 200 response by default. */
+    send?: Partial<FakeSend>;
   } = {},
 ): RequestsIpc {
+  // The sends `hold` keeps running, with what ends each.
+  let held: { id: string; end: (outcome: SendOutcome) => void }[] = [];
+  const finish = (
+    which: (send: { id: string }) => boolean,
+    outcome: SendOutcome,
+  ) => {
+    const ending = held.filter(which);
+    held = held.filter((h) => !which(h));
+    for (const send of ending) send.end(structuredClone(outcome));
+  };
   const ipc: RequestsIpc = {
     calls: [],
     tree: opts.tree ?? { collections: [], errors: [] },
@@ -169,6 +230,14 @@ export function fakeRequestsIpc(
     folders: new Map(),
     failures: new Map(),
     inspection: opts.inspection ?? {},
+    sends: [],
+    send: {
+      outcome: { type: "response", response: responseInfo() },
+      events: [],
+      hold: false,
+      ...opts.send,
+    },
+    finishSends: (outcome) => finish(() => true, outcome ?? ipc.send.outcome),
   };
   if (opts.errors) ipc.tree.errors = opts.errors;
   const trash = new Map<
@@ -373,6 +442,24 @@ export function fakeRequestsIpc(
         }));
       case "pick_request_file":
         return opts.pick ?? null;
+      case "send_request": {
+        const id = args.id as string;
+        ipc.sends.push(
+          structuredClone({
+            id,
+            path: args.path as string,
+            request: args.request as RequestFile,
+          }),
+        );
+        const channel = args.events as Channel<SendEvent>;
+        for (const event of ipc.send.events)
+          channel.onmessage(structuredClone(event));
+        if (!ipc.send.hold) return structuredClone(ipc.send.outcome);
+        return new Promise<SendOutcome>((end) => held.push({ id, end }));
+      }
+      case "cancel_send":
+        finish((h) => h.id === args.id, { type: "cancelled" });
+        return null;
       case "describe_file_ref": {
         const value = args.value as string;
         return {

@@ -1,7 +1,7 @@
 <!--
   A request's tab (F1-REQ-02): the request line, its sections, and what
-  happened to its file outside Dea. The draft outlives the view, so
-  switching tabs keeps the edits.
+  happened to its file outside Dea. The draft and its send outlive the
+  view, so switching tabs keeps the edits and the response.
 -->
 <script lang="ts">
   import FileExclamationPoint from "@lucide/svelte/icons/file-exclamation-point";
@@ -27,6 +27,8 @@
     type Section,
   } from "./state/drafts.svelte";
   import TlsWarning from "./components/TlsWarning.svelte";
+  import UndefinedWarning from "./components/UndefinedWarning.svelte";
+  import { exchangeFor } from "./state/exchange.svelte";
   import { DEFAULT_OPTIONS } from "./state/folders.svelte";
   import { saveTab } from "./state/synced-file.svelte";
   import { VariableLookup } from "./state/variables.svelte";
@@ -48,6 +50,7 @@
   const id = untrack(() => tab.id);
   const path = $derived((tab.params as { path?: string } | null)?.path ?? "");
   const draft = untrack(() => draftFor(id, path));
+  const exchange = exchangeFor(id);
   const variables = new VariableLookup(
     () => draft.inspection,
     () => project.environment?.name ?? null,
@@ -64,6 +67,7 @@
     ),
   });
   let tablist = $state<HTMLElement>();
+  let editor = $state<HTMLElement>();
 
   shell.setSaveHandler("requests.request", (tabId) => saveTab(drafts, tabId));
 
@@ -115,6 +119,22 @@
     shell.closeTab(id).catch((e: unknown) => shell.toast(errorMessage(e)));
   }
 
+  /**
+   * Escape stops the send when the focus is in this tab, or nowhere (a
+   * clicked button may not take it), and nothing inside used the key.
+   */
+  function onwindowkeydown(e: KeyboardEvent): void {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (exchange.state.phase !== "sending") return;
+    const target = e.target;
+    if (
+      target !== document.body &&
+      !(target instanceof Node && editor?.contains(target))
+    )
+      return;
+    exchange.cancel();
+  }
+
   async function onkeydown(e: KeyboardEvent): Promise<void> {
     const at = SECTIONS.findIndex((s) => s.id === draft.section);
     const to: Record<string, number> = {
@@ -132,6 +152,8 @@
   }
 </script>
 
+<svelte:window onkeydown={onwindowkeydown} />
+
 {#snippet problem(text: string)}
   <FileBanner tone="negative">
     {#snippet icon()}<FileExclamationPoint
@@ -147,11 +169,27 @@
 {:else if !draft.saved}
   {#if draft.error}{@render problem(draft.error)}{/if}
 {:else}
-  <div class="editor">
+  <div class="editor" bind:this={editor}>
     <OutsideChange {draft} onclose={close} />
     {#if draft.error}{@render problem(draft.error)}{/if}
     {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
-    <RequestLine {draft} {variables} {readonly} onsave={save} />
+    <RequestLine
+      {draft}
+      {variables}
+      {readonly}
+      sending={exchange.state.phase === "sending"}
+      onsave={save}
+      onsend={() => void exchange.send(draft)}
+      oncancel={() => exchange.cancel()}
+    />
+    {#if exchange.warning}
+      <UndefinedWarning
+        names={exchange.warning}
+        environment={project.environment?.name ?? null}
+        ondefine={() => void shell.runCommand("project.editEnvironments")}
+        onsendanyway={() => void exchange.send(draft, { anyway: true })}
+      />
+    {/if}
     <TlsWarning {effective} />
     <div
       class="sections"

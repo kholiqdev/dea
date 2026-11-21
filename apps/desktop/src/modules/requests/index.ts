@@ -39,8 +39,17 @@ export const manifest: ModuleManifest = {
       title: "New collection",
       action: { type: "intent", intent: "requests.newCollection" },
     },
+    {
+      id: "requests.send",
+      title: "Send request",
+      action: { type: "intent", intent: "requests.send" },
+      scope: "project",
+    },
   ],
-  shortcuts: [{ command: "requests.open", chord: "Mod+1" }],
+  shortcuts: [
+    { command: "requests.open", chord: "Mod+1" },
+    { command: "requests.send", chord: "Mod+Enter" },
+  ],
   searchSources: [
     {
       id: "requests.search",
@@ -65,6 +74,10 @@ export const manifest: ModuleManifest = {
     {
       intent: "requests.newCollection",
       handler: () => import("./intents/new-collection"),
+    },
+    {
+      intent: "requests.send",
+      handler: () => import("./intents/send"),
     },
   ],
 };

@@ -1,7 +1,13 @@
-<!-- The method, the URL, and Save. -->
+<!-- The method, the URL, Send (or Cancel while sending), and Save. -->
 <script lang="ts">
   import Save from "@lucide/svelte/icons/save";
-  import { currentPlatform, formatChordText } from "$lib/keyboard/chord";
+  import Button from "@dea/ui/Button.svelte";
+  import {
+    chordParts,
+    currentPlatform,
+    formatChordText,
+    parseChord,
+  } from "$lib/keyboard/chord";
   import type { RequestDraft } from "../state/drafts.svelte";
   import type { VariableLookup } from "../state/variables.svelte";
   import MethodMenu from "./MethodMenu.svelte";
@@ -11,15 +17,30 @@
     draft,
     variables,
     readonly,
+    sending,
     onsave,
+    onsend,
+    oncancel,
   }: {
     draft: RequestDraft;
     variables: VariableLookup;
     readonly: boolean;
+    sending: boolean;
     onsave: () => void;
+    onsend: () => void;
+    oncancel: () => void;
   } = $props();
 
-  const saveTitle = `Save request, ${formatChordText("Mod+S", currentPlatform())}`;
+  const platform = currentPlatform();
+  const saveTitle = `Save request, ${formatChordText("Mod+S", platform)}`;
+  const sendKeys = chordParts(parseChord("Mod+Enter"), platform);
+
+  // One button that turns into Cancel, so the focus stays on it.
+  function sendOrCancel(e: MouseEvent): void {
+    if (!sending) onsend();
+    // The second click of a double click on Send is not a Cancel.
+    else if (e.detail < 2) oncancel();
+  }
 </script>
 
 <div class="line">
@@ -41,6 +62,15 @@
       />
     </div>
   </div>
+  <Button variant={sending ? "secondary" : "primary"} onclick={sendOrCancel}>
+    {sending ? "Cancel" : "Send"}
+    <!-- The keys are shown, not read: the name stays Send or Cancel. -->
+    <span class="keys" aria-hidden="true">
+      {#each sending ? ["Esc"] : sendKeys as key, i (i)}<kbd
+          class={["kc", { primary: !sending }]}>{key}</kbd
+        >{/each}
+    </span>
+  </Button>
   <button
     type="button"
     class="save"
@@ -90,6 +120,31 @@
   .url :global(.field:focus-within) {
     background: none;
     box-shadow: none;
+  }
+
+  .keys {
+    display: inline-flex;
+    gap: 2px;
+  }
+
+  .kc {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: var(--r-key);
+    background: var(--bg-3);
+    box-shadow: inset 0 0 0 1px var(--line);
+    font: 500 11px/1 var(--font-mono);
+    color: var(--text-2);
+  }
+
+  .kc.primary {
+    background: var(--primary-key-bg);
+    box-shadow: none;
+    color: var(--primary-key-text);
   }
 
   .save {

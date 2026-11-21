@@ -10,6 +10,7 @@ import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { Variable } from "$lib/ipc/bindings/Variable";
 import { errorMessage } from "$lib/ipc/errors";
 import { lintJson } from "@dea/editor";
+import { projectApi } from "$app/contributions/project-api";
 import { inspectRequest, readRequest, saveRequest } from "../api";
 import {
   joinUrl,
@@ -18,6 +19,7 @@ import {
   syncParams,
   syncPathVariables,
 } from "../lib/url";
+import { exchanges, releaseExchange } from "./exchange.svelte";
 import {
   openTabs,
   SyncedFile,
@@ -163,7 +165,15 @@ export class RequestDraft extends SyncedFile<RequestFile> {
   #bodies: Partial<Record<Body["mode"], Body>> = {};
 
   #inspections = 0;
+  // The last call whose answer came back, and what it looked at.
+  #answered = 0;
+  #inspected: {
+    path: string;
+    request: RequestFile;
+    environment: string | null;
+  } | null = null;
   #timer: ReturnType<typeof setTimeout> | undefined;
+  #scheduled = false;
 
   get noun(): string {
     return "request";
@@ -294,24 +304,52 @@ export class RequestDraft extends SyncedFile<RequestFile> {
     this.draft.method = method;
   }
 
+  /** The draft as Dea inspects and sends it: plain data, as written. */
+  request(): RequestFile {
+    return cleaned(this.snapshot());
+  }
+
   /** Inspects the draft `INSPECT_DELAY` ms after the last call. */
   scheduleInspection(): void {
     clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => void this.inspect(), INSPECT_DELAY);
+    this.#scheduled = true;
+    this.#timer = setTimeout(() => {
+      this.#scheduled = false;
+      void this.inspect();
+    }, INSPECT_DELAY);
   }
 
   cancelInspection(): void {
     clearTimeout(this.#timer);
+    this.#scheduled = false;
+  }
+
+  /**
+   * Whether `inspection` is of the draft as it is now, in the environment
+   * in use, with no other look waiting or under way.
+   */
+  get inspectionCurrent(): boolean {
+    const at = this.#inspected;
+    return (
+      at !== null &&
+      !this.#scheduled &&
+      this.#answered === this.#inspections &&
+      at.path === this.path &&
+      at.environment === activeEnvironment() &&
+      sameRequest(at.request, this.draft)
+    );
   }
 
   /** Asks Dea what the draft uses; an answer to an older call is dropped. */
   async inspect(): Promise<void> {
     const call = ++this.#inspections;
+    const looked = {
+      path: this.path,
+      request: this.request(),
+      environment: activeEnvironment(),
+    };
     try {
-      const inspection = await inspectRequest(
-        this.path,
-        cleaned($state.snapshot(this.draft)),
-      );
+      const inspection = await inspectRequest(looked.path, looked.request);
       if (call !== this.#inspections) return;
       this.inspection = inspection;
       this.inspectionError = null;
@@ -320,7 +358,13 @@ export class RequestDraft extends SyncedFile<RequestFile> {
       this.inspection = null;
       this.inspectionError = errorMessage(e);
     }
+    this.#answered = call;
+    this.#inspected = looked;
   }
+}
+
+function activeEnvironment(): string | null {
+  return projectApi().environment?.name ?? null;
 }
 
 const TAB_TYPE = "requests.request";
@@ -330,7 +374,10 @@ const TAB_TYPE = "requests.request";
 // eslint-disable-next-line svelte/prefer-svelte-reactivity
 export const drafts = new Map<string, RequestDraft>();
 
-/** Forgets the drafts of request tabs that were closed. */
+/**
+ * Forgets the drafts of request tabs that were closed. Their sends stop,
+ * and their responses are let go.
+ */
 export function pruneDrafts(): void {
   const open = openTabs(TAB_TYPE);
   for (const [id, draft] of drafts)
@@ -339,6 +386,8 @@ export function pruneDrafts(): void {
       draft.cancelAutosave();
       drafts.delete(id);
     }
+  for (const id of [...exchanges.keys()])
+    if (!open.includes(id)) releaseExchange(id);
 }
 
 /** Looks at the files of the drafts a change on disk touched, shown or not. */

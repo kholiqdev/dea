@@ -8,6 +8,7 @@ import { FakeProject } from "./fake-project.svelte";
 import FolderTab from "./FolderTab.svelte";
 import RequestTab from "./RequestTab.svelte";
 import { resetDrafts } from "./state/drafts.svelte";
+import { resetExchanges } from "./state/exchange.svelte";
 import { resetFolderStates } from "./state/folders.svelte";
 
 export interface FakeTab {
@@ -26,6 +27,8 @@ export class FakeShell implements ShellApi {
   closing: string[] = [];
   /** Every tab activateTab was asked to show. */
   activated: string[] = [];
+  /** Every command runCommand was asked to run. */
+  commands: string[] = [];
   #opened = 0;
 
   tab(id: string): FakeTab {
@@ -110,7 +113,8 @@ export class FakeShell implements ShellApi {
     return Promise.resolve();
   }
 
-  runCommand(): Promise<void> {
+  runCommand(id: string): Promise<void> {
+    this.commands.push(id);
     return Promise.resolve();
   }
 
@@ -130,6 +134,7 @@ let shell: FakeShell | null = null;
  */
 export function setUpRequestTabs(): { shell: FakeShell; project: FakeProject } {
   resetDrafts();
+  resetExchanges();
   resetFolderStates();
   shell = new FakeShell();
   const project = new FakeProject([
