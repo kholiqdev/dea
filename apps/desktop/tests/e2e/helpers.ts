@@ -139,6 +139,13 @@ export function pickNextFile(path: string): void {
   pickNextFolder(path);
 }
 
+/** The path the next "save to a file" writes to, instead of the dialog. */
+export function saveNextTo(path: string): void {
+  const file = process.env.DEA_E2E_SAVE_FILE;
+  if (!file) throw new Error("DEA_E2E_SAVE_FILE is not set");
+  writeFileSync(file, path);
+}
+
 /** Writes a project with local, staging and production into a new folder. */
 export function writeProject(name: string, parent: string): string {
   const root = join(parent, name);
