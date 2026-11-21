@@ -1,8 +1,9 @@
 import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
+import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
 import type { FakeProject } from "./fake-project.svelte";
 import RequestTab from "./RequestTab.svelte";
 import {
@@ -44,6 +45,7 @@ let project: FakeProject;
 beforeEach(() => {
   resetTreeState();
   ({ shell, project } = setUpRequestTabs());
+  settings.apply(DEFAULT_SETTINGS);
 });
 
 const calls = (ipc: RequestsIpc, cmd: string) =>
@@ -739,6 +741,46 @@ test("the_request_bar_spans_the_tab", async () => {
   // The final URL comes with the first inspection.
   const url = await screen.findByRole("button", { name: "Copy the final URL" });
   expect(url.closest(".split")).toBeNull();
+});
+
+const divider = () =>
+  screen.findByRole("separator", { name: "Resize the request and response" });
+
+test("a_resized_split_is_saved", async () => {
+  shipmentsIpc();
+  const update = vi.spyOn(settings, "update");
+  try {
+    openRequestTab(BY_ID);
+    const handle = await divider();
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(update).toHaveBeenCalledWith({
+      requests: { responseSplit: { right: 46, below: 40 } },
+    });
+    await waitFor(() =>
+      expect(settings.requests.responseSplit).toEqual({ right: 46, below: 40 }),
+    );
+    expect(handle).toHaveAttribute("aria-valuenow", "46");
+  } finally {
+    update.mockRestore();
+  }
+});
+
+test("a_refused_split_save_says_why_and_puts_the_divider_back", async () => {
+  const ipc = shipmentsIpc();
+  ipc.failures.set("save_settings", {
+    kind: "io",
+    message: "the settings file is read-only",
+  });
+  openRequestTab(BY_ID);
+  const handle = await divider();
+  handle.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  await waitFor(() =>
+    expect(shell.toasts).toContain("The settings file is read-only"),
+  );
+  expect(settings.requests.responseSplit).toEqual({ right: 44, below: 40 });
+  expect(handle).toHaveAttribute("aria-valuenow", "44");
 });
 
 test("an_older_tab_learns_its_method_when_the_draft_loads", async () => {

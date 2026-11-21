@@ -3,6 +3,7 @@
 
 import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { flushSync } from "svelte";
 import type { BodyKind } from "$lib/ipc/bindings/BodyKind";
 import type { CookieInfo } from "$lib/ipc/bindings/CookieInfo";
 import type { Filtered } from "$lib/ipc/bindings/Filtered";
@@ -593,6 +594,65 @@ export function fakeRequestsIpc(
     }
   });
   return ipc;
+}
+
+/**
+ * A `ResizeObserver` for jsdom, which has none, until `restore` is called.
+ * `resize` gives an element a size, its `clientWidth` and `clientHeight`
+ * included, tells every observer watching it, and lets Svelte update the
+ * page before it returns.
+ */
+export function fakeResizeObserver(): {
+  resize: (element: Element, width: number, height: number) => void;
+  restore: () => void;
+} {
+  const watching = new Set<FakeResizeObserver>();
+  class FakeResizeObserver implements ResizeObserver {
+    readonly targets = new Set<Element>();
+    constructor(readonly callback: ResizeObserverCallback) {}
+    observe(target: Element): void {
+      this.targets.add(target);
+      watching.add(this);
+    }
+    unobserve(target: Element): void {
+      this.targets.delete(target);
+    }
+    disconnect(): void {
+      this.targets.clear();
+      watching.delete(this);
+    }
+  }
+  const before = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    writable: true,
+    value: FakeResizeObserver,
+  });
+  return {
+    resize(element, width, height) {
+      for (const [name, value] of [
+        ["clientWidth", width],
+        ["clientHeight", height],
+      ] as const)
+        Object.defineProperty(element, name, { configurable: true, value });
+      const size = [{ inlineSize: width, blockSize: height }];
+      const entry = {
+        target: element,
+        contentRect: new DOMRectReadOnly(0, 0, width, height),
+        borderBoxSize: size,
+        contentBoxSize: size,
+        devicePixelContentBoxSize: size,
+      } as ResizeObserverEntry;
+      for (const observer of [...watching])
+        if (observer.targets.has(element)) observer.callback([entry], observer);
+      flushSync();
+    },
+    restore() {
+      watching.clear();
+      if (before) Object.defineProperty(globalThis, "ResizeObserver", before);
+      else delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+    },
+  };
 }
 
 /** A lookup over a made-up inspection, for the variable field tests. */

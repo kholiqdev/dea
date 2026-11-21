@@ -7,11 +7,11 @@
   import FileExclamationPoint from "@lucide/svelte/icons/file-exclamation-point";
   import FileX from "@lucide/svelte/icons/file-x";
   import { tick, untrack } from "svelte";
-  import { MediaQuery } from "svelte/reactivity";
   import FileBanner from "@dea/ui/FileBanner.svelte";
   import Placeholder from "@dea/ui/Placeholder.svelte";
   import { projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
+  import type { ResponseLayout } from "$lib/ipc/bindings/ResponseLayout";
   import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
   import { errorMessage } from "$lib/ipc/errors";
   import { settings } from "$lib/settings/settings.svelte";
@@ -23,6 +23,7 @@
   import ParamsSection from "./components/ParamsSection.svelte";
   import RequestLine from "./components/RequestLine.svelte";
   import ResolvedUrl from "./components/ResolvedUrl.svelte";
+  import SplitPane from "./components/SplitPane.svelte";
   import {
     draftFor,
     drafts,
@@ -33,7 +34,7 @@
   import UndefinedWarning from "./components/UndefinedWarning.svelte";
   import { exchangeFor } from "./state/exchange.svelte";
   import { DEFAULT_OPTIONS } from "./state/folders.svelte";
-  import { toggleResponseLayout } from "./state/layout";
+  import { setResponseSplit, toggleResponseLayout } from "./state/layout";
   import { saveTab } from "./state/synced-file.svelte";
   import { VariableLookup } from "./state/variables.svelte";
 
@@ -70,12 +71,8 @@
       ),
     ),
   });
-  // The response sits right of the editor unless the setting or a narrow
-  // window puts it below.
-  const narrow = new MediaQuery("(max-width: 959px)");
-  const layout = $derived(
-    narrow.current ? "below" : settings.requests.responseLayout,
-  );
+  // The split puts the response below when the work area is too narrow.
+  let stacked = $state(false);
   let tablist = $state<HTMLElement>();
   let view = $state<HTMLElement>();
 
@@ -135,6 +132,13 @@
 
   function save(): void {
     draft.save().catch((e: unknown) => shell.toast(errorMessage(e)));
+  }
+
+  /** Saves the request panel's share; a refused save is a toast. */
+  function resize(layout: ResponseLayout, percent: number): Promise<void> {
+    return setResponseSplit(layout, percent).catch((e: unknown) => {
+      shell.toast(errorMessage(e));
+    });
   }
 
   function close(): void {
@@ -219,8 +223,13 @@
       />
     {/if}
     <TlsWarning {effective} />
-    <div class="split" data-layout={layout}>
-      <div class="editor">
+    <SplitPane
+      layout={settings.requests.responseLayout}
+      split={settings.requests.responseSplit}
+      oncommit={resize}
+      bind:stacked
+    >
+      {#snippet editor()}
         <div
           class="sections"
           role="tablist"
@@ -274,18 +283,18 @@
             />
           {/if}
         </div>
-      </div>
-      <div class="response">
+      {/snippet}
+      {#snippet response()}
         <ResponsePane
           tabId={id}
           name={tab.title}
           {exchange}
           layout={settings.requests.responseLayout}
-          stacked={narrow.current}
+          {stacked}
           ontogglelayout={() => void toggleResponseLayout()}
         />
-      </div>
-    </div>
+      {/snippet}
+    </SplitPane>
   </div>
 {/if}
 
@@ -303,41 +312,6 @@
     display: flex;
     flex-direction: column;
     box-shadow: inset 0 -1px 0 var(--line);
-  }
-
-  .split {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-  }
-
-  .split[data-layout="below"] {
-    flex-direction: column;
-  }
-
-  .editor {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .response {
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    box-shadow: inset 0 1px 0 var(--line);
-  }
-
-  .split[data-layout="right"] .response {
-    flex: 1.15;
-    box-shadow: inset 1px 0 0 var(--line);
-  }
-
-  .split[data-layout="below"] .response {
-    flex: 1;
   }
 
   .sections {

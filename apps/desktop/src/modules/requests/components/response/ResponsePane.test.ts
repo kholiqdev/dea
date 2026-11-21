@@ -1,6 +1,13 @@
 import { screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  onTestFinished,
+  test,
+  vi,
+} from "vitest";
 import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
@@ -14,6 +21,7 @@ import {
 import {
   doneExchange,
   fakeRequestsIpc,
+  fakeResizeObserver,
   responseInfo,
   type RequestsIpc,
 } from "../../test-support";
@@ -36,7 +44,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 const send = async () =>
@@ -45,13 +52,13 @@ const send = async () =>
 const calls = (ipc: RequestsIpc, cmd: string) =>
   ipc.calls.filter(([c]) => c === cmd).map(([, args]) => args);
 
-function narrow(matches: boolean): void {
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query === "(max-width: 959px)" ? matches : false,
-    media: query,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
+/** Opens the request in a work area `width` px wide. */
+async function openAtWidth(width: number): Promise<void> {
+  const observer = fakeResizeObserver();
+  onTestFinished(observer.restore);
+  openRequestTab(PATH);
+  await screen.findByRole("region", { name: "Response" });
+  observer.resize(document.querySelector(".split")!, width, 700);
 }
 
 /** Whether the response pane follows the editor in the page. */
@@ -259,8 +266,7 @@ test("cancelled_before_the_head_only_says_how_long", async () => {
 
 test("layout_setting_moves_the_response_below", async () => {
   fakeRequestsIpc({ files });
-  openRequestTab(PATH);
-  await screen.findByRole("region", { name: "Response" });
+  await openAtWidth(1200);
   expect(responseIsBelow()).toBe(false);
   settings.apply({
     ...DEFAULT_SETTINGS,
@@ -270,12 +276,17 @@ test("layout_setting_moves_the_response_below", async () => {
 });
 
 test("a_narrow_window_always_stacks", async () => {
-  narrow(true);
   fakeRequestsIpc({ files });
-  openRequestTab(PATH);
-  await screen.findByRole("region", { name: "Response" });
+  // Under 760 px of work area, whatever the window.
+  await openAtWidth(759);
   expect(settings.requests.responseLayout).toBe("right");
   expect(responseIsBelow()).toBe(true);
+  // Stacked, the response cannot move, so the toolbar does not offer it.
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  expect(
+    within(bar).queryByRole("button", { name: /^Show response/ }),
+  ).toBeNull();
 });
 
 test("the_toolbar_button_moves_the_response", async () => {
