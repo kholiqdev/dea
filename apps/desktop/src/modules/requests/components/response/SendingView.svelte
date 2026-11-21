@@ -68,7 +68,11 @@
       dropped={sending.droppedEvents}
     />
   {:else}
-    <StreamingText text={sending.text} received={sending.received} />
+    <StreamingText
+      text={sending.text}
+      textBytes={sending.textBytes}
+      received={sending.received}
+    />
   {/if}
 </div>
 

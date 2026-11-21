@@ -1,11 +1,36 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { setUpRequestTabs } from "../../request-tab-support.svelte";
 import { fakeRequestsIpc, fakeResponse, fakeRows } from "../../test-support";
 import LargeBody from "./LargeBody.svelte";
 
-beforeEach(() => setUpRequestTabs());
+// Row requests that wait until the test lets them through.
+const held = vi.hoisted(() => ({
+  on: false,
+  pending: [] as { from: number; settle: () => void }[],
+}));
+vi.mock("$lib/ipc/responses", async (original) => {
+  const real = await original<typeof import("$lib/ipc/responses")>();
+  return {
+    ...real,
+    responseRows: (id: string, from: number, count: number) =>
+      held.on
+        ? new Promise((resolve) =>
+            held.pending.push({
+              from,
+              settle: () => resolve(real.responseRows(id, from, count)),
+            }),
+          )
+        : real.responseRows(id, from, count),
+  };
+});
+
+beforeEach(() => {
+  held.on = false;
+  held.pending = [];
+  setUpRequestTabs();
+});
 
 const viewer = () => screen.getByRole("document", { name: "Response body" });
 
@@ -144,4 +169,45 @@ test("the_match_highlight_is_right_after_an_emoji", async () => {
   await userEvent.keyboard("{Control>}f{/Control}");
   await userEvent.keyboard("needle{Enter}");
   expect(await screen.findByText("needle", { selector: "mark" })).toBeVisible();
+});
+
+test("late_pages_do_not_push_out_the_rows_in_view", async () => {
+  fakeRequestsIpc({
+    response: fakeResponse({ rows: fakeRows({ total: 100_000 }) }),
+  });
+  render(LargeBody, { id: "t1", size: 1 });
+  await screen.findByText("row 0");
+  held.on = true;
+  // A fast drag passes over many pages, then rests on row 12000.
+  for (let row = 1000; row <= 9000; row += 500) {
+    viewer().scrollTop = row * 18;
+    await fireEvent.scroll(viewer());
+  }
+  viewer().scrollTop = 12_000 * 18;
+  await fireEvent.scroll(viewer());
+  const settled = held.pending.length;
+  expect(settled).toBeGreaterThan(20);
+  // The page in view comes first, the ones passed over after it.
+  const [last] = held.pending.splice(-1);
+  last!.settle();
+  await screen.findByText("row 12000");
+  for (const page of held.pending) page.settle();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.getByText("row 12000")).toBeInTheDocument();
+});
+
+test("the_last_rows_are_reachable_in_a_scaled_view", async () => {
+  fakeRequestsIpc({
+    response: fakeResponse({ rows: fakeRows({ total: 2_000_000 }) }),
+  });
+  render(LargeBody, { id: "t1", size: 1 });
+  await screen.findByText("row 0");
+  await scrollViewerTo(1, 8_000_000 - VIEWPORT);
+  expect(await screen.findByText("row 1999999")).toBeInTheDocument();
+  const window = document.querySelector<HTMLElement>(".window")!;
+  const rows = window.querySelectorAll(".row").length;
+  // jsdom keeps six significant digits of a length, hence the margin.
+  expect(parseFloat(window.style.top) + rows * 18).toBeLessThanOrEqual(
+    8_000_000 + 10,
+  );
 });

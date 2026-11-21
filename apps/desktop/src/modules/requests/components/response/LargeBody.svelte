@@ -62,6 +62,8 @@
   const pages = new Map<number, string[]>();
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const asked = new Set<number>();
+  // The pages the viewer needs now; no others are kept.
+  let wanted = new Set<number>();
   let generation = 0;
 
   const height = $derived(clientHeight || FALLBACK_HEIGHT);
@@ -80,7 +82,12 @@
   const start = $derived(Math.max(0, first - OVERSCAN));
   const end = $derived(Math.min(rows, first + inView + OVERSCAN));
   const windowTop = $derived(
-    scaled ? scrollTop - (first - start) * ROW : start * ROW,
+    scaled
+      ? Math.min(
+          scrollTop - (first - start) * ROW,
+          space - Math.max(0, end - start) * ROW,
+        )
+      : start * ROW,
   );
 
   // The row numbers drawn, with their text once its page is here.
@@ -115,6 +122,7 @@
           );
     const at = id;
     const mine = generation;
+    wanted = new Set(want);
     for (const page of want) {
       const kept = pages.get(page);
       if (kept) {
@@ -130,11 +138,12 @@
           if (mine !== generation) return;
           asked.delete(page);
           total = result.total;
+          // A page passed over on the way is of no use now.
+          if (!wanted.has(page)) return;
           pages.set(page, result.rows);
-          while (pages.size > MAX_PAGES) {
-            const oldest = pages.keys().next().value;
-            if (oldest === undefined) break;
-            pages.delete(oldest);
+          for (const kept of [...pages.keys()]) {
+            if (pages.size <= MAX_PAGES) break;
+            if (!wanted.has(kept)) pages.delete(kept);
           }
           version++;
         })
@@ -399,6 +408,7 @@
 
   .space {
     position: relative;
+    overflow: hidden;
     min-width: 100%;
     width: max-content;
   }
