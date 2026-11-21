@@ -55,8 +55,11 @@
           await page.render({ canvasContext: context, canvas, viewport })
             .promise;
         }
-      } catch {
-        if (live) failed = true;
+      } catch (error) {
+        if (!live) return;
+        // The text below names no cause; the console keeps it.
+        console.error("The PDF preview failed:", error);
+        failed = true;
       }
     })();
     return () => {

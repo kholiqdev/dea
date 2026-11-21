@@ -140,8 +140,10 @@ test("a_long_pdf_draws_its_first_20_pages", async () => {
   expect(document.querySelectorAll("canvas")).toHaveLength(20);
 });
 
-test("a_pdf_that_fails_says_so", async () => {
-  pdf.loadPdf.mockRejectedValue(new Error("bad"));
+test("a_pdf_that_fails_says_so_and_logs_why", async () => {
+  const error = new Error("bad");
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  pdf.loadPdf.mockRejectedValue(error);
   fakeRequestsIpc({ response: fakeResponse({ bytes: new Uint8Array([1]) }) });
   render(Preview, { id: "t1", kind: "pdf", contentType: "application/pdf" });
   expect(
@@ -149,6 +151,9 @@ test("a_pdf_that_fails_says_so", async () => {
       "This PDF could not be shown. Save it to a file to open it.",
     ),
   ).toBeInTheDocument();
+  // The cause is in the console, for a failure seen only in CI.
+  expect(log).toHaveBeenCalledWith(expect.any(String), error);
+  log.mockRestore();
 });
 
 test("a_pdf_that_finishes_loading_after_unmount_is_destroyed", async () => {
