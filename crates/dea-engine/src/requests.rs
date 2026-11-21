@@ -550,8 +550,11 @@ impl SecretValues {
                 host: self.hide(&host),
                 message: self.hide(&message),
             },
+            HttpError::ConnectionRefused { addr } => HttpError::ConnectionRefused {
+                addr: self.hide(&addr),
+            },
             HttpError::Connect { addr, message } => HttpError::Connect {
-                addr,
+                addr: self.hide(&addr),
                 message: self.hide(&message),
             },
             HttpError::Tls(TlsError { kind, message }) => HttpError::Tls(TlsError {
@@ -573,9 +576,8 @@ impl SecretValues {
                 }
             }
             HttpError::Protocol(message) => HttpError::Protocol(self.hide(&message)),
-            // No text: an address, a duration or a count.
-            error @ (HttpError::ConnectionRefused { .. }
-            | HttpError::Timeout(_)
+            // No text: a duration or a count.
+            error @ (HttpError::Timeout(_)
             | HttpError::Cancelled
             | HttpError::TooManyRedirects(_)) => error,
         }
