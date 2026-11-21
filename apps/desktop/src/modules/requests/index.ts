@@ -22,6 +22,12 @@ export const manifest: ModuleManifest = {
       environment: "window",
       view: () => import("./FolderTab.svelte"),
     },
+    {
+      id: "requests.cookies",
+      title: "Cookies",
+      icon: "cookie",
+      view: () => import("./CookiesTab.svelte"),
+    },
   ],
   commands: [
     {
@@ -49,6 +55,12 @@ export const manifest: ModuleManifest = {
       id: "requests.toggleLayout",
       title: "Toggle response position",
       action: { type: "intent", intent: "requests.toggleLayout" },
+    },
+    {
+      id: "requests.manageCookies",
+      title: "Manage cookies",
+      action: { type: "intent", intent: "requests.manageCookies" },
+      scope: "project",
     },
   ],
   shortcuts: [
@@ -87,6 +99,10 @@ export const manifest: ModuleManifest = {
     {
       intent: "requests.toggleLayout",
       handler: () => import("./intents/toggle-layout"),
+    },
+    {
+      intent: "requests.manageCookies",
+      handler: () => import("./intents/manage-cookies"),
     },
   ],
 };
