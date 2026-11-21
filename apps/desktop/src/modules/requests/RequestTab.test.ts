@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
 import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
@@ -12,6 +12,7 @@ import {
   type FakeShell,
 } from "./request-tab-support.svelte";
 import { drafts } from "./state/drafts.svelte";
+import { sessionView } from "./state/session-view.svelte";
 import { resetTreeState, treeState } from "./state/tree.svelte";
 import {
   fakeRequestsIpc,
@@ -46,6 +47,10 @@ beforeEach(() => {
   resetTreeState();
   ({ shell, project } = setUpRequestTabs());
   settings.apply(DEFAULT_SETTINGS);
+});
+
+afterEach(() => {
+  sessionView.descriptions = false;
 });
 
 const calls = (ipc: RequestsIpc, cmd: string) =>
@@ -115,6 +120,9 @@ test("a row with only a description is not in the URL and not written", async ()
   const { id } = openRequestTab(BY_ID);
   const url = await urlField();
   await userEvent.click(screen.getByRole("button", { name: "Add parameter" }));
+  await userEvent.click(
+    screen.getAllByRole("button", { name: "Show descriptions" })[0]!,
+  );
   await userEvent.type(
     screen.getByRole("textbox", { name: "Description of row 1" }),
     "later",

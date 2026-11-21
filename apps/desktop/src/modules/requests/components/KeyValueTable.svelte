@@ -18,6 +18,8 @@
   import X from "@lucide/svelte/icons/x";
   import { tick } from "svelte";
   import type { VariableLookup } from "../state/variables.svelte";
+  import { sessionView } from "../state/session-view.svelte";
+  import DescriptionToggle from "./DescriptionToggle.svelte";
   import VariableField from "./VariableField.svelte";
 
   let {
@@ -45,6 +47,9 @@
 
   let body = $state<HTMLElement>();
 
+  const showDescriptions = $derived(sessionView.descriptions);
+  const hasDescriptions = $derived(rows.some((row) => row.description));
+
   const named = (row: KeyValue, i: number) => row.name || `row ${i + 1}`;
 
   function update(index: number, patch: Partial<KeyValue>): void {
@@ -59,21 +64,21 @@
 </script>
 
 <div class="card">
-  <table aria-label={label}>
+  <table aria-label={label} class:checks={!!checkboxLabel}>
     <colgroup>
       {#if checkboxLabel}<col class="narrow" />{/if}
-      <col class="key-col" />
-      <col class="value-col" />
-      <col class="key-col" />
-      {#if !lockedNames}<col class="narrow" />{/if}
+      <col class={showDescriptions ? "key-wide" : "key-narrow"} />
+      <col />
+      {#if showDescriptions}<col class="description-col" />{/if}
+      <col class="narrow" />
     </colgroup>
     <thead>
       <tr>
         {#if checkboxLabel}<td></td>{/if}
         <th scope="col">{keyLabel}</th>
         <th scope="col">Value</th>
-        <th scope="col">Description</th>
-        {#if !lockedNames}<td></td>{/if}
+        {#if showDescriptions}<th scope="col">Description</th>{/if}
+        <td class="center"><DescriptionToggle {hasDescriptions} /></td>
       </tr>
     </thead>
     <tbody bind:this={body}>
@@ -117,18 +122,22 @@
               oninput={(value: string) => update(i, { value })}
             />
           </td>
-          <td>
-            <input
-              class="cell description"
-              aria-label="Description of {named(row, i)}"
-              value={row.description ?? ""}
-              {disabled}
-              oninput={(e) =>
-                update(i, { description: e.currentTarget.value || undefined })}
-            />
-          </td>
-          {#if !lockedNames}
-            <td class="center">
+          {#if showDescriptions}
+            <td>
+              <input
+                class="cell description"
+                aria-label="Description of {named(row, i)}"
+                value={row.description ?? ""}
+                {disabled}
+                oninput={(e) =>
+                  update(i, {
+                    description: e.currentTarget.value || undefined,
+                  })}
+              />
+            </td>
+          {/if}
+          <td class="center">
+            {#if !lockedNames}
               <button
                 type="button"
                 class="remove"
@@ -139,8 +148,8 @@
               >
                 <X size={14} strokeWidth={1.5} />
               </button>
-            </td>
-          {/if}
+            {/if}
+          </td>
         </tr>
       {/each}
     </tbody>
@@ -170,12 +179,25 @@
     width: 36px;
   }
 
-  .key-col {
-    width: 30%;
+  /* Shares of the width between the checkbox and the last column. */
+  table {
+    --fixed: 36px;
   }
 
-  .value-col {
-    width: 40%;
+  table.checks {
+    --fixed: 72px;
+  }
+
+  .key-narrow {
+    width: calc((100% - var(--fixed)) * 0.35);
+  }
+
+  .key-wide {
+    width: calc((100% - var(--fixed)) * 0.28);
+  }
+
+  .description-col {
+    width: calc((100% - var(--fixed)) * 0.28);
   }
 
   th,
