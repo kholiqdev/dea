@@ -448,3 +448,24 @@ test("a_window_without_a_project_sends_nothing_and_says_why", async () => {
   expect(exchangeFor("t1").state.phase).toBe("idle");
   expect(shell.toasts).toEqual(["This window has no project"]);
 });
+
+test("an_endless_stream_keeps_only_the_last_events", async () => {
+  const events: SendEvent[] = Array.from({ length: 10_005 }, (_, n) => ({
+    type: "event",
+    atMs: n,
+    event: null,
+    data: `d${n}`,
+    id: null,
+  }));
+  const ipc = fakeRequestsIpc({ files, send: { hold: true, events } });
+  const draft = await openDraft("t1", PATH);
+  await startSend(draft);
+  const sending = exchangeFor("t1").state;
+  if (sending.phase !== "sending") throw new Error("not sending");
+  expect(sending.events).toHaveLength(10_000);
+  expect(sending.events[0]?.data).toBe("d5");
+  expect(sending.droppedEvents).toBe(5);
+  ipc.finishSends();
+  await vi.waitFor(() => expect(exchangeFor("t1").state.phase).toBe("done"));
+  expect(exchangeFor("t1").state).toMatchObject({ droppedEvents: 5 });
+});

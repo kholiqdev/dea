@@ -185,6 +185,19 @@
     }
   }
 
+  /** The row cut around a match, whose offsets count characters, not UTF-16 units. */
+  function split(
+    text: string,
+    at: { start: number; end: number },
+  ): { before: string; found: string; after: string } {
+    const chars = Array.from(text);
+    return {
+      before: chars.slice(0, at.start).join(""),
+      found: chars.slice(at.start, at.end).join(""),
+      after: chars.slice(at.end).join(""),
+    };
+  }
+
   // Find
   let finding = $state(false);
   let query = $state("");
@@ -288,14 +301,13 @@
       <div class="space" style:height="{space}px">
         <div class="window" style:top="{windowTop}px">
           {#each visible as row (row.n)}
+            {@const hit =
+              match && match.row === row.n ? split(row.text, match) : null}
             <div class="row">
               <span class="gutter" aria-hidden="true">{row.n + 1}</span>
               <span class="text"
-                >{#if match && match.row === row.n}{row.text.slice(
-                    0,
-                    match.start,
-                  )}<mark>{row.text.slice(match.start, match.end)}</mark
-                  >{row.text.slice(match.end)}{:else}{row.text}{/if}</span
+                >{#if hit}{hit.before}<mark>{hit.found}</mark
+                  >{hit.after}{:else}{row.text}{/if}</span
               >
             </div>
           {/each}

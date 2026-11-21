@@ -22,6 +22,7 @@
     name,
     response,
     events,
+    dropped,
     startedAt,
     view,
     onview,
@@ -32,6 +33,7 @@
     response: ResponseInfo;
     /** The events of a stream, timed from `startedAt`. */
     events: SseRow[];
+    dropped: number;
     startedAt: number;
     /** The view chosen for this response; `null` for the first of its kind. */
     view: BodyView | null;
@@ -136,7 +138,7 @@
       Binary body, {formatBytes(response.size)}. Save it to a file to open it.
     </p>
   {:else if kind === "events"}
-    <EventList {events} {startedAt} />
+    <EventList {events} {startedAt} {dropped} />
   {:else if large}
     <LargeBody
       id={tabId}

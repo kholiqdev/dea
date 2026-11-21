@@ -62,7 +62,11 @@
       {/each}
     </div>
   {:else if stream}
-    <EventList events={sending.events} startedAt={sending.startedAt} />
+    <EventList
+      events={sending.events}
+      startedAt={sending.startedAt}
+      dropped={sending.droppedEvents}
+    />
   {:else}
     <StreamingText text={sending.text} received={sending.received} />
   {/if}

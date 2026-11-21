@@ -176,6 +176,7 @@
             {name}
             {response}
             events={current.events}
+            dropped={current.droppedEvents}
             startedAt={current.startedAt}
             view={chosen?.response === response ? chosen.view : null}
             onview={(view: BodyView) => (chosen = { response, view })}
@@ -196,7 +197,11 @@
         </p>
       {/if}
       {#if current.events.length > 0}
-        <EventList events={current.events} startedAt={current.startedAt} />
+        <EventList
+          events={current.events}
+          startedAt={current.startedAt}
+          dropped={current.droppedEvents}
+        />
       {/if}
     </div>
   {/if}

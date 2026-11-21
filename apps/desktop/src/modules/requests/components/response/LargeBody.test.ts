@@ -129,3 +129,19 @@ test("the_card_says_why_and_saves", async () => {
     ]),
   );
 });
+
+test("the_match_highlight_is_right_after_an_emoji", async () => {
+  fakeRequestsIpc({
+    response: fakeResponse({
+      rows: fakeRows({ total: 10, row: (n) => `row ${n} 😀 needle here` }),
+      // Counted in characters: the emoji is one.
+      find: { row: 3, start: 8, end: 14 },
+    }),
+  });
+  render(LargeBody, { id: "t1", size: 1 });
+  await screen.findByText("row 0 😀 needle here");
+  viewer().focus();
+  await userEvent.keyboard("{Control>}f{/Control}");
+  await userEvent.keyboard("needle{Enter}");
+  expect(await screen.findByText("needle", { selector: "mark" })).toBeVisible();
+});
