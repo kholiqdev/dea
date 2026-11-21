@@ -11,25 +11,34 @@ import { join } from "node:path";
 import { $, browser, expect } from "@wdio/globals";
 import {
   MOD,
-  environmentName,
   longestFrameDuring,
-  openProjectAt,
   saveNextTo,
   textOf,
   typeKeys,
   waitForText,
 } from "./helpers.js";
 import {
-  HIT_HTML,
+  RESPONSE,
+  activeTab,
+  arrivals,
+  chooseEnvironment,
+  getRequest,
+  openRequest,
+  sendAndShow,
+  sendTo,
+  showRequest,
+  tab,
+  until,
+} from "./requests-support.js";
+import {
   SHIPMENT_JSON,
   SHIPMENT_XML,
+  hitHtml,
   startTestServer,
   writeServerProject,
   type TestServer,
 } from "./test-server.js";
 
-const RESPONSE = 'section[aria-label="Response"]';
-const TOOLBAR = '[role="toolbar"][aria-label="Response"]';
 /** The body in the editor (Pretty, Raw) and in the virtual viewer. */
 const BODY_EDITOR = '.cm-content[aria-label="Response body"]';
 const BODY_VIEWER = '[role="document"][aria-label="Response body"]';
@@ -49,149 +58,6 @@ let count = 0;
 /** A project that sends to the test server, with more requests if given. */
 function serverProject(requests: Record<string, string> = {}): string {
   return writeServerProject(`response-${++count}`, work, server, requests);
-}
-
-/** A request file: `GET {{baseUrl}}path`, and its query as params. */
-function getRequest(
-  name: string,
-  path: string,
-  params: Record<string, string> = {},
-): string {
-  const query = Object.entries(params)
-    .map(([key, value]) => `  - name: ${key}\n    value: ${value}\n`)
-    .join("");
-  return (
-    `name: ${name}\nmethod: GET\nurl: '{{baseUrl}}${path}'\n` +
-    (query ? `params:\n${query}` : "")
-  );
-}
-
-/** Counts the requests to `path` that reach the server from now on. */
-function arrivals(path: string): () => number {
-  const before = server.received(path).length;
-  return () => server.received(path).length - before;
-}
-
-async function until(
-  condition: () => boolean,
-  what: string,
-  timeout = 30_000,
-): Promise<void> {
-  await browser.waitUntil(condition, {
-    timeout,
-    interval: 50,
-    timeoutMsg: `never happened: ${what}`,
-  });
-}
-
-/** Chooses `name` in the title bar's environment picker. */
-async function chooseEnvironment(name: string): Promise<void> {
-  await $('header button[title="Environment for requests"]').click();
-  await $('[role="menu"]').$(`button*=${name}`).click();
-  await browser.waitUntil(async () => (await environmentName()) === name);
-}
-
-/** The tree row named `name`. */
-function row(name: string) {
-  return $(
-    `//*[@role="treeitem"][.//span[contains(@class,"name") and normalize-space(.)="${name}"]]`,
-  );
-}
-
-/** Opens a folder row that is closed. */
-async function expand(name: string): Promise<void> {
-  const item = row(name);
-  await item.waitForDisplayed();
-  if ((await item.getAttribute("aria-expanded")) === "false")
-    await item.click();
-  await browser.waitUntil(
-    async () => (await item.getAttribute("aria-expanded")) === "true",
-  );
-}
-
-/** The title of the active tab. */
-function activeTab(): Promise<string | null> {
-  return textOf(
-    '[role="tablist"][aria-label="Open tabs"] [aria-selected="true"] .title',
-  );
-}
-
-/** The tab titled `title` in the tab bar. */
-function tab(title: string) {
-  return $(
-    `//*[@role="tablist" and @aria-label="Open tabs"]//button[@role="tab"][.//span[normalize-space(.)="${title}"]]`,
-  );
-}
-
-/** Shows the request `name` of Shipments, in its tab or a new one. */
-async function showRequest(name: string): Promise<void> {
-  await row(name).click();
-  await browser.waitUntil(async () => (await activeTab()) === name, {
-    timeoutMsg: `${name} did not open`,
-  });
-  await $('[role="tablist"][aria-label="Request sections"]').waitForDisplayed();
-}
-
-/** Opens `root` in `environment`, and `request` of Shipments in a tab. */
-async function openRequest(
-  root: string,
-  environment: string,
-  request: string,
-): Promise<void> {
-  await openProjectAt(root);
-  await chooseEnvironment(environment);
-  await $('button[data-module="requests"]').click();
-  await expand("Shipments");
-  await showRequest(request);
-}
-
-/** Send, which reads Cancel while the request is on its way. */
-function sendButton() {
-  return $('//button[@aria-label="Save request"]/preceding-sibling::button[1]');
-}
-
-function productionDialog() {
-  return $(
-    '//*[@role="dialog"][.//h2[normalize-space(.)="Send this request to production?"]]',
-  );
-}
-
-/** Whether the tab is sending, a confirmation still to answer included. */
-function sending(): Promise<boolean> {
-  return browser.execute(
-    (s) => document.querySelector(s)?.getAttribute("aria-busy") === "true",
-    RESPONSE,
-  );
-}
-
-/** Waits until the send under way, if any, ended. */
-async function waitForSendToEnd(): Promise<void> {
-  await browser.waitUntil(async () => !(await sending()), {
-    timeout: 60_000,
-    timeoutMsg: "the send did not end",
-  });
-}
-
-/**
- * Sends the request of the tab shown, which asks for `path`, and waits until
- * its response is in. In production it answers the confirmation first.
- */
-async function sendTo(path: string, production = false): Promise<void> {
-  const sent = arrivals(path);
-  await sendButton().click();
-  if (production) {
-    const dialog = productionDialog();
-    await dialog.waitForDisplayed({ timeout: 30_000 });
-    await dialog.$("button*=Send to production").click();
-  }
-  await until(() => sent() === 1, `the request to ${path} to arrive`);
-  await waitForSendToEnd();
-}
-
-/** Sends a request whose answer is quick, and waits for its toolbar. */
-async function sendAndShow(): Promise<void> {
-  await sendButton().click();
-  await waitForText(TOOLBAR, "200 OK", 60_000);
 }
 
 /** The body view chosen, such as `Pretty`. */
@@ -443,21 +309,22 @@ describe("reading responses", () => {
     // HTML: one tag per line, the script copied as it is.
     await showRequest("Shipment page");
     await sendAndShow();
+    const origin = server.url("");
     await waitForBody(
       "showed the HTML one tag per line",
       (l) =>
         l.join("\n") ===
         [
           "<p>hi</p>",
-          "<script>fetch('/hit')</script>",
-          '<img src="/hit-img">',
+          `<script>fetch('${origin}/hit')</script>`,
+          `<img src="${origin}/hit-img">`,
         ].join("\n"),
     );
     await waitForView("Pretty");
     await chooseView("Raw");
     await waitForBody(
       "showed the HTML as received",
-      (l) => l.join("\n") === HIT_HTML,
+      (l) => l.join("\n") === hitHtml(origin),
     );
   });
 
@@ -466,8 +333,8 @@ describe("reading responses", () => {
       "shipment-page.yaml": getRequest("Shipment page", "/html"),
     });
     await openRequest(root, "staging", "Shipment page");
-    const hits = arrivals("/hit");
-    const imageHits = arrivals("/hit-img");
+    const hits = arrivals(server, "/hit");
+    const imageHits = arrivals(server, "/hit-img");
 
     await sendAndShow();
     await waitForBody("showed the HTML", (l) => l.includes("<p>hi</p>"));
@@ -482,9 +349,11 @@ describe("reading responses", () => {
       };
     }, frame);
     expect(attributes.sandbox).toBe("");
-    expect(attributes.srcdoc).toContain("<p>hi</p>");
+    // The page points back at the server, so a script or image would reach it.
+    expect(attributes.srcdoc).toBe(hitHtml(server.url("")));
 
-    // Nothing may arrive: the time a script or an image would have taken.
+    // Nothing may arrive: the sandbox stops the script, and the CSP the
+    // frame inherits stops the image. A second is what either would take.
     await browser.pause(1_000);
     expect(hits()).toBe(0);
     expect(imageHits()).toBe(0);
@@ -656,7 +525,7 @@ describe("reading responses", () => {
       }).observe(document.body, { childList: true, subtree: true });
     }, RESPONSE);
 
-    await sendTo(path);
+    await sendTo(server, path);
     const list = 'ul[aria-label="Server-sent events"]';
     await browser.waitUntil(
       async () =>
@@ -702,7 +571,7 @@ describe("reading responses", () => {
       "echo-headers.yaml": getRequest("Echo headers", "/echo"),
     });
     await openRequest(root, "staging", "Set session");
-    await sendTo("/cookies/set");
+    await sendTo(server, "/cookies/set");
 
     // The response shows what it set, and leads to the manager.
     await $('[role="tablist"][aria-label="Response sections"]')
@@ -731,12 +600,12 @@ describe("reading responses", () => {
     await waitForCookie("session", "xyz");
 
     await showRequest("Echo headers");
-    await sendTo("/echo");
+    await sendTo(server, "/echo");
     expect(lastCookieHeader()).toBe("session=xyz");
 
     // Production has a jar of its own.
     await chooseEnvironment("production");
-    await sendTo("/echo", true);
+    await sendTo(server, "/echo", true);
     expect(lastCookieHeader()).toBeUndefined();
 
     // Deleted in staging, it is no longer sent there.
@@ -749,7 +618,7 @@ describe("reading responses", () => {
       { timeout: 30_000, timeoutMsg: "the cookie was not deleted" },
     );
     await showRequest("Echo headers");
-    await sendTo("/echo");
+    await sendTo(server, "/echo");
     expect(lastCookieHeader()).toBeUndefined();
   });
 

@@ -12,23 +12,30 @@ import { $, browser, expect } from "@wdio/globals";
 import { Key } from "webdriverio";
 import {
   MOD,
-  environmentName,
   longestFrameDuring,
   openPalette,
-  openProjectAt,
   paletteActive,
   paletteSearch,
   textOf,
   waitForText,
 } from "./helpers.js";
 import {
+  RESPONSE,
+  TOOLBAR,
+  arrivals,
+  getRequest,
+  openRequest,
+  productionDialog,
+  sendButton,
+  until,
+  waitForSendToEnd,
+} from "./requests-support.js";
+import {
   startTestServer,
   writeServerProject,
   type TestServer,
 } from "./test-server.js";
 
-const RESPONSE = 'section[aria-label="Response"]';
-const TOOLBAR = '[role="toolbar"][aria-label="Response"]';
 const FIFTY_MIB = 50 * 1024 * 1024;
 
 const work = mkdtempSync(join(tmpdir(), "dea-e2e-send-"));
@@ -38,90 +45,6 @@ let count = 0;
 /** A project that sends to the test server, with more requests if given. */
 function serverProject(requests: Record<string, string> = {}): string {
   return writeServerProject(`send-${++count}`, work, server, requests);
-}
-
-/** Counts the requests to `path` that reach the server from now on. */
-function arrivals(path: string): () => number {
-  const before = server.received(path).length;
-  return () => server.received(path).length - before;
-}
-
-async function until(
-  condition: () => boolean,
-  what: string,
-  timeout = 30_000,
-): Promise<void> {
-  await browser.waitUntil(condition, {
-    timeout,
-    interval: 50,
-    timeoutMsg: `never happened: ${what}`,
-  });
-}
-
-/** Chooses `name` in the title bar's environment picker. */
-async function chooseEnvironment(name: string): Promise<void> {
-  await $('header button[title="Environment for requests"]').click();
-  await $('[role="menu"]').$(`button*=${name}`).click();
-  await browser.waitUntil(async () => (await environmentName()) === name);
-}
-
-/** The tree row named `name`. */
-function row(name: string) {
-  return $(
-    `//*[@role="treeitem"][.//span[contains(@class,"name") and normalize-space(.)="${name}"]]`,
-  );
-}
-
-/** Opens a folder row that is closed. */
-async function expand(name: string): Promise<void> {
-  const item = row(name);
-  await item.waitForDisplayed();
-  if ((await item.getAttribute("aria-expanded")) === "false")
-    await item.click();
-  await browser.waitUntil(
-    async () => (await item.getAttribute("aria-expanded")) === "true",
-  );
-}
-
-/** Opens `root` in `environment`, and `request` of Shipments in a tab. */
-async function openRequest(
-  root: string,
-  environment: string,
-  request: string,
-): Promise<void> {
-  await openProjectAt(root);
-  await chooseEnvironment(environment);
-  await $('button[data-module="requests"]').click();
-  await expand("Shipments");
-  await row(request).click();
-  await $('[role="tablist"][aria-label="Request sections"]').waitForDisplayed();
-}
-
-/** Send, which reads Cancel while the request is on its way. */
-function sendButton() {
-  return $('//button[@aria-label="Save request"]/preceding-sibling::button[1]');
-}
-
-function productionDialog() {
-  return $(
-    '//*[@role="dialog"][.//h2[normalize-space(.)="Send this request to production?"]]',
-  );
-}
-
-/** Whether the tab is sending, a confirmation still to answer included. */
-function sending(): Promise<boolean> {
-  return browser.execute(
-    (s) => document.querySelector(s)?.getAttribute("aria-busy") === "true",
-    RESPONSE,
-  );
-}
-
-/** Waits until the send under way, if any, ended. */
-async function waitForSendToEnd(): Promise<void> {
-  await browser.waitUntil(async () => !(await sending()), {
-    timeout: 30_000,
-    timeoutMsg: "the send did not end",
-  });
 }
 
 describe("sending requests", () => {
@@ -135,7 +58,7 @@ describe("sending requests", () => {
 
   it("sends_with_the_button_and_shows_the_response", async () => {
     await openRequest(serverProject(), "staging", "Shipment by ID");
-    const sent = arrivals("/json");
+    const sent = arrivals(server, "/json");
 
     await sendButton().click();
     await waitForText(TOOLBAR, "200 OK", 30_000);
@@ -156,7 +79,7 @@ describe("sending requests", () => {
 
   it("mod_enter_sends_from_the_url_field_and_the_body_editor", async () => {
     await openRequest(serverProject(), "staging", "Create shipment");
-    const sent = arrivals("/echo");
+    const sent = arrivals(server, "/echo");
 
     await $('input[aria-label="URL"]').click();
     await browser.keys([MOD, Key.Enter]);
@@ -178,10 +101,10 @@ describe("sending requests", () => {
   it("cancel_closes_the_connection", async () => {
     const path = "/delay/10000";
     const root = serverProject({
-      "slow-shipment.yaml": `name: Slow shipment\nmethod: GET\nurl: '{{baseUrl}}${path}'\n`,
+      "slow-shipment.yaml": getRequest("Slow shipment", path),
     });
     await openRequest(root, "staging", "Slow shipment");
-    const sent = arrivals(path);
+    const sent = arrivals(server, path);
     const abortedBefore = server.aborted(path);
 
     await sendButton().click();
@@ -206,12 +129,12 @@ describe("sending requests", () => {
   it("undefined_variable_warns_before_sending", async () => {
     // The URL bar reads {{baseUrl}}/echo?carrier={{carrierCode}}.
     const root = serverProject({
-      "track-shipment.yaml":
-        "name: Track shipment\nmethod: GET\nurl: '{{baseUrl}}/echo'\n" +
-        "params:\n  - name: carrier\n    value: '{{carrierCode}}'\n",
+      "track-shipment.yaml": getRequest("Track shipment", "/echo", {
+        carrier: "{{carrierCode}}",
+      }),
     });
     await openRequest(root, "staging", "Track shipment");
-    const sent = arrivals("/echo");
+    const sent = arrivals(server, "/echo");
 
     await sendButton().click();
     const banner = $('//*[@role="status"][contains(., "is not defined")]');
@@ -248,7 +171,7 @@ describe("sending requests", () => {
     ];
 
     for (const [from, send] of paths) {
-      const sent = arrivals("/json");
+      const sent = arrivals(server, "/json");
       await send();
       const dialog = productionDialog();
       await dialog.waitForDisplayed({
@@ -265,7 +188,7 @@ describe("sending requests", () => {
 
   it("enter_in_the_production_dialog_does_not_send", async () => {
     await openRequest(serverProject(), "production", "Shipment by ID");
-    const sent = arrivals("/json");
+    const sent = arrivals(server, "/json");
 
     await sendButton().click();
     const dialog = productionDialog();
@@ -307,7 +230,7 @@ describe("sending requests", () => {
         "secrets:\n  - name: PROD_TOKEN\n    type: token\n",
       );
       await openRequest(root, "production", "Shipment with token");
-      const sent = arrivals("/echo");
+      const sent = arrivals(server, "/echo");
 
       await sendButton().click();
       const confirm = productionDialog();
