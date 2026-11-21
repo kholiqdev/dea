@@ -9,6 +9,7 @@
   import type { FormField } from "$lib/ipc/bindings/FormField";
   import type { VariableLookup } from "../state/variables.svelte";
   import FileChoice from "./FileChoice.svelte";
+  import { columnWidths, watchWidth } from "../lib/columns";
   import { sessionView } from "../state/session-view.svelte";
   import DescriptionToggle from "./DescriptionToggle.svelte";
   import VariableField from "./VariableField.svelte";
@@ -28,8 +29,16 @@
   } = $props();
 
   let body = $state<HTMLElement>();
+  let table = $state<HTMLElement>();
+  let tableWidth = $state(0);
+
+  $effect(() => {
+    if (!table) return;
+    return watchWidth(table, (width) => (tableWidth = width));
+  });
 
   const showDescriptions = $derived(sessionView.descriptions);
+  const widths = $derived(columnWidths(tableWidth, 168, showDescriptions));
   const hasDescriptions = $derived(fields.some((field) => field.description));
 
   const named = (field: FormField, i: number) => field.name || `row ${i + 1}`;
@@ -56,13 +65,15 @@
 </script>
 
 <div class="card">
-  <table aria-label="Form data">
+  <table aria-label="Form data" bind:this={table}>
     <colgroup>
       <col class="narrow" />
-      <col class={showDescriptions ? "key-wide" : "key-narrow"} />
+      <col style:width={widths ? `${widths.key}px` : undefined} />
       <col class="type-col" />
       <col />
-      {#if showDescriptions}<col class="description-col" />{/if}
+      {#if showDescriptions}<col
+          style:width={widths ? `${widths.description}px` : undefined}
+        />{/if}
       <col class="narrow" />
     </colgroup>
     <thead>
@@ -185,19 +196,6 @@
 
   .narrow {
     width: 36px;
-  }
-
-  /* Shares of the width left by the checkbox, type and last columns. */
-  .key-narrow {
-    width: calc((100% - 168px) * 0.35);
-  }
-
-  .key-wide {
-    width: calc((100% - 168px) * 0.28);
-  }
-
-  .description-col {
-    width: calc((100% - 168px) * 0.28);
   }
 
   .type-col {
