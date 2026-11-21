@@ -3,9 +3,11 @@
   read-only editor, a JSONPath over JSON, and a word for what has no text.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import type { BodyText } from "$lib/ipc/bindings/BodyText";
   import type { Filtered } from "$lib/ipc/bindings/Filtered";
   import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
+  import { errorMessage } from "$lib/ipc/errors";
   import { responseText } from "$lib/ipc/responses";
   import { formatBytes } from "../../lib/format";
   import type { BodyView } from "./body-view";
@@ -60,7 +62,11 @@
   );
   const filterable = $derived(kind === "json" && !response.large);
 
-  let loaded = $state<{ key: string; body: BodyText } | null>(null);
+  let loaded = $state<{
+    key: string;
+    body: BodyText | null;
+    error?: string;
+  } | null>(null);
   let filtered = $state<Filtered | null>(null);
   const wanted = $derived(`${tabId}:${current}`);
 
@@ -74,13 +80,35 @@
       .then((body) => {
         if (live) loaded = { key, body };
       })
-      .catch(() => {
-        if (live) loaded = { key, body: { text: "", formatted: true } };
+      .catch((e: unknown) => {
+        if (live) loaded = { key, body: null, error: errorMessage(e) };
       });
     return () => (live = false);
   });
 
   const body = $derived(loaded?.key === wanted ? loaded.body : null);
+  const unread = $derived(
+    loaded?.key === wanted ? (loaded.error ?? null) : null,
+  );
+
+  let radios = $state<HTMLElement>();
+  async function onviewkeys(e: KeyboardEvent): Promise<void> {
+    const at = views.indexOf(current);
+    const to: Record<string, number> = {
+      ArrowRight: (at + 1) % views.length,
+      ArrowDown: (at + 1) % views.length,
+      ArrowLeft: (at - 1 + views.length) % views.length,
+      ArrowUp: (at - 1 + views.length) % views.length,
+      Home: 0,
+      End: views.length - 1,
+    };
+    const next = views[to[e.key] ?? -1];
+    if (!next) return;
+    e.preventDefault();
+    onview(next);
+    await tick();
+    radios?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }
   const shown = $derived(
     filterable && current !== "preview" && filtered
       ? filtered.text
@@ -101,12 +129,20 @@
   {:else if large}
     <ViewerPlaceholder slot="large-body" />
   {:else}
-    <div class="views" role="radiogroup" aria-label="Body view">
+    <div
+      class="views"
+      role="radiogroup"
+      aria-label="Body view"
+      tabindex="-1"
+      bind:this={radios}
+      onkeydown={(e) => void onviewkeys(e)}
+    >
       {#each views as option (option)}
         <button
           type="button"
           role="radio"
           aria-checked={current === option}
+          tabindex={current === option ? 0 : -1}
           onclick={() => onview(option)}
         >
           {LABELS[option]}
@@ -126,6 +162,9 @@
         <p class="unformatted">
           Not valid {KINDS[kind] ?? "text"}, shown as received.
         </p>
+      {/if}
+      {#if unread !== null}
+        <p class="unread" role="alert">The body could not be read: {unread}</p>
       {/if}
       <div class="editor">
         {#if shown !== undefined}
@@ -200,6 +239,16 @@
   .views button[aria-checked="true"] {
     background: var(--bg-hover);
     color: var(--text-1);
+  }
+
+  .unread {
+    margin: 0;
+    padding: var(--s-2) var(--s-4);
+    color: var(--negative-text);
+  }
+
+  .views:focus {
+    outline: none;
   }
 
   .editor {

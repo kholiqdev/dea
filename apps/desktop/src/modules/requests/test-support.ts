@@ -62,6 +62,8 @@ export interface RequestsIpc {
 /** What the fake answers about the last response of a tab. */
 export interface FakeResponseBody {
   text?: { pretty?: string; raw?: string; formatted?: boolean };
+  /** Makes `response_text` reject with this. */
+  textError?: IpcError;
   bytes?: Uint8Array;
   rows?: (from: number, count: number) => RowsPage;
   filter?: (path: string) => Filtered | IpcError;
@@ -526,6 +528,8 @@ export function fakeRequestsIpc(
         finish((h) => h.id === args.id, { type: "cancelled" });
         return null;
       case "response_text": {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (opts.response?.textError) throw opts.response.textError;
         const text = opts.response?.text ?? {};
         const pretty = args.view === "pretty";
         return {

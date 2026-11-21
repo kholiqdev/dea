@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { filterResponse } from "$lib/ipc/responses";
-  import { isIpcError } from "$lib/ipc/errors";
+  import { errorMessage, isIpcError } from "$lib/ipc/errors";
   import type { Filtered } from "$lib/ipc/bindings/Filtered";
 
   let {
@@ -57,7 +57,10 @@
     } catch (e) {
       if (mine !== asked) return;
       count = null;
-      error = `Not a valid JSONPath: ${isIpcError(e) ? e.message : String(e)}`;
+      error =
+        isIpcError(e) && e.kind === "invalid"
+          ? `Not a valid JSONPath: ${e.message}`
+          : `The filter could not run: ${errorMessage(e)}`;
       onresult(null);
     }
   }

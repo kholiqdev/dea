@@ -228,3 +228,46 @@ test("filter_waits_for_a_pause_in_typing", async () => {
     vi.useRealTimers();
   }
 });
+
+test("a_body_that_cannot_be_read_says_so", async () => {
+  await open("json", {
+    textError: { kind: "missing", message: "the response is gone" },
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The body could not be read: The response is gone",
+  );
+});
+
+test("body_views_move_with_the_arrow_keys", async () => {
+  await open("html", { text: { pretty: "<p></p>", raw: "<p></p>" } });
+  const radio = (name: string) => screen.getByRole("radio", { name });
+  expect(radio("Pretty")).toHaveAttribute("tabindex", "0");
+  expect(radio("Raw")).toHaveAttribute("tabindex", "-1");
+  radio("Pretty").focus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(radio("Raw")).toHaveFocus();
+  expect(radio("Raw")).toBeChecked();
+  await userEvent.keyboard("{End}");
+  expect(radio("Preview")).toBeChecked();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(radio("Pretty")).toBeChecked();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(radio("Preview")).toBeChecked();
+  await userEvent.keyboard("{Home}");
+  expect(radio("Pretty")).toHaveFocus();
+});
+
+test("a_filter_that_cannot_run_is_not_called_invalid", async () => {
+  await open("json", {
+    text: { pretty: "{}", raw: "{}" },
+    filter: () => ({ kind: "missing", message: "no response here" }),
+  });
+  await screen.findByRole("textbox", { name: "Response body" });
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+    "$.a",
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("The filter could not run: No response here");
+  expect(alert).not.toHaveTextContent("Not a valid JSONPath");
+});

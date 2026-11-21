@@ -3,6 +3,7 @@
   ones Dea keeps.
 -->
 <script lang="ts">
+  import Button from "@dea/ui/Button.svelte";
   import { shellApi } from "$app/contributions/shell-api";
   import type { CookieInfo } from "$lib/ipc/bindings/CookieInfo";
   import { formatCookieDate } from "../../lib/format";
@@ -18,13 +19,13 @@
       <p class="empty">This response set no cookies.</p>
     {/if}
     <span class="spacer"></span>
-    <button
-      type="button"
-      class="manage"
+    <Button
+      variant="ghost"
+      size="small"
       onclick={() => void shell.runCommand("requests.manageCookies")}
     >
       Manage cookies
-    </button>
+    </Button>
   </div>
   {#if cookies.length > 0}
     <table aria-label="Received cookies">
@@ -78,20 +79,6 @@
 
   .spacer {
     flex: 1;
-  }
-
-  .manage {
-    height: 24px;
-    padding: 0 var(--s-3);
-    border: 0;
-    border-radius: var(--r-ctl);
-    background: none;
-    color: var(--text-2);
-  }
-
-  .manage:hover {
-    background: var(--bg-hover);
-    color: var(--text-1);
   }
 
   table {
