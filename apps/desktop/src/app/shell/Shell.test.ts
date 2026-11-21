@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import { tick } from "svelte";
 import { beforeEach, expect, test } from "vitest";
 import { settings } from "$lib/settings/settings.svelte";
 import { toasts } from "../prompts/toasts.svelte";
@@ -327,4 +328,56 @@ test("window environment tabs follow the active environment", async () => {
     expect(tab.closest("[data-tab]")).toHaveAttribute("data-production"),
   );
   expect(tab.querySelector(".tab-env")).toBeNull();
+});
+
+test("the_title_bar_button_follows_what_is_shown", async () => {
+  const { shell } = setup(
+    railModule("requests", 1, { sidebar: view("requests sidebar") }),
+  );
+  await shell.openModule("requests");
+  shell.narrow = true;
+  await tick();
+  await userEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+  expect(
+    screen.getByRole("button", { name: "Hide sidebar" }),
+  ).toBeInTheDocument();
+  expect(await screen.findByText("requests sidebar")).toBeInTheDocument();
+});
+
+test("a_held_chord_runs_its_command_once", async () => {
+  let runs = 0;
+  setup({
+    id: "demo",
+    title: "Demo",
+    commands: [
+      {
+        id: "demo.run",
+        title: "Run the demo",
+        action: { type: "intent", intent: "demo.go" },
+      },
+    ],
+    shortcuts: [{ command: "demo.run", chord: "Mod+Enter" }],
+    intents: [
+      {
+        intent: "demo.go",
+        handler: () => Promise.resolve({ default: () => void runs++ }),
+      },
+    ],
+  } as never);
+  const press = (repeat: boolean) => {
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      ctrlKey: true,
+      repeat,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(event);
+    return event;
+  };
+  press(false);
+  const repeats = [1, 2, 3].map(() => press(true));
+  await waitFor(() => expect(runs).toBe(1));
+  expect(runs).toBe(1);
+  for (const event of repeats) expect(event.defaultPrevented).toBe(true);
 });
