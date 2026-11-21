@@ -27,7 +27,8 @@ export function fakeSendConfirm(
   });
   // Nothing of an earlier test stays open.
   stop();
-  while (sendConfirmations.current) withdraw(sendConfirmations.current.id);
+  while (sendConfirmations.current)
+    sendConfirmations.withdraw(sendConfirmations.current.id);
   void sendConfirmations
     .listen(
       (handler) => {
