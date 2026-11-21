@@ -7,6 +7,8 @@
 //!   `/echo?quiet`, which also avoids a second copy of a large body.
 //! - `/delay/{ms}` sleeps, then answers 200 with `x-slept-us` set to how long
 //!   it really slept, in microseconds.
+//! - `/cookies/set?name=value&Attribute` answers 200 with that `Set-Cookie`
+//!   (path `/` unless given); `/cookies/set-later/{ms}?...` does so after `ms`.
 //! - `/close` answers 200 without `Connection: close`, then closes the socket.
 //! - `/hang-up` reads the request, then closes the socket without answering.
 //! - `/redirect/{n}` answers 302 to `/redirect/{n-1}`, and 200 at 0.
@@ -542,7 +544,13 @@ async fn route(path: &str, query: Option<&str>, echo: Bytes, ending: &Ending) ->
         }
         return redirect(StatusCode::FOUND, &format!("/redirect/{}", n - 1));
     }
-    if path == "/cookies/set" {
+    if path == "/cookies/set" || path.starts_with("/cookies/set-later/") {
+        if let Some(ms) = path.strip_prefix("/cookies/set-later/") {
+            let Ok(ms) = ms.parse() else {
+                return reply(StatusCode::BAD_REQUEST, Bytes::new());
+            };
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
         // `?name=value&Attribute&Attribute=value`: one Set-Cookie header.
         // The path is `/` unless the query says otherwise, so the cookie
         // reaches every other route.

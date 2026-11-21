@@ -360,8 +360,8 @@ impl Store {
 
     /// Removes everything kept for project `scope`: the UI state of every
     /// window and the cookies of every environment (`Clear local data`).
-    /// A jar already loaded stays in memory until
-    /// [`crate::requests::RequestService::forget_project`].
+    /// A jar already loaded stays in memory, so clear through
+    /// [`crate::requests::RequestService::clear_project`].
     ///
     /// # Errors
     ///

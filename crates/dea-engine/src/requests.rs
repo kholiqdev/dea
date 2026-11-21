@@ -26,6 +26,7 @@ use url::Url;
 use zeroize::Zeroizing;
 
 use crate::error::UseError;
+use crate::exchange::CookieInfo;
 use crate::inspection::Inspection;
 use crate::prompt::Prompter;
 use crate::store::{Store, StoreError};
@@ -140,7 +141,7 @@ pub struct RequestService {
     /// go out without asking, until Dea quits.
     skip: Mutex<HashSet<Key>>,
     /// The jars loaded so far.
-    jars: Mutex<HashMap<Key, Arc<CookieJar>>>,
+    jars: Arc<Mutex<HashMap<Key, Arc<CookieJar>>>>,
     /// Jars whose last save failed, saved again after the next send.
     unsaved: Mutex<HashSet<Key>>,
     /// Held while a jar is written, so the newest save is the last one.
@@ -163,7 +164,7 @@ impl RequestService {
             vault: Box::new(vault),
             prompter,
             skip: Mutex::default(),
-            jars: Mutex::default(),
+            jars: Arc::default(),
             unsaved: Mutex::default(),
             saving: Arc::default(),
         }
@@ -371,20 +372,80 @@ impl RequestService {
         })
     }
 
-    /// The cookie jar of `environment` of `project`, for the cookie
-    /// manager. Changes to it are saved by the next send that uses it.
+    /// The cookie jar of `environment` of `project`. Changes made to it
+    /// directly are saved by the next send that uses it; to change cookies
+    /// and save them at once, use [`RequestService::change_cookies`].
     pub fn cookies(&self, project: &Project, environment: Option<&str>) -> Arc<CookieJar> {
         self.jar(&project.vault_scope(), environment.unwrap_or_default())
     }
 
-    /// Forgets the loaded jars, the unsaved ones included, and the
-    /// production choices of project `scope`, after its local data was
-    /// cleared with [`Store::clear_project`]. A send still running then
-    /// does not save its jar again.
-    pub fn forget_project(&self, scope: &str) {
+    /// The unexpired cookies of `environment` of `project`, sorted by
+    /// domain, path and name.
+    pub fn list_cookies(&self, project: &Project, environment: Option<&str>) -> Vec<CookieInfo> {
+        self.cookies(project, environment)
+            .list()
+            .iter()
+            .map(CookieInfo::from)
+            .collect()
+    }
+
+    /// Runs `change` on the jar of `environment` of `project`, and saves
+    /// the jar at once when `change` altered it. Held under the same lock
+    /// as every other save and as [`RequestService::clear_project`].
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when the jar could not be saved. The change stays in
+    /// memory and is saved again by the next send.
+    pub fn change_cookies<R>(
+        &self,
+        project: &Project,
+        environment: Option<&str>,
+        change: impl FnOnce(&CookieJar) -> R,
+    ) -> Result<R, StoreError> {
+        let key = (
+            project.vault_scope(),
+            environment.unwrap_or_default().to_string(),
+        );
+        let _saving = guard(&self.saving);
+        let jar = self.cached_jar(&key);
+        let result = change(&jar);
+        if jar.take_changed() || guard(&self.unsaved).contains(&key) {
+            match self.store.save_cookies(&key.0, &key.1, &jar) {
+                Ok(()) => {
+                    guard(&self.unsaved).remove(&key);
+                }
+                Err(e) => {
+                    guard(&self.unsaved).insert(key);
+                    return Err(e);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Clears the local data of project `scope` with `clear`, normally
+    /// [`Store::clear_project`], and forgets what was loaded from it: the
+    /// jars, the unsaved ones included, and the production choices.
+    ///
+    /// Everything runs under the lock that every jar save and load takes,
+    /// so a send that finishes meanwhile either saved before the clear
+    /// (and the clear removed the file) or finds its jar forgotten and
+    /// writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// What `clear` returns.
+    pub fn clear_project(
+        &self,
+        scope: &str,
+        clear: impl FnOnce() -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let _saving = guard(&self.saving);
         guard(&self.jars).retain(|(s, _), _| s != scope);
         guard(&self.unsaved).retain(|(s, _)| s != scope);
         guard(&self.skip).retain(|(s, _)| s != scope);
+        clear()
     }
 
     /// Asks before a request goes to production `environment`.
@@ -421,16 +482,25 @@ impl RequestService {
     }
 
     /// The jar of `scope` and `environment`, read from the store the first
-    /// time.
+    /// time. The read waits for [`RequestService::clear_project`], so it
+    /// never caches a jar older than a clear.
     fn jar(&self, scope: &str, environment: &str) -> Arc<CookieJar> {
         let key = (scope.to_string(), environment.to_string());
         if let Some(jar) = guard(&self.jars).get(&key) {
             return Arc::clone(jar);
         }
-        // Read without the lock; if another thread got there first, its
-        // jar is the one kept.
-        let loaded = Arc::new(self.store.load_cookies(scope, environment));
-        Arc::clone(guard(&self.jars).entry(key).or_insert(loaded))
+        let _saving = guard(&self.saving);
+        self.cached_jar(&key)
+    }
+
+    /// Like `jar`, for a caller that holds `saving`.
+    fn cached_jar(&self, key: &Key) -> Arc<CookieJar> {
+        if let Some(jar) = guard(&self.jars).get(key) {
+            return Arc::clone(jar);
+        }
+        let loaded = Arc::new(self.store.load_cookies(&key.0, &key.1));
+        guard(&self.jars).insert(key.clone(), Arc::clone(&loaded));
+        loaded
     }
 
     /// Saves `jar` when the exchange changed it or its last save failed,
@@ -454,18 +524,20 @@ impl RequestService {
 
     /// Writes `jar`, unless its project's local data was cleared since it
     /// was loaded. The write waits for the disk, so it runs on a blocking
-    /// thread.
+    /// thread, and checks that the jar is still the loaded one only once it
+    /// holds `saving`, so a clear cannot slip in between.
     async fn save(&self, key: Key, jar: Arc<CookieJar>) -> Result<(), StoreError> {
-        let current = guard(&self.jars)
-            .get(&key)
-            .is_some_and(|cached| Arc::ptr_eq(cached, &jar));
-        if !current {
-            return Ok(());
-        }
         let store = Arc::clone(&self.store);
         let saving = Arc::clone(&self.saving);
+        let jars = Arc::clone(&self.jars);
         let task = tokio::task::spawn_blocking(move || {
             let _one_at_a_time = guard(&saving);
+            let current = guard(&jars)
+                .get(&key)
+                .is_some_and(|cached| Arc::ptr_eq(cached, &jar));
+            if !current {
+                return Ok(());
+            }
             store.save_cookies(&key.0, &key.1, &jar)
         });
         match task.await {
