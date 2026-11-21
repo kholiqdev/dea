@@ -38,9 +38,16 @@ pub struct SendConfirmation {
     pub method: String,
     /// The final URL, every secret shown as `[secret:<name>]`.
     pub url: String,
+    /// The host of `url`, with its port when written. Empty when `url` has
+    /// none.
+    pub host: String,
     pub environment: String,
+    /// Placeholders with no value, as written inside the braces, once each
+    /// in the order they were first used.
+    pub undefined: Vec<String>,
     /// Whether "Don't ask again in this session" may be offered: only for
-    /// `GET`, `HEAD` and `OPTIONS`.
+    /// `GET`, `HEAD` and `OPTIONS`, and never while `undefined` is not
+    /// empty.
     pub can_skip: bool,
     /// Whether the request uses at least one Vault secret, so sending asks
     /// for the Vault too.

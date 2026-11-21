@@ -15,7 +15,9 @@ const post: SendConfirmEvent = {
   id: 1,
   method: "POST",
   url: "https://api.test/v1/x",
+  host: "api.test",
   environment: "production",
+  undefined: [],
   canSkip: false,
   secrets: true,
 };

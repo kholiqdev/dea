@@ -7,10 +7,21 @@ export type SendConfirmation = { method: string,
 /**
  * The final URL, every secret shown as `[secret:<name>]`.
  */
-url: string, environment: string, 
+url: string, 
+/**
+ * The host of `url`, with its port when written. Empty when `url` has
+ * none.
+ */
+host: string, environment: string, 
+/**
+ * Placeholders with no value, as written inside the braces, once each
+ * in the order they were first used.
+ */
+undefined: Array<string>, 
 /**
  * Whether "Don't ask again in this session" may be offered: only for
- * `GET`, `HEAD` and `OPTIONS`.
+ * `GET`, `HEAD` and `OPTIONS`, and never while `undefined` is not
+ * empty.
  */
 canSkip: boolean, 
 /**

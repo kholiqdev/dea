@@ -220,7 +220,14 @@ impl RequestService {
         let production = environment.filter(|env| is_production(project, env));
         let names = preview.secret_names();
         if let Some(env) = production {
-            self.confirm(&scope, env, &preview.method, &url, !names.is_empty())?;
+            self.confirm(
+                &scope,
+                env,
+                &preview.method,
+                &url,
+                !names.is_empty(),
+                &preview.unresolved,
+            )?;
         }
 
         let mut secrets = SecretValues::default();
@@ -308,8 +315,18 @@ impl RequestService {
             |ctx| resolve_draft(path, draft, ctx),
             tree,
         )?;
-        let url = with_scheme(&preview.url).text;
-        Ok(Inspection::new(&preview, &url, self.client.user_agent()))
+        let with = with_scheme(&preview.url);
+        let shown = if preview.url.text.is_empty() {
+            String::new()
+        } else {
+            hide_secrets(&with.redacted, &preview.secret_names())
+        };
+        Ok(Inspection::new(
+            &preview,
+            &with.text,
+            shown,
+            self.client.user_agent(),
+        ))
     }
 
     /// Sends a prepared request with the cookies of its environment, then
@@ -456,8 +473,11 @@ impl RequestService {
         method: &str,
         url: &str,
         secrets: bool,
+        unresolved: &[String],
     ) -> Result<(), SendError> {
-        let can_skip = SKIPPABLE.contains(&method);
+        // A placeholder with no value is never waved through: the request
+        // would go out half written.
+        let can_skip = SKIPPABLE.contains(&method) && unresolved.is_empty();
         let key = (scope.to_string(), environment.to_string());
         if can_skip && guard(&self.skip).contains(&key) {
             return Ok(());
@@ -465,7 +485,9 @@ impl RequestService {
         let confirmation = SendConfirmation {
             method: method.to_string(),
             url: url.to_string(),
+            host: host_of(url).to_string(),
             environment: environment.to_string(),
+            undefined: unresolved.to_vec(),
             can_skip,
             secrets,
         };
@@ -758,6 +780,23 @@ fn resolve_with(
         dynamic: &mut dynamic,
     };
     resolver(&mut ctx)
+}
+
+/// `url` with every `[secret:<name>]` for `names` shown as `••••••••`.
+fn hide_secrets(url: &str, names: &[&str]) -> String {
+    names.iter().fold(url.to_string(), |url, name| {
+        url.replace(&format!("[secret:{name}]"), HIDDEN)
+    })
+}
+
+/// The host of `url` and its port, as written: after `://`, without
+/// userinfo, up to the first `/`, `?` or `#`. Empty when there is none.
+fn host_of(url: &str) -> &str {
+    let Some((_, rest)) = url.split_once("://") else {
+        return "";
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    authority.rsplit('@').next().unwrap_or_default()
 }
 
 /// `url` with `http://` in front when it has no scheme (decision 16).

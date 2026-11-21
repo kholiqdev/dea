@@ -5,6 +5,12 @@ import type { VariableInfo } from "./VariableInfo";
 
 export type Inspection = { 
 /**
+ * The URL as `prepare` would send it, with a scheme and the query.
+ * Every secret shows as `••••••••` and a placeholder with no value
+ * stays as written. Empty when the draft has no URL.
+ */
+url: string, 
+/**
  * Every variable the draft uses, in the order it was first used.
  */
 variables: Array<VariableInfo>, 

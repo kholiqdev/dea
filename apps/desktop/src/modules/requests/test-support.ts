@@ -57,6 +57,8 @@ export interface RequestsIpc {
   cookieCalls: (string | null)[];
   /** Every `save_response`, in order. */
   savedResponses: { id: string; name: string }[];
+  /** Every `copy_text`, in order: the text put on the clipboard. */
+  copiedTexts: string[];
 }
 
 /** What the fake answers about the last response of a tab. */
@@ -194,6 +196,7 @@ export function bigTree(count: number): RequestTreeInfo {
 }
 
 const EMPTY_INSPECTION: Inspection = {
+  url: "",
   variables: [],
   undefined: [],
   automaticHeaders: [],
@@ -305,6 +308,7 @@ export function fakeRequestsIpc(
     rowCalls: [],
     cookieCalls: [],
     savedResponses: [],
+    copiedTexts: [],
   };
   if (opts.errors) ipc.tree.errors = opts.errors;
   const trash = new Map<
@@ -494,6 +498,9 @@ export function fakeRequestsIpc(
             : ipc.inspection;
         return Promise.resolve(answer).then((a) => ({
           ...EMPTY_INSPECTION,
+          // The URL as written, which is what it shows when nothing in it
+          // is a variable.
+          url: (args.request as RequestFile).url,
           ...a,
         }));
       }
@@ -557,6 +564,9 @@ export function fakeRequestsIpc(
         return answer;
       }
       case "copy_response":
+        return null;
+      case "copy_text":
+        ipc.copiedTexts.push(args.text as string);
         return null;
       case "save_response": {
         const name = args.name as string;

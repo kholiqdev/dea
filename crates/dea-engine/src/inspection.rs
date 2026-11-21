@@ -22,6 +22,10 @@ const STAND_IN_URL: &str = "http://localhost/";
     ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
 )]
 pub struct Inspection {
+    /// The URL as `prepare` would send it, with a scheme and the query.
+    /// Every secret shows as `••••••••` and a placeholder with no value
+    /// stays as written. Empty when the draft has no URL.
+    pub url: String,
     /// Every variable the draft uses, in the order it was first used.
     pub variables: Vec<VariableInfo>,
     /// Placeholders with no value, as written inside the braces.
@@ -151,8 +155,14 @@ fn content_type(body: &ResolvedBody) -> Option<&str> {
 
 impl Inspection {
     /// `resolved` is a preview resolution of the draft, `url` its URL with a
-    /// scheme. `user_agent` is the one the client sends.
-    pub(crate) fn new(resolved: &ResolvedRequest, url: &str, user_agent: &str) -> Inspection {
+    /// scheme and `shown` the same URL with every secret hidden.
+    /// `user_agent` is the one the client sends.
+    pub(crate) fn new(
+        resolved: &ResolvedRequest,
+        url: &str,
+        shown: String,
+        user_agent: &str,
+    ) -> Inspection {
         // While the URL is still being typed the host is unknown, so the
         // `Host` value is left to be worked out on send.
         let parsed = Url::parse(url)
@@ -181,6 +191,7 @@ impl Inspection {
         })
         .collect();
         Inspection {
+            url: shown,
             variables: resolved.used.iter().map(VariableInfo::new).collect(),
             undefined: resolved.unresolved.clone(),
             automatic_headers,
