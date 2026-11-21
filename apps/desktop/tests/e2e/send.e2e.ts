@@ -72,21 +72,30 @@ describe("sending requests", () => {
     // The version is in the row only while the pane is 560 px wide or more.
     // Narrower, the timing legend has it, and the timing bar opens that.
     const opened = (await timingBar().getAttribute("aria-expanded")) === "true";
-    if (!opened) await timingBar().click();
-    await browser.waitUntil(
-      async () => (await timingBar().getAttribute("aria-expanded")) === "true",
-      { timeoutMsg: "the timing bar did not open its legend" },
-    );
-    await $(RESPONSE).$('ul[aria-label="Timing"]').waitForDisplayed();
-    // innerText leaves out what a container query hides.
-    const shown = await browser.execute(
-      (s) =>
-        (document.querySelector(s)?.parentElement as HTMLElement).innerText,
-      TOOLBAR,
-    );
-    expect(shown).toContain("HTTP/1.1");
-    // The legend stays open for the session: leave it as it was found.
-    if (!opened) await timingBar().click();
+    // The legend stays open for the session: leave it as it was found,
+    // whether or not the checks pass.
+    try {
+      if (!opened) await timingBar().click();
+      await browser.waitUntil(
+        async () =>
+          (await timingBar().getAttribute("aria-expanded")) === "true",
+        { timeoutMsg: "the timing bar did not open its legend" },
+      );
+      await $(RESPONSE).$('ul[aria-label="Timing"]').waitForDisplayed();
+      // innerText leaves out what a container query hides.
+      const shown = await browser.execute(
+        (s) =>
+          (document.querySelector(s)?.parentElement as HTMLElement).innerText,
+        TOOLBAR,
+      );
+      expect(shown).toContain("HTTP/1.1");
+    } finally {
+      if (
+        !opened &&
+        (await timingBar().getAttribute("aria-expanded")) === "true"
+      )
+        await timingBar().click();
+    }
     // The body opens in the editor, which loads on first use.
     await waitForText(
       '.cm-content[aria-label="Response body"]',
