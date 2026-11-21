@@ -1,6 +1,8 @@
 <!--
   A PDF drawn page by page onto canvases as wide as the pane. WebKitGTK has
-  no PDF viewer and the CSP blocks `blob:` frames, so pdf.js draws it.
+  no PDF viewer and the CSP blocks `blob:` frames, so pdf.js draws it. Each
+  canvas holds the page at the device pixel ratio, so only the first pages
+  are drawn.
 -->
 <script lang="ts">
   import { tick } from "svelte";
@@ -9,9 +11,13 @@
 
   let { id }: { id: string } = $props();
 
+  /** The pages drawn at most; a long PDF is saved to see the rest. */
+  const MAX_PAGES = 20;
+
   let pane = $state<HTMLElement>();
   let canvases = $state<HTMLCanvasElement[]>([]);
   let pages = $state(0);
+  const drawn = $derived(Math.min(pages, MAX_PAGES));
   let failed = $state(false);
 
   $effect(() => {
@@ -33,7 +39,7 @@
         await tick();
         const width = pane?.clientWidth || 600;
         const ratio = window.devicePixelRatio || 1;
-        for (let n = 1; n <= doc.numPages; n++) {
+        for (let n = 1; n <= Math.min(doc.numPages, MAX_PAGES); n++) {
           const page = await doc.getPage(n);
           if (!live) return;
           const canvas = canvases[n - 1];
@@ -69,7 +75,12 @@
     {#if pages > 0}
       <p class="caption">{pages} {pages === 1 ? "page" : "pages"}</p>
     {/if}
-    {#each Array.from({ length: pages }, (_, n) => n) as n (n)}
+    {#if pages > MAX_PAGES}
+      <p class="caption">
+        Showing the first {MAX_PAGES} pages. Save it to a file to see them all.
+      </p>
+    {/if}
+    {#each Array.from({ length: drawn }, (_, n) => n) as n (n)}
       <canvas bind:this={canvases[n]} aria-label="Page {n + 1}"></canvas>
     {/each}
   </div>
