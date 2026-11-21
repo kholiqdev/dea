@@ -1,7 +1,6 @@
 //! What the UI is told about a send: progress events, the response, and
 //! failures with their titles and codes.
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -215,7 +214,7 @@ fn summary(failure: &SendFailure) -> (FailureKind, &str, Option<&str>) {
 #[test]
 fn failures_follow_the_table() {
     use FailureKind as K;
-    let addr: SocketAddr = "127.0.0.1:9".parse().unwrap();
+    let addr = "127.0.0.1:9".to_string();
 
     let dns = http(HttpError::Dns {
         host: "api.example.test".into(),
@@ -230,7 +229,7 @@ fn failures_follow_the_table() {
         "api.example.test could not be resolved. Check the host name."
     );
 
-    let refused = http(HttpError::ConnectionRefused { addr });
+    let refused = http(HttpError::ConnectionRefused { addr: addr.clone() });
     assert_eq!(
         summary(&refused),
         (K::Refused, "Connection refused", Some("ECONNREFUSED"))

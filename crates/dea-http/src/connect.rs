@@ -369,8 +369,13 @@ where
         }
     }
     Err(match (failed, refused) {
-        (Some((addr, message)), _) => HttpError::Connect { addr, message },
-        (None, Some(addr)) => HttpError::ConnectionRefused { addr },
+        (Some((addr, message)), _) => HttpError::Connect {
+            addr: addr.to_string(),
+            message,
+        },
+        (None, Some(addr)) => HttpError::ConnectionRefused {
+            addr: addr.to_string(),
+        },
         (None, None) => HttpError::InvalidRequest("no address to connect to".into()),
     })
 }
@@ -620,7 +625,7 @@ mod tests {
         for addrs in [[timed_out, refused], [refused, timed_out]] {
             let result = race(&addrs, attempts(unused, failure, &dropped)).await;
             assert!(
-                matches!(result, Err(HttpError::Connect { addr, .. }) if addr == timed_out),
+                matches!(&result, Err(HttpError::Connect { addr, .. }) if *addr == timed_out.to_string()),
                 "{result:?}"
             );
         }

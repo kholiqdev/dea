@@ -2,7 +2,6 @@
 //! header values or body bytes, which may be secrets.
 
 use std::error::Error;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -12,10 +11,12 @@ pub enum HttpError {
     InvalidRequest(String),
     #[error("could not resolve {host}: {message}")]
     Dns { host: String, message: String },
+    /// `addr` is the address and port as text, so a caller can hide a
+    /// host that is a secret.
     #[error("connection refused by {addr}")]
-    ConnectionRefused { addr: SocketAddr },
+    ConnectionRefused { addr: String },
     #[error("could not connect to {addr}: {message}")]
-    Connect { addr: SocketAddr, message: String },
+    Connect { addr: String, message: String },
     #[error("{0}")]
     Tls(TlsError),
     #[error("no response within {0:?}")]

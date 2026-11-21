@@ -1442,3 +1442,35 @@ async fn response_info_reads_the_kind_of_a_large_body_from_its_file() {
     assert_eq!(info.size, size);
     assert_eq!(info.kind, BodyKind::Text);
 }
+
+#[tokio::test]
+async fn a_secret_ip_host_is_hidden_when_the_connection_is_refused() {
+    let mut f = Fixture::new().await;
+    f.set_secret("HOST", "127.0.0.1");
+    // A port nothing listens on any more.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let url = format!("http://{{{{vault:HOST}}}}:{port}/x");
+    let path = f.add("ip-host", request("GET", &url));
+
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let error = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap_err();
+
+    let shown = format!("{error} {error:?}");
+    assert!(!shown.contains("127.0.0.1"), "{shown}");
+    let outcome = outcome_of_error(&error);
+    let SendOutcome::Failed { failure } = outcome else {
+        panic!("not a failure: {outcome:?}")
+    };
+    assert_eq!(failure.kind, FailureKind::Refused);
+    assert_eq!(
+        failure.message,
+        format!("Nothing is listening on ••••••••:{port}.")
+    );
+}
