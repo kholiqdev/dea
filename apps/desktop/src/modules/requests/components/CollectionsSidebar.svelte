@@ -133,6 +133,12 @@
     });
   }
 
+  function clearFilter(): void {
+    clearTimings();
+    treeState.filter = "";
+    filterInput?.focus();
+  }
+
   function isEditable(target: EventTarget | null): boolean {
     return (
       target instanceof Element &&
@@ -420,6 +426,11 @@
         bind:this={newCollection}
         onclick={() => void treeState.newFolder(ROOT)}>New collection</button
       >
+    </div>
+  {:else if treeState.info && rows.length === 0 && treeState.filter.trim()}
+    <div class="empty" role="status">
+      <p>No requests match "{treeState.filter.trim()}"</p>
+      <button type="button" class="action" onclick={clearFilter}>Clear</button>
     </div>
   {:else if treeState.info}
     <div

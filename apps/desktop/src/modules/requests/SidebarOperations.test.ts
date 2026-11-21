@@ -959,3 +959,20 @@ test("no_marker_when_another_tab_type_is_active", async () => {
       .filter((r) => r.hasAttribute("aria-current")),
   ).toEqual([]);
 });
+
+test("a_filter_without_matches_says_so", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  const filter = screen.getByRole("searchbox", { name: "Filter collections" });
+  await userEvent.type(filter, "zzz");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    'No requests match "zzz"',
+  );
+  expect(screen.queryByRole("tree")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(filter).toHaveValue("");
+  expect(treeState.filter).toBe("");
+  expect(filter).toHaveFocus();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(rowNames().length).toBeGreaterThan(0);
+});
