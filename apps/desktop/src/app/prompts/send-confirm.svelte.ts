@@ -47,7 +47,13 @@ export class SendConfirmations {
     subscribeWithdrawn = ipc.onSendConfirmWithdrawn,
   ): Promise<() => void> {
     const stopShowing = await subscribe((c) => this.show(c));
-    const stopWithdrawing = await subscribeWithdrawn((id) => this.withdraw(id));
+    let stopWithdrawing: () => void;
+    try {
+      stopWithdrawing = await subscribeWithdrawn((id) => this.withdraw(id));
+    } catch (e) {
+      stopShowing();
+      throw e;
+    }
     await resend();
     return () => {
       stopShowing();

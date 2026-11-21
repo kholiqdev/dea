@@ -8,7 +8,7 @@ import {
   emitSendConfirmWithdrawn,
   fakeSendConfirm,
 } from "./send-confirm.test-support";
-import { sendConfirmations } from "./send-confirm.svelte";
+import { SendConfirmations, sendConfirmations } from "./send-confirm.svelte";
 import SendToProduction from "./SendToProduction.svelte";
 
 const post: SendConfirmEvent = {
@@ -144,4 +144,40 @@ test("focus_stays_on_cancel_when_the_checkbox_is_offered", async () => {
   expect(await screen.findByRole("button", { name: /Cancel/ })).toHaveFocus();
   await userEvent.keyboard("{Enter}");
   expect(answers).toEqual([[1, "cancel"]]);
+});
+
+test("dont_ask_again_starts_unchecked_for_each_confirmation", async () => {
+  const answers = fakeSendConfirm({ ...post, method: "GET", canSkip: true });
+  render(SendToProduction, { confirmations: sendConfirmations });
+  emitSendConfirm({ ...post, id: 2, method: "GET", canSkip: true });
+  await userEvent.click(
+    await screen.findByLabelText(/Don't ask again in this session/),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+  expect(
+    await screen.findByLabelText(/Don't ask again in this session/),
+  ).not.toBeChecked();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Send to production" }),
+  );
+  expect(answers).toEqual([
+    [1, "cancel"],
+    [2, "send"],
+  ]);
+});
+
+test("a_failed_listener_is_reported_and_cleaned_up", async () => {
+  const confirmations = new SendConfirmations();
+  let stopped = 0;
+  await expect(
+    confirmations.listen(
+      () =>
+        Promise.resolve(() => {
+          stopped += 1;
+        }),
+      () => Promise.resolve(),
+      () => Promise.reject(new Error("no window")),
+    ),
+  ).rejects.toThrow("no window");
+  expect(stopped).toBe(1);
 });
