@@ -15,7 +15,7 @@ use url::Url;
 use crate::body::Progress;
 use crate::connect::{self, Connection};
 use crate::cookies::CookieJar;
-use crate::error::{HttpError, describe};
+use crate::error::HttpError;
 use crate::pool::{Pool, PoolKey};
 use crate::proxy::{self, ProxyConfig};
 use crate::reader::{BodyReader, Encoding, ReaderConfig};
@@ -243,6 +243,15 @@ struct Failure {
     retry: bool,
 }
 
+/// Whether sending `method` twice does what sending it once does (RFC 9110
+/// §9.2.2). Matched as sent, so `get` is not `GET`.
+fn idempotent(method: &str) -> bool {
+    matches!(
+        method,
+        "GET" | "HEAD" | "OPTIONS" | "TRACE" | "PUT" | "DELETE"
+    )
+}
+
 impl Client {
     pub fn new(config: ClientConfig) -> Result<Client, HttpError> {
         HeaderValue::from_str(&config.user_agent).map_err(|_| {
@@ -271,9 +280,10 @@ impl Client {
     ///
     /// `Options::timeout` limits each hop until its response head arrives,
     /// then the gap between pieces of its body (decision 9); `None` sets no
-    /// limit. A pooled
-    /// connection that fails before any of the response arrives (the
-    /// server closed it while idle) is replaced by a new one, once.
+    /// limit. A pooled connection that fails before any of the response
+    /// arrives (the server closed it while idle) is replaced by a new one,
+    /// once, when the request is safe to send again: not all of it was
+    /// written, or its method is idempotent.
     pub async fn send(
         &self,
         request: Request,
@@ -429,6 +439,7 @@ impl Client {
             error,
             retry: false,
         })?;
+        let idempotent = idempotent(wire.method().as_str());
         let progress = wire.body().progress();
         let sent = head(head_deadline, &progress, connection.send(wire)).await;
         let head = match sent {
@@ -444,11 +455,14 @@ impl Client {
                 });
             }
             Ok(Ok(head)) => head,
-            Ok(Err(e)) => {
+            Ok(Err(unanswered)) => {
                 let nothing_arrived = connection.bytes_received() == received_before;
+                // A server may have acted on a whole request it never
+                // answered.
+                let safe = !unanswered.written || idempotent;
                 return Err(Failure {
-                    error: HttpError::Protocol(describe(&e)),
-                    retry: marks.reused && nothing_arrived,
+                    error: connection.error(&unanswered.error),
+                    retry: marks.reused && nothing_arrived && safe,
                 });
             }
         };
@@ -516,7 +530,7 @@ impl Client {
                 }
                 Some(Err(e)) => {
                     return Err(Failure {
-                        error: HttpError::Protocol(describe(&e)),
+                        error: connection.error(&e),
                         retry: false,
                     });
                 }
@@ -581,6 +595,16 @@ mod tests {
                 extra_roots_pem: vec![server.ca_pem()],
                 client_identity: None,
             },
+        }
+    }
+
+    #[test]
+    fn only_idempotent_methods_are_sent_again_once_written() {
+        for method in ["GET", "HEAD", "OPTIONS", "TRACE", "PUT", "DELETE"] {
+            assert!(idempotent(method), "{method}");
+        }
+        for method in ["POST", "PATCH", "CONNECT", "QUERY", "get"] {
+            assert!(!idempotent(method), "{method}");
         }
     }
 

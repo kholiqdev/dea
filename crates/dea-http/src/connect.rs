@@ -5,8 +5,8 @@ use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -19,7 +19,7 @@ use tokio::task::AbortHandle;
 use url::{Host, Url};
 
 use crate::body::WireBody;
-use crate::error::{HttpError, describe};
+use crate::error::{HttpError, TlsError, describe};
 use crate::proxy;
 use crate::request::TlsConfig;
 use crate::response::HttpVersion;
@@ -36,8 +36,8 @@ const H2_PING_TIMEOUT: Duration = Duration::from_secs(10);
 /// An HTTP connection whose I/O runs in its own task.
 pub(crate) struct Connection {
     sender: Sender,
-    /// Bytes read from the server so far, after TLS.
-    received: Arc<AtomicU64>,
+    /// What the I/O has seen, shared by every handle to the connection.
+    seen: Arc<Seen>,
     /// Stops the task of an HTTP/1.1 connection when it is dropped, so the
     /// socket closes at once (a cancelled request, a timeout). `None` for
     /// HTTP/2, whose handles share one connection.
@@ -55,6 +55,35 @@ impl Drop for Connection {
 enum Sender {
     Http1(http1::SendRequest<WireBody>),
     Http2(http2::SendRequest<WireBody>),
+}
+
+/// What the I/O of a connection has seen.
+#[derive(Default)]
+struct Seen {
+    /// Bytes read from the server so far, after TLS.
+    received: AtomicU64,
+    /// The TLS failure a read ended with. Under TLS 1.3 a server turns
+    /// down the client certificate only after the handshake, so this is
+    /// where that shows.
+    tls_error: OnceLock<TlsError>,
+}
+
+impl Seen {
+    /// `error` from hyper as a TLS error when a read failed on one, and as
+    /// a protocol error otherwise.
+    fn error(&self, error: &hyper::Error) -> HttpError {
+        match self.tls_error.get() {
+            Some(tls) => HttpError::Tls(tls.clone()),
+            None => HttpError::Protocol(describe(error)),
+        }
+    }
+}
+
+/// A request that got no response head.
+pub(crate) struct Unanswered {
+    pub(crate) error: hyper::Error,
+    /// Whether the connection took the whole request, head and body.
+    pub(crate) written: bool,
 }
 
 impl Connection {
@@ -79,7 +108,7 @@ impl Connection {
             Sender::Http1(_) => None,
             Sender::Http2(sender) => Some(Connection {
                 sender: Sender::Http2(sender.clone()),
-                received: Arc::clone(&self.received),
+                seen: Arc::clone(&self.seen),
                 task: None,
             }),
         }
@@ -87,11 +116,17 @@ impl Connection {
 
     /// Whether both handles belong to the same underlying connection.
     pub(crate) fn same_connection(&self, other: &Connection) -> bool {
-        Arc::ptr_eq(&self.received, &other.received)
+        Arc::ptr_eq(&self.seen, &other.seen)
     }
 
     pub(crate) fn bytes_received(&self) -> u64 {
-        self.received.load(Ordering::SeqCst)
+        self.seen.received.load(Ordering::SeqCst)
+    }
+
+    /// `error`, which hyper reported for this connection, as Dea reports
+    /// it.
+    pub(crate) fn error(&self, error: &hyper::Error) -> HttpError {
+        self.seen.error(error)
     }
 
     /// Waits until the connection can take a request, sends it and returns
@@ -99,17 +134,27 @@ impl Connection {
     pub(crate) async fn send(
         &mut self,
         request: hyper::Request<WireBody>,
-    ) -> hyper::Result<hyper::Response<Incoming>> {
-        match &mut self.sender {
+    ) -> Result<hyper::Response<Incoming>, Unanswered> {
+        let body = request.body().progress();
+        let unsent = |error| Unanswered {
+            error,
+            written: false,
+        };
+        let sent = match &mut self.sender {
             Sender::Http1(sender) => {
-                sender.ready().await?;
-                sender.send_request(request).await
+                sender.ready().await.map_err(unsent)?;
+                sender.try_send_request(request).await
             }
             Sender::Http2(sender) => {
-                sender.ready().await?;
-                sender.send_request(request).await
+                sender.ready().await.map_err(unsent)?;
+                sender.try_send_request(request).await
             }
-        }
+        };
+        sent.map_err(|mut failed| Unanswered {
+            // hyper hands the request back when it wrote none of it.
+            written: failed.take_message().is_none() && body.all_taken(),
+            error: failed.into_error(),
+        })
     }
 }
 
@@ -370,12 +415,12 @@ async fn handshake<S>(stream: S, h2: bool) -> Result<Connection, HttpError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let received = Arc::new(AtomicU64::new(0));
+    let seen = Arc::new(Seen::default());
     let io = TokioIo::new(Counted {
         inner: stream,
-        received: Arc::clone(&received),
+        seen: Arc::clone(&seen),
     });
-    let protocol = |e: hyper::Error| HttpError::Protocol(describe(&e));
+    let protocol = |e: hyper::Error| seen.error(&e);
     let (sender, task) = if h2 {
         let (sender, conn) = http2::Builder::new(TokioExecutor::new())
             .timer(TokioTimer::new())
@@ -392,18 +437,16 @@ where
         let task = tokio::spawn(conn).abort_handle();
         (Sender::Http1(sender), Some(task))
     };
-    Ok(Connection {
-        sender,
-        received,
-        task,
-    })
+    Ok(Connection { sender, seen, task })
 }
 
 /// Counts the bytes read, so a failed request on a pooled connection can
-/// tell whether any of the response arrived before it is retried.
+/// tell whether any of the response arrived before it is retried, and
+/// keeps the TLS failure a read ended with. hyper keeps only the text of
+/// an HTTP/2 connection's I/O error.
 struct Counted<S> {
     inner: S,
-    received: Arc<AtomicU64>,
+    seen: Arc<Seen>,
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
@@ -417,7 +460,12 @@ impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
         let poll = Pin::new(&mut this.inner).poll_read(cx, buf);
         let read = buf.filled().len() - before;
         if read > 0 {
-            this.received.fetch_add(read as u64, Ordering::SeqCst);
+            this.seen.received.fetch_add(read as u64, Ordering::SeqCst);
+        }
+        if let Poll::Ready(Err(e)) = &poll
+            && let Some(tls) = tls::tls_error(e)
+        {
+            let _ = this.seen.tls_error.set(tls);
         }
         poll
     }
