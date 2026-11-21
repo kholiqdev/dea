@@ -3,7 +3,8 @@
   and version, the environment it was sent in, and what it can do (copy,
   save, move the panel). It never wraps: the reason gives way first, and a
   narrow row drops the version, then the size, which the timing legend
-  under it still shows. While sending it shows the seconds that went by.
+  under it still shows. While sending it shows the seconds that went by;
+  while Dea asks whether to send to production, that it waits.
 -->
 <script lang="ts">
   import Copy from "@lucide/svelte/icons/copy";
@@ -31,6 +32,7 @@
     name,
     response = null,
     elapsed = null,
+    waiting = false,
     environment = null,
     layout,
     stacked,
@@ -42,6 +44,8 @@
     response?: ResponseInfo | null;
     /** Milliseconds since the send began; set while sending. */
     elapsed?: number | null;
+    /** The send waits for its confirmation to go to production. */
+    waiting?: boolean;
     /** The environment the request was sent in. */
     environment?: { name: string; production: boolean; moved: boolean } | null;
     layout: "right" | "below";
@@ -146,7 +150,9 @@
         {/if}
       </span>
     {:else}
-      <span class="sending">Sending</span>
+      <span class="sending">
+        {waiting ? "Waiting for confirmation" : "Sending"}
+      </span>
       {#if elapsed !== null}<span class="fact">{formatSeconds(elapsed)}</span
         >{/if}
       {#if environment}

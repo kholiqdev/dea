@@ -7,6 +7,7 @@
 <script lang="ts">
   import ListFilter from "@lucide/svelte/icons/list-filter";
   import { projectApi } from "$app/contributions/project-api";
+  import { shellApi } from "$app/contributions/shell-api";
   import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
   import { chordParts, currentPlatform, parseChord } from "$lib/keyboard/chord";
   import { tick } from "svelte";
@@ -81,8 +82,13 @@
   }
 
   const project = projectApi();
+  const shell = shellApi();
   const sendKeys = chordParts(parseChord("Mod+Enter"), currentPlatform());
   const current = $derived(exchange.state);
+  // Dea asks whether to send to production: nothing has left, nothing runs.
+  const waiting = $derived(
+    current.phase === "sending" && !current.started && shell.confirmingSend,
+  );
   // The view and filter chosen for a response last while it stays, and
   // when it comes back after a send that did not go out.
   const kept = new WeakMap<ResponseInfo, BodyControls>();
@@ -134,7 +140,7 @@
   // Seconds go by on the clock `startedAt` was taken from.
   let now = $state(performance.now());
   $effect(() => {
-    if (current.phase !== "sending") return;
+    if (current.phase !== "sending" || waiting) return;
     now = performance.now();
     const timer = setInterval(() => (now = performance.now()), 100);
     return () => clearInterval(timer);
@@ -242,7 +248,7 @@
 <section
   class="pane"
   aria-label="Response"
-  aria-busy={current.phase === "sending" ? "true" : undefined}
+  aria-busy={current.phase === "sending" && !waiting ? "true" : undefined}
   {@attach measure}
 >
   {#if current.phase === "idle"}
@@ -256,14 +262,15 @@
     <ResponseToolbar
       {tabId}
       {name}
-      {elapsed}
+      elapsed={waiting ? null : elapsed}
+      {waiting}
       environment={sentIn}
       {layout}
       {stacked}
       {ontogglelayout}
     />
     {@render sections(null)}
-    <SendingView sending={current} {elapsed} />
+    <SendingView sending={current} {elapsed} {waiting} />
   {:else if current.phase === "done"}
     {@const response = current.response}
     <ResponseToolbar

@@ -73,6 +73,7 @@ beforeEach(() => {
     openModule: () => Promise.resolve(),
     toast: () => 0,
     dismissToast: () => {},
+    confirmingSend: false,
     runCommand: () => Promise.resolve(),
   });
   setVaultApi({

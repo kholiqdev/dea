@@ -66,6 +66,7 @@ beforeEach(() => {
       return 0;
     },
     dismissToast: () => {},
+    confirmingSend: false,
     runCommand: () => Promise.resolve(),
   } satisfies ShellApi);
 });

@@ -137,6 +137,7 @@ beforeEach(() => {
       return toasts.items.length;
     },
     dismissToast: () => {},
+    confirmingSend: false,
     runCommand: () => Promise.resolve(),
   });
 });

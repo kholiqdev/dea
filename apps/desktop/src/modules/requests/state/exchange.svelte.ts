@@ -30,17 +30,19 @@ export type SseRow = {
 export type HeadInfo = { status: number; reason: string; headers: HeaderRow[] };
 
 /**
- * What a tab shows of its send. While `sending`, `startedAt` is the
- * `performance.now()` at which the request left (or the send began, before
- * that), `host` is known once it left, and `text` is the body so far while
- * Dea still forwards it; `received` counts every byte. `environment` is
- * the one the request was sent in.
+ * What a tab shows of its send. While `sending`, `started` tells whether
+ * the request left: before that, Dea may still be asking whether to send
+ * it. `startedAt` is the `performance.now()` at which it left (or the send
+ * began, before that), `host` is known once it left, and `text` is the body
+ * so far while Dea still forwards it; `received` counts every byte.
+ * `environment` is the one the request was sent in.
  */
 export type ExchangeState =
   | { phase: "idle" }
   | {
       phase: "sending";
       environment: string | null;
+      started: boolean;
       startedAt: number;
       host: string | null;
       steps: SendStep[];
@@ -68,6 +70,14 @@ export type ExchangeState =
       events: SseRow[];
       droppedEvents: number;
     };
+
+/**
+ * How a send ended: `ignored` when another was still under way or the tab
+ * had closed, `warned` when it stopped at the undefined variables,
+ * `notConfirmed` when the send to production was not confirmed, and `sent`
+ * otherwise, whatever came back.
+ */
+export type SendResult = "sent" | "warned" | "notConfirmed" | "ignored";
 
 /** Events kept of a stream; the older ones are dropped. */
 export const MAX_EVENTS = 10_000;
@@ -127,13 +137,13 @@ export class Exchange {
   /**
    * Sends the draft as it is in the editor, saved or not. It stops at a
    * warning when the draft uses variables nothing defines, unless sent
-   * `anyway`.
+   * `anyway` or to production, where the confirmation names them instead.
    */
   async send(
     draft: RequestDraft,
     opts: { anyway?: boolean } = {},
-  ): Promise<void> {
-    if (this.#busy || this.#disposed) return;
+  ): Promise<SendResult> {
+    if (this.#busy || this.#disposed) return "ignored";
     this.#busy = true;
     try {
       // The warning goes by what this very draft uses. The tab's own look,
@@ -142,21 +152,22 @@ export class Exchange {
       for (let look = 0; look < MAX_LOOKS && !draft.inspectionCurrent; look++) {
         draft.cancelInspection();
         await draft.inspect();
-        if (this.#disposed) return;
+        if (this.#disposed) return "ignored";
       }
       const names = draft.inspection?.undefined ?? [];
-      if (!opts.anyway && names.length > 0) {
+      const production = projectApi().environment?.production ?? false;
+      if (!opts.anyway && !production && names.length > 0) {
         this.warning = [...names];
-        return;
+        return "warned";
       }
       this.warning = null;
-      await this.#send(draft);
+      return await this.#send(draft);
     } finally {
       this.#busy = false;
     }
   }
 
-  async #send(draft: RequestDraft): Promise<void> {
+  async #send(draft: RequestDraft): Promise<"sent" | "notConfirmed"> {
     const before = this.state;
     const shownBefore = this.#shown;
     const call = ++this.#sends;
@@ -164,6 +175,7 @@ export class Exchange {
     this.state = {
       phase: "sending",
       environment,
+      started: false,
       startedAt: performance.now(),
       host: null,
       steps: [],
@@ -187,13 +199,13 @@ export class Exchange {
       this.state = before;
       this.#shown = shownBefore;
       shellApi().toast(errorMessage(e));
-      return;
+      return "sent";
     }
     switch (outcome.type) {
       case "notConfirmed":
         this.state = before;
         this.#shown = shownBefore;
-        return;
+        return "notConfirmed";
       case "response": {
         const { response } = outcome;
         this.state = {
@@ -228,6 +240,7 @@ export class Exchange {
     if (outcome.type !== "response" && before.phase === "done")
       void releaseResponse(this.#id);
     sendsEnded++;
+    return "sent";
   }
 
   /**
@@ -246,6 +259,7 @@ export class Exchange {
     if (s.phase !== "sending") return;
     switch (e.type) {
       case "started":
+        s.started = true;
         s.startedAt = performance.now();
         s.host = hostOf(e.url);
         break;

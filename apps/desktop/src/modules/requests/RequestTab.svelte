@@ -32,6 +32,7 @@
   } from "./state/drafts.svelte";
   import TlsWarning from "./components/TlsWarning.svelte";
   import UndefinedWarning from "./components/UndefinedWarning.svelte";
+  import { sendKeepingFocus } from "./lib/send-focus";
   import { exchangeFor } from "./state/exchange.svelte";
   import { DEFAULT_OPTIONS } from "./state/folders.svelte";
   import { setResponseSplit, toggleResponseLayout } from "./state/layout";
@@ -134,6 +135,11 @@
     draft.save().catch((e: unknown) => shell.toast(errorMessage(e)));
   }
 
+  /** Sends; not confirmed, the focus goes back to where it was. */
+  function send(opts: { anyway?: boolean } = {}): void {
+    void sendKeepingFocus(exchange, draft, opts);
+  }
+
   /** Saves the request panel's share; a refused save is a toast. */
   function resize(layout: ResponseLayout, percent: number): Promise<void> {
     return setResponseSplit(layout, percent).catch((e: unknown) => {
@@ -201,9 +207,10 @@
         {draft}
         {variables}
         {readonly}
-        sending={exchange.state.phase === "sending"}
+        production={project.environment?.production ?? false}
+        sending={exchange.state.phase === "sending" && exchange.state.started}
         onsave={save}
-        onsend={() => void exchange.send(draft)}
+        onsend={() => send()}
         oncancel={() => exchange.cancel()}
       />
       <ResolvedUrl
@@ -219,7 +226,7 @@
         names={exchange.warning}
         environment={project.environment?.name ?? null}
         ondefine={() => void shell.runCommand("project.editEnvironments")}
-        onsendanyway={() => void exchange.send(draft, { anyway: true })}
+        onsendanyway={() => send({ anyway: true })}
       />
     {/if}
     <TlsWarning {effective} />

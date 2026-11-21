@@ -31,6 +31,8 @@ export class FakeShell implements ShellApi {
   activated: string[] = $state([]);
   /** Every command runCommand was asked to run. */
   commands: string[] = [];
+  /** Whether `Send this request to production?` shows; set by the test. */
+  confirmingSend = $state(false);
   #opened = 0;
 
   tab(id: string): FakeTab {
@@ -150,6 +152,20 @@ export function setUpRequestTabs(): { shell: FakeShell; project: FakeProject } {
   setShellApi(shell);
   setProjectApi(project);
   return { shell, project };
+}
+
+/** Adds `production`, a production environment, and makes it active. */
+export async function useProduction(project: FakeProject): Promise<void> {
+  const info = project.info;
+  if (!info) throw new Error("The project has no info");
+  project.info = {
+    ...info,
+    environments: [
+      ...info.environments,
+      { name: "production", production: true },
+    ],
+  };
+  await project.setEnvironment("production");
 }
 
 /** Opens a tab for the request at `path` and shows it, as the shell does. */

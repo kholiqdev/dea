@@ -8,6 +8,7 @@
   import Shell from "./shell/Shell.svelte";
   import { persistUiState, shell } from "./shell/shell-state.svelte";
   import { thisProject } from "./project/project.svelte";
+  import { sendConfirmations } from "./prompts/send-confirm.svelte";
   import { toasts } from "./prompts/toasts.svelte";
   import { tabs } from "./tabs/tabs.svelte";
 
@@ -36,6 +37,9 @@
     },
     toast: (text, opts) => toasts.show(text, opts),
     dismissToast: (id) => toasts.dismiss(id),
+    get confirmingSend() {
+      return sendConfirmations.current !== null;
+    },
   });
 
   // "Match system" follows the OS as it changes.

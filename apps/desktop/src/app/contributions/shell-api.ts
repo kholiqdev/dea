@@ -57,6 +57,11 @@ export interface ShellApi {
     },
   ): number;
   dismissToast(id: number): void;
+  /**
+   * Whether `Send this request to production?` shows, so a send waits for
+   * its answer. Reactive.
+   */
+  readonly confirmingSend: boolean;
 }
 
 let current: ShellApi | null = null;

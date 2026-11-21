@@ -52,6 +52,8 @@ export interface RequestsIpc {
   send: FakeSend;
   /** Ends every held send, with `outcome` or else `send.outcome`. */
   finishSends(outcome?: SendOutcome): void;
+  /** Gives `event` to every held send, as Dea does while one runs. */
+  emitToSends(event: SendEvent): void;
   /** Every `response_rows` call, in order. */
   rowCalls: { id: string; from: number; count: number }[];
   /** Every `list_cookies` call: the environment it asked for. */
@@ -280,8 +282,12 @@ export function fakeRequestsIpc(
     cookies?: Record<string, CookieInfo[]>;
   } = {},
 ): RequestsIpc {
-  // The sends `hold` keeps running, with what ends each.
-  let held: { id: string; end: (outcome: SendOutcome) => void }[] = [];
+  // The sends `hold` keeps running, with what they hear and what ends each.
+  let held: {
+    id: string;
+    channel: Channel<SendEvent>;
+    end: (outcome: SendOutcome) => void;
+  }[] = [];
   const finish = (
     which: (send: { id: string }) => boolean,
     outcome: SendOutcome,
@@ -306,6 +312,9 @@ export function fakeRequestsIpc(
       ...opts.send,
     },
     finishSends: (outcome) => finish(() => true, outcome ?? ipc.send.outcome),
+    emitToSends: (event) => {
+      for (const send of held) send.channel.onmessage(structuredClone(event));
+    },
     rowCalls: [],
     cookieCalls: [],
     savedResponses: [],
@@ -530,7 +539,9 @@ export function fakeRequestsIpc(
         for (const event of ipc.send.events)
           channel.onmessage(structuredClone(event));
         if (!ipc.send.hold) return structuredClone(ipc.send.outcome);
-        return new Promise<SendOutcome>((end) => held.push({ id, end }));
+        return new Promise<SendOutcome>((end) =>
+          held.push({ id, channel, end }),
+        );
       }
       case "cancel_send":
         finish((h) => h.id === args.id, { type: "cancelled" });

@@ -18,6 +18,7 @@ import RequestTab from "../../RequestTab.svelte";
 import {
   openRequestTab,
   setUpRequestTabs,
+  useProduction,
   type FakeShell,
 } from "../../request-tab-support.svelte";
 import {
@@ -272,6 +273,40 @@ test("sending_names_its_environment", async () => {
   expect(within(bar).getByText("staging")).toBeInTheDocument();
 });
 
+test("a_production_send_waits_for_confirmation", async () => {
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  await useProduction(project);
+  openRequestTab(PATH);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Send to production" }),
+  );
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+  shell.confirmingSend = true;
+  const pane = screen.getByRole("region", { name: "Response" });
+  const bar = await within(pane).findByRole("toolbar", { name: "Response" });
+  await waitFor(() =>
+    expect(bar).toHaveTextContent(/^Waiting for confirmation/),
+  );
+  expect(within(bar).queryByText("Sending")).toBeNull();
+  expect(within(bar).queryByText(/ s$/)).toBeNull();
+  expect(pane).not.toHaveAttribute("aria-busy");
+  expect(
+    within(pane).getByText("Nothing is sent until you confirm."),
+  ).toBeInTheDocument();
+  expect(within(pane).queryByRole("progressbar")).toBeNull();
+  expect(within(pane).queryByText(/^Waiting for the server/)).toBeNull();
+  // Confirmed: the request leaves.
+  ipc.emitToSends(started);
+  expect(await within(bar).findByText("Sending")).toBeInTheDocument();
+  expect(within(bar).getByText(/ s$/)).toBeInTheDocument();
+  expect(pane).toHaveAttribute("aria-busy", "true");
+  expect(within(pane).getByRole("progressbar")).toBeInTheDocument();
+  expect(
+    within(pane).queryByText("Nothing is sent until you confirm."),
+  ).toBeNull();
+  ipc.finishSends();
+});
+
 /**
  * Whether `element` is in an inert part of the page. jsdom knows nothing of
  * `inert`: the property Svelte sets on the element is all there is to see.
@@ -445,7 +480,7 @@ test("cancelled_after_head_says_the_body_is_incomplete", async () => {
 });
 
 test("cancelled_before_the_head_only_says_how_long", async () => {
-  fakeRequestsIpc({ files, send: { hold: true } });
+  fakeRequestsIpc({ files, send: { hold: true, events: [started] } });
   openRequestTab(PATH);
   await send();
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
@@ -578,7 +613,9 @@ test("production_environment_pill_keeps_its_mark", async () => {
   };
   await project.setEnvironment("live");
   openRequestTab(PATH);
-  await send();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Send to production" }),
+  );
   await screen.findByRole("toolbar", { name: "Response" });
   await project.setEnvironment("staging");
   expect(await screen.findByText("Sent in live")).toHaveClass("env-prod");

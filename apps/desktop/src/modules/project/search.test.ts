@@ -38,6 +38,7 @@ beforeEach(() => {
     runCommand: () => Promise.resolve(),
     toast: (text) => toasts.push(text),
     dismissToast: () => {},
+    confirmingSend: false,
   });
 });
 
