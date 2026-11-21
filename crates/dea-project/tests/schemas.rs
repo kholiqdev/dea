@@ -12,6 +12,20 @@ fn schema(file: &str) -> Value {
         .1
 }
 
+/// Published schemas list their keys alphabetically, whatever order the
+/// generator produced them in (`serde_json` keeps insertion order).
+fn sorted(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().map(|(k, v)| (k, sorted(v))).collect())
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
+        other => other,
+    }
+}
+
 fn yaml(text: &str) -> Value {
     serde_norway::from_str(text).unwrap()
 }
@@ -39,7 +53,7 @@ fn published_schemas_are_up_to_date() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("schemas")
             .join(file);
-        let expected = serde_json::to_string_pretty(&schema).unwrap() + "\n";
+        let expected = serde_json::to_string_pretty(&sorted(schema)).unwrap() + "\n";
         if std::env::var_os("UPDATE_SCHEMAS").is_some() {
             fs::write(&path, &expected).unwrap();
             continue;

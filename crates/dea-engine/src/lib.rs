@@ -9,6 +9,8 @@ mod error;
 mod exchange;
 mod file_ref;
 mod inspection;
+pub mod json_filter;
+pub mod pretty;
 pub mod projects;
 mod prompt;
 pub mod requests;
