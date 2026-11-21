@@ -91,11 +91,14 @@
 {/if}
 
 <style>
+  /* Plain HTML has black text: it is drawn on white in both themes, as a
+     browser draws it. */
   iframe {
     flex: 1;
     min-height: 0;
     border: 0;
-    background: var(--bg-1);
+    color-scheme: light;
+    background: var(--preview-canvas);
   }
 
   .image {

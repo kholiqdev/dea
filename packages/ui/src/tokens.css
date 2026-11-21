@@ -5,6 +5,7 @@
  * - Light --accent is #a86a12 and light --positive is #15803d, so indicator
  *   lamps reach 3:1 on every light surface (F1-FON-16).
  * - --w-rail-wide, --w-side-min and --w-work-min are added for the shell.
+ * - --preview-canvas is added for the HTML preview of a response.
  *
  * This is the only file that may hold colour literals.
  */
@@ -41,6 +42,10 @@
   --w-side: 280px;
   --w-side-min: 200px;
   --w-work-min: 480px;
+
+  /* Where a response's HTML is drawn: white in both themes, as a browser
+     draws a page that sets no colours. */
+  --preview-canvas: #ffffff;
 }
 
 :root,
