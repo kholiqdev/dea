@@ -1,7 +1,8 @@
 // pdf.js, loaded only when a PDF preview opens: it is far too big for the
-// first screen, so nothing may import it statically.
+// first screen, so nothing may import it statically. It comes from the
+// legacy build: the modern one needs newer JavaScript than WebView2 131.
 
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 export interface PdfDocument {
   numPages: number;
@@ -12,8 +13,8 @@ export interface PdfDocument {
 
 export async function loadPdf(bytes: ArrayBuffer): Promise<PdfDocument> {
   const [pdfjs, { default: workerUrl }] = await Promise.all([
-    import("pdfjs-dist"),
-    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
   ]);
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
   const task = pdfjs.getDocument({ data: new Uint8Array(bytes) });
