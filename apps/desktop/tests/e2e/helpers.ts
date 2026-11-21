@@ -137,6 +137,24 @@ export async function openProjectAt(root: string): Promise<void> {
   await waitForShell();
 }
 
+/**
+ * Types `text` into the focused element. `browser.keys` holds every key of
+ * its text down before it lets any go, and WebKitWebDriver (Linux) types
+ * nothing for a key that is already down: "https://" arrives as "htps:/".
+ * So each call gets only keys that are not down yet.
+ */
+export async function typeKeys(text: string): Promise<void> {
+  let keys = "";
+  for (const key of text) {
+    if (keys.includes(key)) {
+      await browser.keys(keys);
+      keys = "";
+    }
+    keys += key;
+  }
+  if (keys !== "") await browser.keys(keys);
+}
+
 /** Waits until the first `selector` match contains `text`. */
 export async function waitForText(
   selector: string,

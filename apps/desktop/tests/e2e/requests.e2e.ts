@@ -21,6 +21,7 @@ import {
   openProjectAt,
   pickNextFile,
   textOf,
+  typeKeys,
   waitForNoDialog,
   waitForText,
   writeProject,
@@ -135,7 +136,7 @@ async function nameIt(name: string): Promise<void> {
   await $('input[aria-label="Name"]').waitForDisplayed();
   // The field starts with its text selected. Clearing it from outside would
   // blur it, which saves.
-  await browser.keys(name);
+  await typeKeys(name);
   await browser.keys(Key.Enter);
 }
 
@@ -163,7 +164,7 @@ async function typeInBody(text: string, replace = false): Promise<void> {
   await body.waitForDisplayed();
   await body.click();
   if (replace) await browser.keys([MOD, "a"]);
-  await browser.keys(text);
+  await typeKeys(text);
 }
 
 describe("the Requests sidebar and editor", () => {
@@ -286,21 +287,19 @@ describe("the Requests sidebar and editor", () => {
     const url = $('input[aria-label="URL"]');
     await url.click();
     await browser.keys([MOD, "a"]);
-    await browser.keys(
-      "https://api.example.com/shipments/:id?limit=20&sort=asc",
-    );
+    await typeKeys("https://api.example.com/shipments/:id?limit=20&sort=asc");
     await section("Params");
     await $('input[aria-label="Value of id"]').click();
-    await browser.keys("99");
+    await typeKeys("99");
     // A query row can be switched off and stays in the file.
     await $('input[aria-label="Send sort"]').click();
 
     // A header.
     await section("Headers");
     await $("button=Add header").click();
-    await browser.keys("X-Trace");
+    await typeKeys("X-Trace");
     await $('input[aria-label="Value of X-Trace"]').click();
-    await browser.keys("abc123");
+    await typeKeys("abc123");
 
     // A JSON body.
     await section("Body");
@@ -399,7 +398,7 @@ describe("the Requests sidebar and editor", () => {
 
     const filter = $("#requests-filter");
     await filter.click();
-    await browser.keys("parcels");
+    await typeKeys("parcels");
     await browser.waitUntil(
       async () => (await rowNames()).join() === "Shipments,Create shipment",
       { timeoutMsg: "the filter did not find the request by its URL" },
@@ -408,7 +407,7 @@ describe("the Requests sidebar and editor", () => {
     // Back to everything, then a name.
     await browser.keys([MOD, "a"]);
     await browser.keys(Key.Backspace);
-    await browser.keys("list");
+    await typeKeys("list");
     await browser.waitUntil(
       async () => (await rowNames()).join() === "Shipments,List shipments",
       { timeoutMsg: "the filter did not find the request by its name" },
