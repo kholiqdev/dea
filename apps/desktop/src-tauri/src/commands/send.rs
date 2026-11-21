@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn cancel_for_an_unknown_id_is_fine() {
         let dir = tempfile::tempdir().unwrap();
-        let (windows, _, _) = RecordingWindows::new(&["main"], None);
+        let (windows, _, _, _) = RecordingWindows::new(&["main"], None);
         let state = state_with(dir.path(), windows);
         cancel(&state, &send_key("main", "t9"));
 
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn cancelling_a_send_answers_its_confirmation() {
         let dir = tempfile::tempdir().unwrap();
-        let (windows, _, confirms) = RecordingWindows::new(&["main"], None);
+        let (windows, _, confirms, withdrawn) = RecordingWindows::new(&["main"], None);
         let state = state_with(dir.path(), windows);
         let send_from = |id: &str| {
             let send = start(&state, &send_key("main", id));
@@ -187,11 +187,16 @@ mod tests {
             let (_, event) = confirms.recv_timeout(WAIT).unwrap();
             (asked, event)
         };
-        let (cancelled, _) = send_from("t1");
+        let (cancelled, cancelled_event) = send_from("t1");
         let (other, other_event) = send_from("t2");
 
         cancel(&state, &send_key("main", "t1"));
         assert_eq!(cancelled.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        // Its dialog is told to close.
+        assert_eq!(
+            withdrawn.recv_timeout(WAIT).unwrap(),
+            ("main".to_string(), cancelled_event.id)
+        );
 
         // The send of another tab still waits for its answer.
         state
@@ -201,9 +206,14 @@ mod tests {
         assert_eq!(other.recv_timeout(WAIT).unwrap(), SendAnswer::Send);
 
         // A new send from a tab ends the one waiting there.
-        let (replaced, _) = send_from("t3");
+        let (replaced, replaced_event) = send_from("t3");
         let newer = start(&state, &send_key("main", "t3"));
         assert_eq!(replaced.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
         assert!(!newer.is_cancelled());
+        assert_eq!(
+            withdrawn.recv_timeout(WAIT).unwrap(),
+            ("main".to_string(), replaced_event.id)
+        );
+        assert!(withdrawn.try_recv().is_err(), "only the withdrawn ones");
     }
 }

@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn closing_a_window_cancels_its_sends_and_confirmations() {
         let dir = tempfile::tempdir().unwrap();
-        let (windows, _shown, confirms) = RecordingWindows::new(&["main", "project-1"], None);
+        let (windows, _shown, confirms, _) = RecordingWindows::new(&["main", "project-1"], None);
         let state = state_with(dir.path(), windows);
         let confirm_from = |window: &'static str, key: &'static str| {
             let state = Arc::clone(&state);
