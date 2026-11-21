@@ -105,11 +105,27 @@
   });
 
   // An edit takes the undefined-variable warning down: it was about the
-  // draft as it was. The name is left out, as a rename from the sidebar
-  // rewrites it without anyone editing the request.
+  // draft as it was. The fields are listed one by one, so `name` is never
+  // read: a rename from the sidebar rewrites it without an edit. The first
+  // run only notes the draft, as the view is made anew on each tab switch
+  // while the warning stays.
+  let seen: string | null = null;
   $effect(() => {
-    void JSON.stringify({ ...draft.draft, name: undefined });
-    untrack(() => exchange.clearWarning());
+    const d = draft.draft;
+    const now = JSON.stringify([
+      d.method,
+      d.url,
+      d.pathVariables,
+      d.params,
+      d.headers,
+      d.body,
+      d.auth,
+      d.options,
+    ]);
+    const before = seen;
+    seen = now;
+    if (before !== null && before !== now)
+      untrack(() => exchange.clearWarning());
   });
 
   $effect(() => shell.setTabDirty(id, draft.dirty));

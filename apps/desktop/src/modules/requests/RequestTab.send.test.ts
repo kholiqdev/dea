@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
+import RequestTab from "./RequestTab.svelte";
+import { draftFor } from "./state/drafts.svelte";
 import requestLineSource from "./components/RequestLine.svelte?raw";
 import UndefinedWarning from "./components/UndefinedWarning.svelte";
 import type { FakeProject } from "./fake-project.svelte";
@@ -345,6 +347,26 @@ test("editing_clears_the_warning", async () => {
   await userEvent.click(await sendButton());
   expect(await screen.findByRole("status")).toBeInTheDocument();
   expect(ipc.sends).toEqual([]);
+});
+
+test("the_warning_survives_a_tab_switch", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["carrierCode"] } });
+  const { id, unmount } = openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await screen.findByRole("status");
+  unmount();
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  expect(await screen.findByRole("status")).toHaveTextContent("carrierCode");
+});
+
+test("a_rename_does_not_clear_the_warning", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["carrierCode"] } });
+  const { id } = openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await screen.findByRole("status");
+  draftFor(id, PATH).draft.name = "Renamed";
+  await new Promise((done) => setTimeout(done, 50));
+  expect(screen.getByRole("status")).toBeInTheDocument();
 });
 
 test("a_second_send_sends_past_the_banner", async () => {
