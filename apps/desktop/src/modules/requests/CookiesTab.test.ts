@@ -6,6 +6,8 @@ import type { FakeProject } from "./fake-project.svelte";
 import CookiesTab from "./CookiesTab.svelte";
 import { manifest } from "./index";
 import manageCookies from "./intents/manage-cookies";
+import { draftFor } from "./state/drafts.svelte";
+import { exchangeFor } from "./state/exchange.svelte";
 import { setUpRequestTabs, type FakeShell } from "./request-tab-support.svelte";
 import { fakeCookies, fakeRequestsIpc, type RequestsIpc } from "./test-support";
 
@@ -305,4 +307,113 @@ test("the_manifest_has_the_cookie_tab_and_command", () => {
   expect(
     manifest.intents?.some((i) => i.intent === "requests.manageCookies"),
   ).toBe(true);
+});
+
+test("undo_restores_into_the_environment_it_was_deleted_from", async () => {
+  const ipc = fakeRequestsIpc({
+    cookies: fakeCookies({
+      staging: [cookie("session", "api.test")],
+      local: [cookie("b", "local.test")],
+    }),
+  });
+  cookiesTab("staging");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Delete cookie session" }),
+  );
+  await waitFor(() => expect(shell.toastActions).toHaveLength(1));
+  await userEvent.click(screen.getByRole("button", { name: /staging/ }));
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "local" }));
+  await waitFor(() => expect(ipc.cookieCalls.at(-1)).toBe("local"));
+  shell.toastActions[0]?.run();
+  await waitFor(() => expect(calls(ipc, "save_cookie")).toHaveLength(1));
+  expect(calls(ipc, "save_cookie")[0]).toMatchObject({
+    environment: "staging",
+  });
+});
+
+test("a_failed_switch_shows_no_cookies_of_the_old_environment", async () => {
+  const ipc = fakeRequestsIpc({
+    cookies: fakeCookies({ staging: [cookie("a", "api.test")] }),
+  });
+  cookiesTab("staging");
+  await screen.findByRole("table", { name: "Cookies" });
+  ipc.failures.set("list_cookies", { kind: "io", message: "jar unreadable" });
+  await userEvent.click(screen.getByRole("button", { name: /staging/ }));
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "local" }));
+  await waitFor(() => expect(shell.toasts).toEqual(["Jar unreadable"]));
+  expect(screen.queryByRole("table", { name: "Cookies" })).toBeNull();
+  expect(screen.queryByText(/No cookies in local/)).toBeNull();
+  expect(screen.queryByText("a")).toBeNull();
+});
+
+test("a_failed_reload_after_delete_still_offers_undo", async () => {
+  const ipc = fakeRequestsIpc({
+    cookies: fakeCookies({ staging: [cookie("session", "api.test")] }),
+  });
+  cookiesTab("staging");
+  const del = await screen.findByRole("button", {
+    name: "Delete cookie session",
+  });
+  ipc.failures.set("list_cookies", { kind: "io", message: "jar unreadable" });
+  await userEvent.click(del);
+  await waitFor(() => expect(shell.toasts).toHaveLength(2));
+  expect(shell.toasts).toContain("Deleted cookie session");
+  expect(shell.toasts).toContain("Jar unreadable");
+  expect(shell.toastActions.find((a) => a?.label === "Undo")).toBeDefined();
+});
+
+test("a_failed_reload_after_save_closes_the_dialog", async () => {
+  const ipc = fakeRequestsIpc({
+    cookies: fakeCookies({ staging: [cookie("session", "api.test")] }),
+  });
+  cookiesTab("staging");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Edit cookie session" }),
+  );
+  ipc.failures.set("list_cookies", { kind: "io", message: "jar unreadable" });
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(shell.toasts).toEqual(["Jar unreadable"]));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(calls(ipc, "save_cookie")).toHaveLength(1);
+});
+
+test("the_list_reloads_when_the_tab_becomes_active", async () => {
+  const ipc = fakeRequestsIpc({
+    cookies: fakeCookies({ staging: [cookie("a", "api.test")] }),
+  });
+  const { id } = {
+    id: shell.openTab("requests.cookies", "Cookies", {
+      environment: "staging",
+    }),
+  };
+  render(CookiesTab, { props: { tab: shell.tab(id) } });
+  await screen.findByRole("table", { name: "Cookies" });
+  expect(ipc.cookieCalls).toHaveLength(1);
+  shell.activateTab(id);
+  await waitFor(() => expect(ipc.cookieCalls).toHaveLength(2));
+  await new Promise((r) => setTimeout(r, 20));
+  expect(ipc.cookieCalls).toHaveLength(2);
+});
+
+test("cookies_version_reloads_the_list", async () => {
+  const ipc = fakeRequestsIpc({
+    files: {
+      "requests/a.yaml": { name: "A", method: "GET", url: "https://a.test" },
+    },
+    cookies: fakeCookies({ staging: [cookie("a", "api.test")] }),
+  });
+  cookiesTab("staging");
+  await screen.findByRole("table", { name: "Cookies" });
+  expect(ipc.cookieCalls).toHaveLength(1);
+  shell.tabs.push({
+    id: "t1",
+    tabType: "requests.request",
+    title: "Request",
+    params: { path: "requests/a.yaml" },
+    dirty: false,
+  });
+  const draft = draftFor("t1", "requests/a.yaml");
+  await waitFor(() => expect(draft.saved).not.toBeNull());
+  await exchangeFor("t1").send(draft);
+  await waitFor(() => expect(ipc.cookieCalls).toHaveLength(2));
 });

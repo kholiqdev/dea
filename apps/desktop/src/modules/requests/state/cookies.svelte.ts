@@ -57,29 +57,38 @@ export class CookiesState {
     this.loaded = true;
   }
 
+  /**
+   * Switches jar. Nothing of the old one stays to be shown under the new
+   * name, also when the new one cannot be read.
+   */
   async chooseEnvironment(environment: string | null): Promise<void> {
     this.environment = environment;
     this.chosen = null;
+    this.cookies = [];
+    this.loaded = false;
     await this.load();
   }
 
-  async save(original: CookieKey, cookie: CookieInfo): Promise<void> {
-    await saveCookie(this.environment, original, cookie);
-    await this.load();
+  // The mutations do not read the jar again, so a failed read cannot hide
+  // that they worked. They take the environment the caller meant.
+  save(
+    original: CookieKey,
+    cookie: CookieInfo,
+    environment = this.environment,
+  ): Promise<void> {
+    return saveCookie(environment, original, cookie);
   }
 
-  async remove(cookie: CookieInfo): Promise<void> {
-    await deleteCookie(this.environment, keyOf(cookie));
-    await this.load();
+  remove(cookie: CookieInfo, environment = this.environment): Promise<void> {
+    return deleteCookie(environment, keyOf(cookie));
   }
 
-  /** Puts a deleted cookie back. */
-  async restore(cookie: CookieInfo): Promise<void> {
-    await this.save(keyOf(cookie), cookie);
+  /** Puts a deleted cookie back into the jar it was deleted from. */
+  restore(cookie: CookieInfo, environment: string | null): Promise<void> {
+    return this.save(keyOf(cookie), cookie, environment);
   }
 
-  async removeDomain(domain: string): Promise<void> {
-    await deleteDomainCookies(this.environment, domain);
-    await this.load();
+  removeDomain(domain: string, environment = this.environment): Promise<void> {
+    return deleteDomainCookies(environment, domain).then(() => undefined);
   }
 }

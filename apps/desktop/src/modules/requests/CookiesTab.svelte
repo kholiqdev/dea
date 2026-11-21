@@ -19,7 +19,7 @@
   import { CookiesState } from "./state/cookies.svelte";
   import { cookiesVersion } from "./state/exchange.svelte";
 
-  let { tab }: { tab: { params: unknown } } = $props();
+  let { tab }: { tab: { id: string; params: unknown } } = $props();
 
   const project = projectApi();
   const shell = shellApi();
@@ -64,10 +64,19 @@
     })),
   );
 
-  // Reads the jar when the tab opens and after each send.
+  // Reads the jar when the tab opens, after each send and when the tab is
+  // shown again.
+  let seenVersion: number | null = null;
+  let wasActive = false;
   $effect(() => {
-    void cookiesVersion();
-    untrack(() => void run(() => jar.load()));
+    const version = cookiesVersion();
+    const active = shell.activeTab()?.id === tab.id;
+    untrack(() => {
+      if (version !== seenVersion || (active && !wasActive))
+        void run(() => jar.load());
+      seenVersion = version;
+      wasActive = active;
+    });
   });
 
   async function run(action: () => Promise<void>): Promise<void> {
@@ -78,31 +87,49 @@
     }
   }
 
+  const reload = () => run(() => jar.load());
+
   async function remove(cookie: CookieInfo): Promise<void> {
-    await run(async () => {
-      await jar.remove(cookie);
-      shell.toast(`Deleted cookie ${cookie.name}`, {
-        action: {
-          label: "Undo",
-          run: () => void run(() => jar.restore(cookie)),
-        },
-      });
+    const environment = jar.environment;
+    try {
+      await jar.remove(cookie, environment);
+    } catch (e) {
+      shell.toast(errorMessage(e));
+      return;
+    }
+    shell.toast(`Deleted cookie ${cookie.name}`, {
+      action: {
+        label: "Undo",
+        run: () =>
+          void run(async () => {
+            await jar.restore(cookie, environment);
+            await jar.load();
+          }),
+      },
     });
+    await reload();
   }
 
   async function save(cookie: CookieInfo): Promise<void> {
     if (!editing) return;
-    await jar.save(
-      { domain: editing.domain, path: editing.path, name: editing.name },
-      cookie,
-    );
+    const { domain, path, name } = editing;
+    // A refusal stays in the dialog; a later failed read does not.
+    await jar.save({ domain, path, name }, cookie);
     editing = null;
+    await reload();
   }
 
   async function removeAll(): Promise<void> {
     const domain = jar.domain;
     confirming = false;
-    if (domain !== null) await run(() => jar.removeDomain(domain));
+    if (domain === null) return;
+    try {
+      await jar.removeDomain(domain);
+    } catch (e) {
+      shell.toast(errorMessage(e));
+      return;
+    }
+    await reload();
   }
 </script>
 
@@ -157,7 +184,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each jar.rows as cookie (`${cookie.domain}${cookie.path}${cookie.name}`)}
+        {#each jar.rows as cookie (`${cookie.domain}\u0000${cookie.path}\u0000${cookie.name}`)}
           <tr>
             <td>{cookie.name}</td>
             <td class="value">{cookie.value}</td>
