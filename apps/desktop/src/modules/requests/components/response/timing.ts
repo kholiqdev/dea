@@ -4,6 +4,8 @@ import type { TimingInfo } from "$lib/ipc/bindings/TimingInfo";
 export interface TimingPhase {
   id: "dns" | "connect" | "tls" | "waiting" | "download";
   label: string;
+  /** What a narrow legend shows for a long label. */
+  short?: string;
   ms: number;
   color: string;
 }
@@ -22,6 +24,7 @@ export function timingPhases(timing: TimingInfo): TimingPhase[] {
     {
       id: "waiting",
       label: "Waiting for server",
+      short: "Wait",
       ms: timing.waitingMs,
       color: "var(--accent)",
     },

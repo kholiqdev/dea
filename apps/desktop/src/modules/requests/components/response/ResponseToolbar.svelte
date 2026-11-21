@@ -189,7 +189,15 @@
               style:background={phase.color}
               aria-hidden="true"
             ></span>
-            <span class="name">{phase.label}</span>
+            <span class={["name", { long: phase.short !== undefined }]}
+              >{phase.label}</span
+            >
+            {#if phase.short}
+              <!-- Drawn from its attribute: the text of the page keeps one
+                   name for each phase. -->
+              <span class="short" aria-hidden="true" data-short={phase.short}
+              ></span>
+            {/if}
             <span class="ms">{ms}</span>
             {#if timing.reused && phase.id === "tls"}
               <span class="reused">reused</span>
@@ -390,11 +398,13 @@
   }
 
   /* The timing legend, under the row: its phases, then the size and the
-     version when the row above leaves them out. */
+     version when the row above leaves them out. Every phase shows a name
+     at every width: a shorter one where the full ones do not fit, and
+     where even those do not, the phases go on to a second line. */
   .legend {
-    height: 28px;
+    min-height: 28px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--s-4);
     padding: 0 var(--s-4);
     overflow: hidden;
@@ -405,22 +415,25 @@
     color: var(--text-3);
   }
 
+  .legend > .fact {
+    line-height: 28px;
+  }
+
   .phases {
     flex: 0 1 auto;
     min-width: 0;
     display: flex;
-    gap: var(--s-4);
+    flex-wrap: wrap;
+    column-gap: var(--s-4);
     margin: 0;
     padding: 0;
     list-style: none;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
   }
 
   .phases li {
     position: relative;
     flex: none;
+    height: 28px;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -430,6 +443,14 @@
     width: 8px;
     height: 8px;
     border-radius: 2px;
+  }
+
+  .short {
+    display: none;
+  }
+
+  .short::before {
+    content: attr(data-short);
   }
 
   .ms {
@@ -456,11 +477,12 @@
     }
   }
 
-  /* Too narrow for the names, which take about 610 px with a fresh
-     connection and 640 px with a reused one: each phase is its colour and
-     its time, and its name stays for a screen reader and in its title. */
+  /* Too narrow for the full names, which take about 610 px with a fresh
+     connection and 650 px with a reused or slow one: closer, and a long
+     name shows short, the full one kept for a screen reader and in its
+     title. */
   @container (width < 680px) {
-    .name {
+    .name.long {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -472,9 +494,13 @@
       border: 0;
     }
 
+    .short {
+      display: inline;
+    }
+
     .legend,
     .phases {
-      gap: var(--s-2);
+      column-gap: var(--s-2);
     }
 
     .phases li {
@@ -482,18 +508,12 @@
     }
   }
 
-  /* The version, and then the size, follow the phases: a line parts them. */
+  /* The version, and below 480 px the size, follow the phases: a line
+     parts them. Smaller and closer, and a phase that took no time shows
+     its colour and name, its time kept for a screen reader, so the phases
+     and the version keep to one line down to about 510 to 535 px,
+     depending on the times. */
   @container (width < 560px) {
-    .phases {
-      padding-right: var(--s-2);
-      box-shadow: inset -1px 0 0 var(--line);
-    }
-  }
-
-  /* With the size to fit as well, down to the 400 px of the narrowest
-     pane: smaller and closer, and a phase that took no time shows only
-     its colour, its time kept like its name. */
-  @container (width < 480px) {
     .legend,
     .legend .fact {
       font-size: 11px;
@@ -501,11 +521,12 @@
 
     .legend,
     .phases {
-      gap: 6px;
+      column-gap: 6px;
     }
 
     .phases {
       padding-right: 6px;
+      box-shadow: inset -1px 0 0 var(--line);
     }
 
     .phases li {

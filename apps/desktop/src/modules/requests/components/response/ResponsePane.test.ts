@@ -90,6 +90,37 @@ async function renderDone(response: ResponseInfo): Promise<{
   return { resize: observer.resize, pane, id, unmount };
 }
 
+/** The declarations of the toolbar's top-level rule for `selector`. */
+function toolbarRule(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (
+    new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`).exec(toolbarSource)?.[1] ?? ""
+  );
+}
+
+/** The rules inside the toolbar's `@container` blocks, with their query. */
+function containerRules(): { query: string; selector: string; body: string }[] {
+  const rules: { query: string; selector: string; body: string }[] = [];
+  for (const block of toolbarSource.matchAll(/@container ([^{]+)\{/g)) {
+    const start = block.index + block[0].length;
+    let depth = 1;
+    let end = start;
+    while (depth > 0 && end < toolbarSource.length) {
+      if (toolbarSource[end] === "{") depth++;
+      else if (toolbarSource[end] === "}") depth--;
+      end++;
+    }
+    const inner = toolbarSource.slice(start, end - 1);
+    for (const rule of inner.matchAll(/([^{}]+)\{([^}]*)\}/g))
+      rules.push({
+        query: (block[1] ?? "").trim(),
+        selector: (rule[1] ?? "").trim(),
+        body: rule[2] ?? "",
+      });
+  }
+  return rules;
+}
+
 /** Whether the response pane follows the editor in the page. */
 function responseIsBelow(): boolean {
   return (
@@ -220,13 +251,60 @@ test("a_narrow_legend_keeps_every_name_for_assistive_tech", async () => {
   expect(items.map((item) => item.querySelector(".name")?.textContent)).toEqual(
     ["DNS", "Connect", "TLS", "Waiting for server", "Download"],
   );
-  // Short of room, the names leave the screen but not the page.
-  const compact =
-    /@container \(width < \d+px\) \{[^@]*?\.name \{([^}]*)\}/.exec(
-      toolbarSource,
-    )?.[1] ?? "";
-  expect(compact).toContain("clip-path: inset(50%)");
-  expect(compact).not.toContain("display: none");
+  // Short of room, a long name gives its place on screen to a short one:
+  // the long one stays in the page, and the short one is not read.
+  const short = items[3]?.querySelector(".short");
+  expect(short).toHaveAttribute("aria-hidden", "true");
+  const hidden = containerRules().filter((r) => r.selector === ".name.long");
+  expect(hidden).toHaveLength(1);
+  expect(hidden[0]?.body).toContain("clip-path: inset(50%)");
+  expect(hidden[0]?.body).not.toContain("display: none");
+});
+
+test("a_narrow_legend_still_shows_every_name", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 4,
+        connectMs: 12,
+        tlsMs: 18,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 148,
+        reused: false,
+      },
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  const items = within(
+    screen.getByRole("list", { name: "Timing" }),
+  ).getAllByRole("listitem");
+  // What each phase shows where the full names do not fit.
+  expect(
+    items.map(
+      (item) =>
+        item.querySelector(".short")?.getAttribute("data-short") ??
+        item.querySelector(".name")?.textContent,
+    ),
+  ).toEqual(["DNS", "Connect", "TLS", "Wait", "Download"]);
+  const rules = containerRules();
+  // No width takes a name off the screen without a short one in its place.
+  for (const rule of rules)
+    expect(rule.selector.split(/,\s*/)).not.toContain(".name");
+  const long = rules.find((r) => r.selector === ".name.long");
+  expect(
+    rules.some(
+      (r) =>
+        r.query === long?.query &&
+        r.selector === ".short" &&
+        r.body.includes("display: inline;"),
+    ),
+  ).toBe(true);
+  // Where even the short names do not fit, the phases wrap to a second
+  // line rather than scroll out of sight.
+  const phases = toolbarRule(".phases");
+  expect(phases).toContain("flex-wrap: wrap;");
+  expect(phases).not.toContain("overflow-x: auto;");
 });
 
 test("the_legend_ends_with_size_and_version", async () => {
@@ -725,14 +803,6 @@ test("the_previous_response_is_labelled_while_a_warning_shows", async () => {
     expect(within(bar).queryByText("Previous response")).toBeNull(),
   );
 });
-
-/** The declarations of the toolbar's top-level rule for `selector`. */
-function toolbarRule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return (
-    new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`).exec(toolbarSource)?.[1] ?? ""
-  );
-}
 
 test("previous_response_gives_way_before_the_actions", async () => {
   fakeRequestsIpc({
