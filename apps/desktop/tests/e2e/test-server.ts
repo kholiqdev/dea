@@ -48,9 +48,16 @@ export const SHIPMENT_XML =
   '<event code="departed_hub"><at>2026-11-03T08:40:00Z</at></event>' +
   "</events></shipment>";
 
-/** A page that would reach the server again if its script or image ran. */
-export const HIT_HTML =
-  "<p>hi</p><script>fetch('/hit')</script><img src=\"/hit-img\">";
+/**
+ * A page that reaches the server at `origin` (`http://127.0.0.1:<port>`)
+ * again if its script runs or its image loads.
+ */
+export function hitHtml(origin: string): string {
+  return (
+    `<p>hi</p><script>fetch('${origin}/hit')</script>` +
+    `<img src="${origin}/hit-img">`
+  );
+}
 
 const PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -178,7 +185,7 @@ function route(
         "Content-Type": "application/xml",
       });
     case "/html":
-      return reply(res, 200, HIT_HTML, {
+      return reply(res, 200, hitHtml(url.origin), {
         "Content-Type": "text/html; charset=utf-8",
       });
     case "/image.png":
@@ -257,7 +264,9 @@ export async function startTestServer(): Promise<TestServer> {
   const received: Received[] = [];
   const aborted = new Map<string, number>();
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    // The origin the client asked for, so a page can point back here.
+    const host = req.headers.host ?? `127.0.0.1:${req.socket.localPort}`;
+    const url = new URL(req.url ?? "/", `http://${host}`);
     const record: Received = {
       method: req.method ?? "",
       path: url.pathname,
