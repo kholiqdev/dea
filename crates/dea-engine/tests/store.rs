@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dea_engine::store::{
-    Appearance, MAX_CLOSED_TABS, ResponseLayout, Security, Settings, SidebarState, Store,
-    StoreError, TabEnvironment, TabState, ThemePreference, UiState,
+    Appearance, MAX_CLOSED_TABS, ResponseLayout, ResponseSplit, Security, Settings, SidebarState,
+    Store, StoreError, TabEnvironment, TabState, ThemePreference, UiState,
 };
 use dea_http::{CookieJar, StoredCookie};
 use dea_vault::{AutoLock, Policy};
@@ -342,6 +342,60 @@ fn settings_without_a_response_layout_read_as_right() {
         serde_json::from_str(r#"{"version":1,"requests":{"autosave":true}}"#).unwrap();
     assert!(settings.requests.autosave);
     assert_eq!(settings.requests.response_layout, ResponseLayout::Right);
+}
+
+#[test]
+fn an_out_of_range_split_reads_as_the_default() {
+    let settings: Settings =
+        serde_json::from_str(r#"{"requests":{"responseSplit":{"right":5,"below":95}}}"#).unwrap();
+    assert_eq!(
+        settings.requests.response_split,
+        ResponseSplit {
+            right: 44,
+            below: 40
+        }
+    );
+    let mixed: Settings =
+        serde_json::from_str(r#"{"requests":{"responseSplit":{"right":5,"below":62}}}"#).unwrap();
+    assert_eq!(
+        mixed.requests.response_split,
+        ResponseSplit {
+            right: 44,
+            below: 62
+        }
+    );
+}
+
+#[test]
+fn settings_without_a_split_read_the_defaults() {
+    let settings: Settings =
+        serde_json::from_str(r#"{"version":1,"requests":{"autosave":true}}"#).unwrap();
+    assert_eq!(
+        settings.requests.response_split,
+        ResponseSplit {
+            right: 44,
+            below: 40
+        }
+    );
+}
+
+#[test]
+fn a_split_survives_a_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path());
+    let mut settings = Settings::default();
+    settings.requests.response_split = ResponseSplit {
+        right: 30,
+        below: 62,
+    };
+    store.save_settings(settings).unwrap();
+    assert_eq!(
+        store.load_settings().requests.response_split,
+        ResponseSplit {
+            right: 30,
+            below: 62
+        }
+    );
 }
 
 #[test]

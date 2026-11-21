@@ -92,6 +92,55 @@ pub struct RequestSettings {
     pub autosave: bool,
     /// Where the response panel sits next to the request.
     pub response_layout: ResponseLayout,
+    /// How much of the request/response split the request panel takes.
+    pub response_split: ResponseSplit,
+}
+
+/// Lowest and highest percent the request panel may take.
+pub const SPLIT_RANGE: RangeInclusive<u8> = 20..=80;
+
+/// Percent of the split the request panel takes, for each response position.
+/// A value outside [`SPLIT_RANGE`] reads as the default of its own field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub struct ResponseSplit {
+    /// With the response beside the request.
+    #[serde(deserialize_with = "split_right")]
+    pub right: u8,
+    /// With the response under the request.
+    #[serde(deserialize_with = "split_below")]
+    pub below: u8,
+}
+
+impl Default for ResponseSplit {
+    fn default() -> Self {
+        Self {
+            right: 44,
+            below: 40,
+        }
+    }
+}
+
+fn split_right<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    in_range(d, ResponseSplit::default().right)
+}
+
+fn split_below<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    in_range(d, ResponseSplit::default().below)
+}
+
+/// Reads a percent; one outside [`SPLIT_RANGE`], or not a small number, is `default`.
+fn in_range<'de, D: serde::Deserializer<'de>>(d: D, default: u8) -> Result<u8, D::Error> {
+    let value = i64::deserialize(d)?;
+    Ok(u8::try_from(value)
+        .ok()
+        .filter(|v| SPLIT_RANGE.contains(v))
+        .unwrap_or(default))
 }
 
 /// Where the response panel sits.
