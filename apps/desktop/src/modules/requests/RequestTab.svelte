@@ -32,6 +32,7 @@
   import UndefinedWarning from "./components/UndefinedWarning.svelte";
   import { exchangeFor } from "./state/exchange.svelte";
   import { DEFAULT_OPTIONS } from "./state/folders.svelte";
+  import { toggleResponseLayout } from "./state/layout";
   import { saveTab } from "./state/synced-file.svelte";
   import { VariableLookup } from "./state/variables.svelte";
 
@@ -121,14 +122,6 @@
 
   function save(): void {
     draft.save().catch((e: unknown) => shell.toast(errorMessage(e)));
-  }
-
-  function toggleLayout(): void {
-    const responseLayout =
-      settings.requests.responseLayout === "right" ? "below" : "right";
-    settings
-      .update({ requests: { responseLayout } })
-      .catch((e: unknown) => shell.toast(errorMessage(e)));
   }
 
   function close(): void {
@@ -269,7 +262,7 @@
         {exchange}
         layout={settings.requests.responseLayout}
         stacked={narrow.current}
-        ontogglelayout={toggleLayout}
+        ontogglelayout={() => void toggleResponseLayout()}
       />
     </div>
   </div>
