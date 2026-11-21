@@ -17,3 +17,5 @@ export {
   saveFolder,
   saveRequest,
 } from "$lib/ipc/requests";
+export { releaseResponse } from "$lib/ipc/responses";
+export { cancelSend, sendRequest } from "$lib/ipc/send";
