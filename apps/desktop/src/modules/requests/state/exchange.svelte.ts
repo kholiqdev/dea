@@ -46,6 +46,7 @@ export type ExchangeState =
       head: HeadInfo | null;
       received: number;
       text: string;
+      textBytes: number;
       events: SseRow[];
       droppedEvents: number;
     }
@@ -69,6 +70,8 @@ export type ExchangeState =
 
 /** Events kept of a stream; the older ones are dropped. */
 export const MAX_EVENTS = 10_000;
+
+const ENCODER = new TextEncoder();
 
 const PHASES = ["dns", "connect", "tls"] as const;
 
@@ -159,6 +162,7 @@ export class Exchange {
       head: null,
       received: 0,
       text: "",
+      textBytes: 0,
       events: [],
       droppedEvents: 0,
     };
@@ -235,7 +239,10 @@ export class Exchange {
         break;
       case "body":
         s.received = e.received;
-        if (e.text !== null) s.text += e.text;
+        if (e.text !== null) {
+          s.text += e.text;
+          s.textBytes += ENCODER.encode(e.text).length;
+        }
         break;
       case "event":
         s.events.push({ atMs: e.atMs, event: e.event, data: e.data, id: e.id });

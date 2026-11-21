@@ -469,3 +469,23 @@ test("an_endless_stream_keeps_only_the_last_events", async () => {
   await vi.waitFor(() => expect(exchangeFor("t1").state.phase).toBe("done"));
   expect(exchangeFor("t1").state).toMatchObject({ droppedEvents: 5 });
 });
+
+test("text_bytes_count_utf8_not_characters", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    send: {
+      hold: true,
+      events: [
+        { type: "body", received: 6, text: "éé" },
+        { type: "body", received: 9, text: "€" },
+      ],
+    },
+  });
+  const draft = await openDraft("t1", PATH);
+  await startSend(draft);
+  expect(exchangeFor("t1").state).toMatchObject({
+    text: "éé€",
+    textBytes: 7,
+  });
+  ipc.finishSends();
+});

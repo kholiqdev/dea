@@ -5,12 +5,21 @@
 <script lang="ts">
   import { formatBytes } from "../../lib/format";
 
-  let { text, received }: { text: string; received: number } = $props();
+  let {
+    text,
+    textBytes,
+    received,
+  }: {
+    text: string;
+    /** The bytes of `text`, which count against `received`. */
+    textBytes: number;
+    received: number;
+  } = $props();
 </script>
 
 <div class="streaming">
   <p class="caption">
-    Receiving… {formatBytes(received)}{received > text.length
+    Receiving… {formatBytes(received)}{received > textBytes
       ? " Shown when it is complete."
       : ""}
   </p>
