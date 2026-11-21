@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { flushSync } from "svelte";
 import { expect, test } from "vitest";
@@ -114,4 +114,34 @@ test("queued_confirmations_show_one_at_a_time", async () => {
     [1, "cancel"],
     [2, "cancel"],
   ]);
+});
+
+test("a_withdrawn_confirmation_leaves_the_queue", async () => {
+  const answers = fakeSendConfirm(post);
+  render(SendToProduction, { confirmations: sendConfirmations });
+  emitSendConfirm({ ...post, id: 2, url: "https://api.test/second" });
+  await screen.findByRole("dialog");
+  // The shown one is withdrawn: its dialog goes, the next one comes up.
+  emitSendConfirmWithdrawn(1);
+  expect(await screen.findByText("https://api.test/second")).toBeVisible();
+  emitSendConfirmWithdrawn(2);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(answers).toEqual([]);
+});
+
+test("an_unknown_withdrawn_id_leaves_the_current_one_showing", async () => {
+  fakeSendConfirm(post);
+  render(SendToProduction, { confirmations: sendConfirmations });
+  await screen.findByRole("dialog");
+  emitSendConfirmWithdrawn(99);
+  flushSync();
+  expect(screen.getByRole("dialog")).toHaveTextContent("/v1/x");
+});
+
+test("focus_stays_on_cancel_when_the_checkbox_is_offered", async () => {
+  const answers = fakeSendConfirm({ ...post, method: "GET", canSkip: true });
+  render(SendToProduction, { confirmations: sendConfirmations });
+  expect(await screen.findByRole("button", { name: /Cancel/ })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  expect(answers).toEqual([[1, "cancel"]]);
 });
