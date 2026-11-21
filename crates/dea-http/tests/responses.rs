@@ -171,7 +171,9 @@ async fn the_limit_applies_to_a_spilled_body_too() {
 async fn head_event_comes_before_data() {
     let server = TestServer::start(Tls::None).await;
     let client = Client::new(ClientConfig::default()).unwrap();
-    let (_, events, _) = send_recording(&client, get(&server.url("/drip/3/10"))).await;
+    let (_, mut events, _) = send_recording(&client, get(&server.url("/drip/3/10"))).await;
+    // The connection phases come first; the head follows them.
+    events.retain(|(_, event)| !matches!(event, Event::Phase { .. } | Event::Reused));
     let Some((_, Event::Head { status, headers })) = events.first() else {
         panic!("the first event is not the head: {events:?}");
     };

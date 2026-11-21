@@ -17,7 +17,7 @@ mod sse;
 mod timing;
 mod tls;
 
-pub use client::{Client, ClientConfig, Event, SendContext};
+pub use client::{Client, ClientConfig, Event, Phase, SendContext};
 pub use cookies::{CookieJar, CookieJarError, StoredCookie};
 pub use error::{HttpError, TlsError, TlsErrorKind};
 pub use proxy::{NoProxy, ProxyConfig, ProxySettings, proxy_from_env, system_proxy};

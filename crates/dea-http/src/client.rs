@@ -81,6 +81,45 @@ pub enum Event {
     Data(Bytes),
     /// A complete event of a `text/event-stream` body.
     Sse(SseEvent),
+    /// A phase of opening a new connection is done. Sent for every hop,
+    /// before its `Head`.
+    Phase { phase: Phase, took: Duration },
+    /// The hop goes over a connection taken from the pool. Sent instead
+    /// of the phases.
+    Reused,
+}
+
+/// A phase of opening a connection, in the order they happen. `Tls` is
+/// only reported for `https`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Dns,
+    Connect,
+    Tls,
+}
+
+/// Reports how the connection of a hop came about, from the same marks
+/// that fill its `Timing`.
+fn report_connection(sink: Option<&EventSink<'_>>, marks: &Marks, secure: bool) {
+    let Some(sink) = sink else { return };
+    if marks.reused {
+        sink(Event::Reused);
+        return;
+    }
+    sink(Event::Phase {
+        phase: Phase::Dns,
+        took: marks.resolved - marks.start,
+    });
+    sink(Event::Phase {
+        phase: Phase::Connect,
+        took: marks.connected - marks.resolved,
+    });
+    if secure {
+        sink(Event::Phase {
+            phase: Phase::Tls,
+            took: marks.secured - marks.connected,
+        });
+    }
 }
 
 impl<'a> SendContext<'a> {
@@ -93,7 +132,7 @@ impl<'a> SendContext<'a> {
     }
 
     /// Calls `sink` for every event of the response. A hop that is
-    /// followed as a redirect sends none.
+    /// followed as a redirect sends only its connection events.
     #[must_use]
     pub fn events(mut self, sink: &'a EventSink<'a>) -> Self {
         self.events = Some(sink);
@@ -384,6 +423,7 @@ impl Client {
 
         if let Some(connection) = self.inner.pool.checkout(&key) {
             let marks = Marks::reused(Instant::now());
+            report_connection(run.events, &marks, false);
             let attempt = Attempt {
                 prepared: &prepared,
                 key: &key,
@@ -401,6 +441,7 @@ impl Client {
 
         let (connection, marks) =
             open(request, proxy.as_ref(), head_deadline, &self.inner.tls).await?;
+        report_connection(run.events, &marks, request.url.scheme() == "https");
         if let Some(shared) = connection.share() {
             self.inner.pool.checkin(key.clone(), shared);
         }
