@@ -19,7 +19,6 @@ use dea_engine::vault::{
 use dea_engine::{SendAnswer, SendConfirmation, VaultProvider};
 use dea_project::Project;
 use serde::Serialize;
-use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::error::IpcError;
@@ -419,7 +418,9 @@ impl UiPrompter {
         self.dismiss(gone);
     }
 
-    /// Cancels every prompt of `window`, which has closed.
+    /// Cancels every prompt of `window`, which has closed or started a new
+    /// page: a reload drops the dialog and its listener without closing the
+    /// window.
     pub fn cancel_window(&self, window: &str) {
         let gone: Vec<(u64, Waiting)> = guard(&self.waiting)
             .extract_if(|_, waiting| waiting.window == window)
@@ -437,15 +438,6 @@ impl UiPrompter {
             if let Prompt::Send(_) = waiting.prompt {
                 self.windows.withdraw(&waiting.window, id);
             }
-        }
-    }
-
-    /// A page of `window` is loading. A reload drops the dialog and its
-    /// listener without closing the window, so its prompts are cancelled
-    /// when the new page starts.
-    pub fn page_load(&self, window: &str, event: PageLoadEvent) {
-        if event == PageLoadEvent::Started {
-            self.cancel_window(window);
         }
     }
 
@@ -725,25 +717,6 @@ mod tests {
     }
 
     #[test]
-    fn a_reloaded_window_cancels_its_prompt() {
-        let (prompter, shown) = windows_with(&["project-1"], None);
-
-        // A page that finished loading keeps its dialog.
-        let first = ask_from(&prompter, "project-1", None);
-        let (_, event) = shown.recv_timeout(WAIT).unwrap();
-        prompter.page_load("project-1", PageLoadEvent::Finished);
-        prompter.answer(event.id, Some("correct horse".into()));
-        assert!(first.got_password());
-
-        // A reload drops the dialog and its listener without closing the
-        // window, so the prompt is cancelled when the new page starts.
-        let second = ask_from(&prompter, "project-1", None);
-        shown.recv_timeout(WAIT).unwrap();
-        prompter.page_load("project-1", PageLoadEvent::Started);
-        assert!(!second.got_password());
-    }
-
-    #[test]
     fn a_new_page_gets_the_prompts_still_waiting_for_its_window() {
         let (prompter, shown) = windows_with(&["main", "project-1"], None);
         let in_project = ask_from(&prompter, "project-1", None);
@@ -906,12 +879,6 @@ mod tests {
         let (_, event) = confirms.recv_timeout(WAIT).unwrap();
         prompter.cancel_window("project-1");
         assert_eq!(closed.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
-        withdrawn_from("project-1", event.id);
-
-        let reloaded = confirm_from(&prompter, "project-1", &send);
-        let (_, event) = confirms.recv_timeout(WAIT).unwrap();
-        prompter.page_load("project-1", PageLoadEvent::Started);
-        assert_eq!(reloaded.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
         withdrawn_from("project-1", event.id);
 
         // A password does not answer whether to send.

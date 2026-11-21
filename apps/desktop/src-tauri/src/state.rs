@@ -12,6 +12,7 @@ use dea_engine::requests::{
 };
 use dea_engine::store::Store;
 use dea_project::{DeletedItem, LoadedRequests, ProjectChange, ProjectError, ProjectWatcher};
+use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::session::Sessions;
@@ -167,14 +168,24 @@ impl AppState {
             .retain(|_, (owner, _, _, _)| owner != window);
     }
 
-    /// Ends what `window` still waits on as it closes: the prompts shown in
-    /// it, its sends, and the responses its tabs kept.
+    /// Ends what `window` still waits on as it closes or loads a new page:
+    /// the prompts shown in it, its sends, and the responses its tabs kept.
     pub fn window_closed(&self, window: &str) {
         let prefix = format!("{window}/");
         // Sends first, so one woken from its prompt ends as cancelled.
         self.sends.cancel_prefix(&prefix);
         self.vault.prompter().cancel_window(window);
         self.responses.release_prefix(&prefix);
+    }
+
+    /// A page of `window` is loading. Opening or closing a project, or a
+    /// reload, starts a new page in the same window: the old page's dialogs
+    /// and listeners are gone, so what it waited on ends as if the window
+    /// closed. The window keeps its project.
+    pub fn page_load(&self, window: &str, event: PageLoadEvent) {
+        if event == PageLoadEvent::Started {
+            self.window_closed(window);
+        }
     }
 
     /// Keeps `item`, deleted by `window` at `now` from the project at
@@ -318,10 +329,10 @@ pub(crate) fn take_line(file: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dea_engine::{Prompter, SendAnswer};
+    use dea_engine::{Prompter, ResponseError, SendAnswer};
 
     use super::*;
-    use crate::testing::{RecordingWindows, WAIT, confirmation, on_thread, state_with};
+    use crate::testing::{RecordingWindows, WAIT, confirmation, kept, on_thread, state_with};
 
     #[test]
     fn a_picked_folder_is_used_once() {
@@ -405,5 +416,46 @@ mod tests {
             .prompter()
             .answer_send(waiting.id, SendAnswer::Send);
         assert_eq!(staying_asked.recv_timeout(WAIT).unwrap(), SendAnswer::Send);
+    }
+
+    #[test]
+    fn a_new_page_ends_what_the_old_one_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let (windows, _shown, confirms, _) = RecordingWindows::new(&["main", "project-1"], None);
+        let state = state_with(dir.path(), windows);
+        let reloading = state.sends.start("project-1/t1");
+        let asking = state.sends.start("project-1/t2");
+        let asked = {
+            let state = Arc::clone(&state);
+            on_thread(move || {
+                let prompter = state.vault.prompter();
+                prompter.sending("project-1", &asking, || {
+                    prompter.confirm_send(&confirmation())
+                })
+            })
+        };
+        confirms.recv_timeout(WAIT).unwrap();
+        let staying = state.sends.start("main/t1");
+        kept(&state.responses, "project-1/t1", "[1]");
+        kept(&state.responses, "main/t1", "[2]");
+
+        // A page that finished loading keeps all of it.
+        state.page_load("project-1", PageLoadEvent::Finished);
+        assert!(!reloading.is_cancelled());
+        assert!(state.responses.bytes("project-1/t1").is_ok());
+
+        // Opening or closing a project, or a reload, loads a new page in
+        // the same window: the old page's sends and responses end with it.
+        state.page_load("project-1", PageLoadEvent::Started);
+        assert!(reloading.is_cancelled());
+        assert_eq!(asked.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        assert!(matches!(
+            state.responses.bytes("project-1/t1"),
+            Err(ResponseError::NotFound)
+        ));
+
+        // The other window goes on.
+        assert!(!staying.is_cancelled());
+        assert!(state.responses.bytes("main/t1").is_ok());
     }
 }

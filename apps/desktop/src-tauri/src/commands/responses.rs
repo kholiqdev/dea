@@ -318,36 +318,12 @@ pub async fn delete_domain_cookies(
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
-    use dea_engine::{ResponseError, Sent};
-    use dea_http::{HttpVersion, ResponseBody, Timing};
+    use dea_engine::ResponseError;
     use dea_project::create_project;
 
     use super::*;
     use crate::state::take_line;
-    use crate::testing::{RecordingWindows, state_with};
-
-    fn kept(store: &ResponseStore, key: &str, body: &str) {
-        store.insert(
-            key,
-            Sent {
-                response: dea_http::Response {
-                    version: HttpVersion::Http11,
-                    status: 200,
-                    reason: "OK".into(),
-                    headers: vec![("content-type".into(), "application/json".into())],
-                    body: ResponseBody::Memory(Bytes::from(body.to_string())),
-                    truncated: false,
-                    content_encoding: None,
-                    timing: Timing::default(),
-                    url: "http://example.test/".into(),
-                    redirects: Vec::new(),
-                },
-                url: "http://example.test/".into(),
-                cookies_not_saved: None,
-            },
-        );
-    }
+    use crate::testing::{RecordingWindows, kept, state_with};
 
     fn cookie(name: &str, path: &str) -> CookieInfo {
         CookieInfo {
