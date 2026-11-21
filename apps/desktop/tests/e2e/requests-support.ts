@@ -120,6 +120,30 @@ export async function openRequest(
   await showRequest(request);
 }
 
+/**
+ * Puts the text cursor at the end of the URL field. Its variable chips sit
+ * in a layer over the input and take a pointer click themselves (they focus
+ * the input too), so WebDriver would call a click on the input intercepted.
+ */
+export async function focusUrl(): Promise<void> {
+  const selector = 'input[aria-label="URL"]';
+  await $(selector).waitForDisplayed();
+  await browser.execute((s) => {
+    const input = document.querySelector<HTMLInputElement>(s);
+    if (!input) throw new Error(`no ${s}`);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, selector);
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (s) => document.activeElement === document.querySelector(s),
+        selector,
+      ),
+    { timeoutMsg: "the URL field did not take focus" },
+  );
+}
+
 /** Send, which reads Cancel while the request is on its way. */
 export function sendButton() {
   return $('//button[@aria-label="Save request"]/preceding-sibling::button[1]');
