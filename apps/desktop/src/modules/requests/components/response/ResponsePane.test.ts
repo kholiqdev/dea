@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import {
   afterEach,
@@ -10,9 +10,11 @@ import {
 } from "vitest";
 import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
+import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
 import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
 import type { FakeProject } from "../../fake-project.svelte";
 import { manifest } from "../../index";
+import RequestTab from "../../RequestTab.svelte";
 import {
   openRequestTab,
   setUpRequestTabs,
@@ -25,6 +27,7 @@ import {
   responseInfo,
   type RequestsIpc,
 } from "../../test-support";
+import { sessionView } from "../../state/session-view.svelte";
 
 const PATH = "requests/shipments/list.yaml";
 const file: RequestFile = {
@@ -44,6 +47,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  sessionView.timingLegend = false;
 });
 
 const send = async () =>
@@ -59,6 +63,29 @@ async function openAtWidth(width: number): Promise<void> {
   openRequestTab(PATH);
   await screen.findByRole("region", { name: "Response" });
   observer.resize(document.querySelector(".split")!, width, 700);
+}
+
+/**
+ * Sends the request and waits for `response`. `resize` gives an element a
+ * size, as for `pane`, the response pane.
+ */
+async function renderDone(response: ResponseInfo): Promise<{
+  resize: (element: Element, width: number, height: number) => void;
+  pane: HTMLElement;
+  id: string;
+  unmount: () => void;
+}> {
+  const observer = fakeResizeObserver();
+  onTestFinished(observer.restore);
+  fakeRequestsIpc({
+    files,
+    send: { outcome: { type: "response", response } },
+  });
+  const { id, unmount } = openRequestTab(PATH);
+  await send();
+  await screen.findByRole("button", { name: /^Timing,/ });
+  const pane = screen.getByRole("region", { name: "Response" });
+  return { resize: observer.resize, pane, id, unmount };
 }
 
 /** Whether the response pane follows the editor in the page. */
@@ -95,13 +122,140 @@ test("done_toolbar_shows_status_timing_size_and_version", async () => {
   await send();
   const bar = await screen.findByRole("toolbar", { name: "Response" });
   expect(bar).toHaveAttribute("data-tone", "warning");
-  expect(within(bar).getByText("404 Not Found")).toBeInTheDocument();
+  expect(within(bar).getByText("404")).toBeInTheDocument();
+  expect(within(bar).getByText("Not Found")).toBeInTheDocument();
   expect(within(bar).getByText("148 ms")).toBeInTheDocument();
   expect(within(bar).getByText("1.5 KB")).toBeInTheDocument();
   expect(within(bar).getByText("HTTP/1.1")).toBeInTheDocument();
   expect(
-    screen.getByRole("img", { name: /^Timing, 148 ms total/ }),
+    within(bar).getByRole("button", { name: /^Timing, 148 ms total/ }),
   ).toBeInTheDocument();
+});
+
+test("the_status_code_and_reason_are_separate", async () => {
+  await renderDone(responseInfo());
+  const bar = screen.getByRole("toolbar", { name: "Response" });
+  expect(bar.querySelector(".code")?.textContent).toBe("200");
+  expect(bar.querySelector(".reason")?.textContent).toBe("OK");
+});
+
+test("the_timing_bar_opens_its_legend", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 4,
+        connectMs: 12,
+        tlsMs: 18,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 148,
+        reused: false,
+      },
+    }),
+  );
+  const bar = screen.getByRole("button", { name: /^Timing, 148 ms total/ });
+  expect(bar).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("Waiting for server")).toBeNull();
+  await userEvent.click(bar);
+  expect(bar).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("Waiting for server")).toBeInTheDocument();
+});
+
+test("the_legend_lists_every_phase_and_a_reused_connection", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 0,
+        connectMs: 0,
+        tlsMs: 0,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 114,
+        reused: true,
+      },
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  const legend = within(screen.getByRole("list", { name: "Timing" }));
+  expect(
+    legend
+      .getAllByRole("listitem")
+      .map((item) => item.textContent?.replace(/\s+/g, " ").trim()),
+  ).toEqual([
+    "DNS 0 ms",
+    "Connect 0 ms",
+    "TLS 0 ms reused",
+    "Waiting for server 96 ms",
+    "Download 18 ms",
+  ]);
+});
+
+test("the_legend_ends_with_size_and_version", async () => {
+  await renderDone(responseInfo({ size: 612, version: "HTTP/2" }));
+  const bar = screen.getByRole("button", { name: /^Timing,/ });
+  await userEvent.click(bar);
+  const legend = document.getElementById(bar.getAttribute("aria-controls")!);
+  expect(
+    [...legend!.children].slice(-2).map((child) => child.textContent),
+  ).toEqual(["612 B", "HTTP/2"]);
+});
+
+test("the_legend_choice_is_kept_for_the_session", async () => {
+  const { id, unmount } = await renderDone(responseInfo());
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  unmount();
+  expect(screen.queryByText("Waiting for server")).toBeNull();
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  expect(await screen.findByText("Waiting for server")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Timing,/ })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+});
+
+test("the_environment_pill_always_shows", async () => {
+  fakeRequestsIpc({ files });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("button", { name: /^Timing,/ });
+  const bar = screen.getByRole("toolbar", { name: "Response" });
+  expect(within(bar).getByText("staging")).toBeInTheDocument();
+  expect(within(bar).queryByText(/^Sent in/)).toBeNull();
+});
+
+test("sending_names_its_environment", async () => {
+  fakeRequestsIpc({ files, send: { hold: true } });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  expect(within(bar).getByText("Sending")).toBeInTheDocument();
+  expect(within(bar).getByText("staging")).toBeInTheDocument();
+});
+
+/**
+ * Whether `element` is in an inert part of the page. jsdom knows nothing of
+ * `inert`: the property Svelte sets on the element is all there is to see.
+ */
+function isInert(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement)) return false;
+  return element.inert || isInert(element.parentElement);
+}
+
+test("the_second_row_stays_while_sending", async () => {
+  const ipc = fakeRequestsIpc({ files });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("button", { name: /^Timing,/ });
+  const sections = () =>
+    screen.getByRole("tablist", { name: "Response sections" });
+  expect(isInert(sections())).toBe(false);
+  ipc.send = { ...ipc.send, hold: true };
+  await send();
+  const pane = screen.getByRole("region", { name: "Response" });
+  await waitFor(() => expect(pane).toHaveAttribute("aria-busy", "true"));
+  expect(isInert(sections())).toBe(true);
 });
 
 test("sent_in_shows_only_when_the_environment_changed", async () => {

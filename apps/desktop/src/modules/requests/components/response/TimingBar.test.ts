@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/svelte";
-import { expect, test } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, test } from "vitest";
 import type { TimingInfo } from "$lib/ipc/bindings/TimingInfo";
+import { sessionView } from "../../state/session-view.svelte";
 import TimingBar from "./TimingBar.svelte";
 
 const timing: TimingInfo = {
@@ -13,6 +15,10 @@ const timing: TimingInfo = {
   reused: false,
 };
 
+afterEach(() => {
+  sessionView.timingLegend = false;
+});
+
 /** The share of the bar a segment takes, from its inline style. */
 function segmentWidth(bar: HTMLElement, name: string): number {
   const segment = bar.querySelector<HTMLElement>(`[data-segment="${name}"]`);
@@ -21,17 +27,16 @@ function segmentWidth(bar: HTMLElement, name: string): number {
 }
 
 test("timing_bar_widths_follow_the_phases", () => {
-  render(TimingBar, { timing });
-  const bar = screen.getByRole("img", {
+  render(TimingBar, { timing, controls: "timing-legend" });
+  const bar = screen.getByRole("button", {
     name: "Timing, 148 ms total, DNS 4, Connect 12, TLS 18, Waiting for server 96, Download 18",
   });
   expect(segmentWidth(bar, "waiting")).toBeCloseTo(96 / 148, 2);
   expect(segmentWidth(bar, "dns")).toBeCloseTo(4 / 148, 2);
   expect(segmentWidth(bar, "download")).toBeCloseTo(18 / 148, 2);
-  expect(screen.getByText("96 ms")).toBeInTheDocument();
 });
 
-test("reused_connections_show_zero_and_reused", () => {
+test("reused_connections_say_so_and_take_no_width", () => {
   render(TimingBar, {
     timing: {
       ...timing,
@@ -41,11 +46,23 @@ test("reused_connections_show_zero_and_reused", () => {
       totalMs: 114,
       reused: true,
     },
+    controls: "timing-legend",
   });
-  const bar = screen.getByRole("img", {
+  const bar = screen.getByRole("button", {
     name: "Timing, 114 ms total, DNS 0, Connect 0, TLS 0, Waiting for server 96, Download 18, connection reused",
   });
   expect(segmentWidth(bar, "dns")).toBe(0);
-  expect(screen.getAllByText("0 ms")).toHaveLength(3);
-  expect(screen.getAllByText("reused")).toHaveLength(1);
+});
+
+test("the_bar_opens_and_closes_the_legend_for_the_session", async () => {
+  render(TimingBar, { timing, controls: "timing-legend" });
+  const bar = screen.getByRole("button", { name: /^Timing,/ });
+  expect(bar).toHaveAttribute("aria-controls", "timing-legend");
+  expect(bar).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(bar);
+  expect(sessionView.timingLegend).toBe(true);
+  expect(bar).toHaveAttribute("aria-expanded", "true");
+  await userEvent.click(bar);
+  expect(sessionView.timingLegend).toBe(false);
+  expect(bar).toHaveAttribute("aria-expanded", "false");
 });

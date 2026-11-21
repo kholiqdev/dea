@@ -1,24 +1,28 @@
 <!--
-  What came back of a tab's send (F1-REQ-08): the toolbar and timing of a
-  response, the progress of a request on its way, or why it ended without
-  one. Its body, headers and cookies are the sections below.
+  What came back of a tab's send (F1-REQ-08): the two rows of a response's
+  header, the progress of a request on its way, or why it ended without
+  one. The first row is the toolbar; the second has the sections (body,
+  headers, cookies) and, on the body, its view and JSONPath filter.
 -->
 <script lang="ts">
+  import ListFilter from "@lucide/svelte/icons/list-filter";
   import { projectApi } from "$app/contributions/project-api";
   import { chordParts, currentPlatform, parseChord } from "$lib/keyboard/chord";
   import { tick } from "svelte";
+  import { watchWidth } from "../../lib/columns";
   import { formatSeconds } from "../../lib/format";
   import type { Exchange } from "../../state/exchange.svelte";
+  import { BodyControls } from "./body-controls.svelte";
+  import type { BodyView } from "./body-view";
   import FailureView from "./FailureView.svelte";
   import HeadersTable from "./HeadersTable.svelte";
+  import JsonFilter from "./JsonFilter.svelte";
   import ReceivedCookies from "./ReceivedCookies.svelte";
-  import type { BodyView } from "./body-view";
   import ResponseBody from "./ResponseBody.svelte";
   import ResponseToolbar from "./ResponseToolbar.svelte";
   import SentInPill from "./SentInPill.svelte";
   import EventList from "./EventList.svelte";
   import SendingView from "./SendingView.svelte";
-  import TimingBar from "./TimingBar.svelte";
 
   let {
     tabId,
@@ -42,12 +46,22 @@
     { id: "cookies", label: "Cookies" },
   ] as const;
   type Section = (typeof SECTIONS)[number]["id"];
+  const LABELS: Record<BodyView, string> = {
+    pretty: "Pretty",
+    raw: "Raw",
+    preview: "Preview",
+  };
+  /** The pane width from which the filter fits in the second row. */
+  const FILTER_INLINE_FROM = 700;
 
   const uid = $props.id();
   let section = $state<Section>("body");
   let tablist = $state<HTMLElement>();
-  // The view chosen for a response lasts while that response stays.
-  let chosen = $state<{ response: object; view: BodyView } | null>(null);
+  let radios = $state<HTMLElement>();
+  let filterRow = $state<HTMLElement>();
+  // Not measured yet, as in tests, the pane counts as wide.
+  let width = $state(0);
+  const wide = $derived(width === 0 || width >= FILTER_INLINE_FROM);
 
   async function onkeydown(e: KeyboardEvent): Promise<void> {
     const at = SECTIONS.findIndex((s) => s.id === section);
@@ -68,6 +82,44 @@
   const project = projectApi();
   const sendKeys = chordParts(parseChord("Mod+Enter"), currentPlatform());
   const current = $derived(exchange.state);
+  // The view and filter chosen for a response last while it stays.
+  const controls = $derived(
+    current.phase === "done" ? new BodyControls(current.response) : null,
+  );
+
+  async function onviewkeys(e: KeyboardEvent): Promise<void> {
+    if (!controls) return;
+    const views = controls.views;
+    const at = views.indexOf(controls.view);
+    const to: Record<string, number> = {
+      ArrowRight: (at + 1) % views.length,
+      ArrowDown: (at + 1) % views.length,
+      ArrowLeft: (at - 1 + views.length) % views.length,
+      ArrowUp: (at - 1 + views.length) % views.length,
+      Home: 0,
+      End: views.length - 1,
+    };
+    const next = views[to[e.key] ?? -1];
+    if (!next) return;
+    e.preventDefault();
+    controls.view = next;
+    await tick();
+    radios?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }
+
+  async function togglefilter(of: BodyControls): Promise<void> {
+    of.filterOpen = !of.filterOpen;
+    if (!of.filterOpen) return;
+    await tick();
+    filterRow?.querySelector("input")?.focus();
+  }
+
+  /** Follows the pane's width; a pane not laid out keeps the last one. */
+  function measure(pane: HTMLElement): () => void {
+    return watchWidth(pane, (w) => {
+      if (w > 0) width = w;
+    });
+  }
 
   // Seconds go by on the clock `startedAt` was taken from.
   let now = $state(performance.now());
@@ -81,57 +133,26 @@
     current.phase === "sending" ? Math.max(0, now - current.startedAt) : 0,
   );
 
-  // The environment a response was sent in, when the window moved on.
+  // The environment a request was sent in, and whether the window moved on.
   const sentIn = $derived.by(() => {
-    if (current.phase !== "done" && current.phase !== "failed") return null;
+    if (current.phase === "idle" || current.phase === "cancelled") return null;
     const sent = current.environment;
-    if (sent === null || sent === project.environment?.name) return null;
+    if (sent === null) return null;
     const production =
       project.info?.environments.find((e) => e.name === sent)?.production ??
       false;
-    return { name: sent, production };
+    return {
+      name: sent,
+      production,
+      moved: sent !== project.environment?.name,
+    };
   });
 </script>
 
-<section
-  class="pane"
-  aria-label="Response"
-  aria-busy={current.phase === "sending" ? "true" : undefined}
->
-  {#if current.phase === "idle"}
-    <p class="idle">
-      Send the request to see the response here.
-      <span class="keys" aria-hidden="true">
-        {#each sendKeys as key, i (i)}<kbd>{key}</kbd>{/each}
-      </span>
-    </p>
-  {:else if current.phase === "sending"}
-    <ResponseToolbar
-      {tabId}
-      {name}
-      {elapsed}
-      {layout}
-      {stacked}
-      {ontogglelayout}
-    />
-    <SendingView sending={current} {elapsed} />
-  {:else if current.phase === "done"}
-    <ResponseToolbar
-      {tabId}
-      {name}
-      response={current.response}
-      {sentIn}
-      {layout}
-      {stacked}
-      {ontogglelayout}
-    />
-    <div class="timing"><TimingBar timing={current.response.timing} /></div>
-    {@const response = current.response}
-    {@const counts = {
-      body: 0,
-      headers: response.headers.length,
-      cookies: response.cookies.length,
-    }}
+{#snippet sections(counts: Record<Section, number> | null)}
+  <!-- While sending it stays in place, not in use, so the body below does
+       not move when the response comes. -->
+  <div class="row" inert={counts === null}>
     <div
       class="sections"
       role="tablist"
@@ -152,10 +173,103 @@
           onclick={() => (section = item.id)}
         >
           {item.label}
-          {#if counts[item.id]}<span class="count">{counts[item.id]}</span>{/if}
+          {#if counts?.[item.id]}<span class="count">{counts[item.id]}</span
+            >{/if}
         </button>
       {/each}
     </div>
+    {#if controls && section === "body"}
+      {@const body = controls}
+      {#if body.views.length > 1}
+        <div
+          class="views"
+          role="radiogroup"
+          aria-label="Body view"
+          tabindex="-1"
+          bind:this={radios}
+          onkeydown={(e) => void onviewkeys(e)}
+        >
+          {#each body.views as option (option)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={body.view === option}
+              tabindex={body.view === option ? 0 : -1}
+              onclick={() => (body.view = option)}
+            >
+              {LABELS[option]}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if body.filterable && wide}
+        <JsonFilter {tabId} controls={body} inline />
+      {:else if body.filterable}
+        {@const label = body.filterOpen
+          ? "Hide the JSONPath filter"
+          : "Show the JSONPath filter"}
+        <button
+          type="button"
+          class="icon"
+          aria-label={label}
+          title={label}
+          aria-expanded={body.filterOpen}
+          aria-controls="{uid}-filter"
+          onclick={() => void togglefilter(body)}
+        >
+          <ListFilter size={16} strokeWidth={1.5} />
+        </button>
+      {/if}
+    {/if}
+  </div>
+  {#if controls?.filterable && controls.filterOpen && !wide && section === "body"}
+    <div class="filter-row" id="{uid}-filter" bind:this={filterRow}>
+      <JsonFilter {tabId} {controls} />
+    </div>
+  {/if}
+{/snippet}
+
+<section
+  class="pane"
+  aria-label="Response"
+  aria-busy={current.phase === "sending" ? "true" : undefined}
+  {@attach measure}
+>
+  {#if current.phase === "idle"}
+    <p class="idle">
+      Send the request to see the response here.
+      <span class="keys" aria-hidden="true">
+        {#each sendKeys as key, i (i)}<kbd>{key}</kbd>{/each}
+      </span>
+    </p>
+  {:else if current.phase === "sending"}
+    <ResponseToolbar
+      {tabId}
+      {name}
+      {elapsed}
+      environment={sentIn}
+      {layout}
+      {stacked}
+      {ontogglelayout}
+    />
+    {@render sections(null)}
+    <SendingView sending={current} {elapsed} />
+  {:else if current.phase === "done"}
+    {@const response = current.response}
+    <ResponseToolbar
+      {tabId}
+      {name}
+      {response}
+      environment={sentIn}
+      {layout}
+      {stacked}
+      {ontogglelayout}
+    />
+    {@render sections({
+      body: 0,
+      headers: response.headers.length,
+      cookies: response.cookies.length,
+    })}
     <div
       class="body"
       role="tabpanel"
@@ -169,8 +283,8 @@
         />
       {:else if section === "cookies"}
         <ReceivedCookies cookies={response.cookies} />
-      {:else}
-        {#key response}
+      {:else if controls}
+        {#key controls}
           <ResponseBody
             {tabId}
             {name}
@@ -178,14 +292,13 @@
             events={current.events}
             dropped={current.droppedEvents}
             startedAt={current.startedAt}
-            view={chosen?.response === response ? chosen.view : null}
-            onview={(view: BodyView) => (chosen = { response, view })}
+            {controls}
           />
         {/key}
       {/if}
     </div>
   {:else if current.phase === "failed"}
-    {#if sentIn}<p class="sent-in"><SentInPill {...sentIn} /></p>{/if}
+    {#if sentIn?.moved}<p class="sent-in"><SentInPill {...sentIn} /></p>{/if}
     <FailureView failure={current.failure} />
   {:else}
     <div class="cancelled">
@@ -244,12 +357,6 @@
     color: var(--text-2);
   }
 
-  .timing {
-    flex: none;
-    padding: var(--s-3) var(--s-4);
-    box-shadow: inset 0 -1px 0 var(--line);
-  }
-
   .body {
     flex: 1;
     min-height: 0;
@@ -258,18 +365,82 @@
     overflow: auto;
   }
 
-  .sections {
-    height: 40px;
+  /* The second row of the header: the sections, then the body's view and
+     filter at the end. */
+  .row {
+    height: 36px;
     flex: none;
     display: flex;
-    gap: var(--s-5);
+    align-items: center;
+    gap: var(--s-3);
     padding: 0 var(--s-4);
     box-shadow: inset 0 -1px 0 var(--line);
-    overflow-x: auto;
   }
 
-  .sections:focus {
+  .sections {
+    align-self: stretch;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: var(--s-5);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .sections:focus,
+  .views:focus {
     outline: none;
+  }
+
+  .views {
+    flex: none;
+    display: inline-flex;
+    padding: 2px;
+    border-radius: var(--r-ctl);
+    background: var(--bg-3);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+
+  .views button {
+    height: 24px;
+    padding: 0 var(--s-3);
+    border: 0;
+    border-radius: var(--r-small);
+    background: none;
+    color: var(--text-2);
+  }
+
+  .views button[aria-checked="true"] {
+    background: var(--bg-hover);
+    color: var(--text-1);
+  }
+
+  .icon {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: var(--r-small);
+    background: none;
+    color: var(--text-2);
+  }
+
+  .icon:hover,
+  .icon[aria-expanded="true"] {
+    background: var(--bg-hover);
+    color: var(--text-1);
+  }
+
+  /* The filter of a narrow pane, in a row of its own under the second. */
+  .filter-row {
+    flex: none;
+    display: flex;
+    padding: var(--s-2) var(--s-4);
+    box-shadow: inset 0 -1px 0 var(--line);
   }
 
   [role="tab"] {
@@ -290,6 +461,15 @@
   [role="tab"][aria-selected="true"] {
     color: var(--text-1);
     box-shadow: inset 0 -2px 0 var(--text-1);
+  }
+
+  /* Not in use while sending. */
+  .row[inert] [role="tab"] {
+    color: var(--text-3);
+  }
+
+  .row[inert] [role="tab"][aria-selected="true"] {
+    box-shadow: inset 0 -2px 0 var(--text-3);
   }
 
   .count {

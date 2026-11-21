@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
 import {
@@ -10,6 +10,7 @@ import {
 import {
   doneExchange,
   fakeRequestsIpc,
+  fakeResizeObserver,
   fakeResponse,
   fakeRows,
   type RequestsIpc,
@@ -50,6 +51,23 @@ async function open(
   await userEvent.click(await screen.findByRole("button", { name: "Send" }));
   await screen.findByRole("tablist", { name: "Response sections" });
   return ipc;
+}
+
+/**
+ * Sends the request and waits for a JSON response. `resize` gives an
+ * element a size, as for `pane`, the response pane.
+ */
+async function renderDone(
+  response: ReturnType<typeof fakeResponse> = {},
+): Promise<{
+  resize: (element: Element, width: number, height: number) => void;
+  pane: HTMLElement;
+}> {
+  const observer = fakeResizeObserver();
+  onTestFinished(observer.restore);
+  await open("json", response);
+  const pane = screen.getByRole("region", { name: "Response" });
+  return { resize: observer.resize, pane };
 }
 
 const views = () =>
@@ -117,17 +135,18 @@ test("html_adds_preview", async () => {
 
 test("image_and_pdf_open_on_preview", async () => {
   await open("image");
-  expect(views()).toEqual([["Preview", "true"]]);
+  // One view leaves nothing to choose.
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
 });
 
 test("pdf_opens_on_preview", async () => {
   await open("pdf");
-  expect(views()).toEqual([["Preview", "true"]]);
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
 });
 
 test("text_is_raw_only", async () => {
   await open("text", { text: { raw: "plain" } });
-  expect(views()).toEqual([["Raw", "true"]]);
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
   expect(
     await screen.findByRole("textbox", { name: "Response body" }),
   ).toHaveTextContent("plain");
@@ -274,4 +293,69 @@ test("a_filter_that_cannot_run_is_not_called_invalid", async () => {
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("The filter could not run: No response here");
   expect(alert).not.toHaveTextContent("Not a valid JSONPath");
+});
+
+test("a_narrow_pane_folds_the_filter_into_a_button", async () => {
+  const { resize, pane } = await renderDone();
+  resize(pane, 620, 600);
+  expect(
+    screen.queryByRole("textbox", { name: "Filter with JSONPath" }),
+  ).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Show the JSONPath filter" }),
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+  ).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Hide the JSONPath filter" }),
+  ).toHaveAttribute("aria-expanded", "true");
+});
+
+test("a_wide_pane_shows_the_filter_inline", async () => {
+  const { resize, pane } = await renderDone();
+  resize(pane, 800, 600);
+  const row = screen.getByRole("tablist", {
+    name: "Response sections",
+  }).parentElement;
+  expect(row).toContainElement(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+  );
+  expect(row).not.toContainElement(
+    within(screen.getByRole("region", { name: "Response" })).getByRole(
+      "tabpanel",
+    ),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Show the JSONPath filter" }),
+  ).toBeNull();
+});
+
+test("a_hidden_filter_keeps_its_path_but_stops_filtering", async () => {
+  const { resize, pane } = await renderDone({
+    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
+    filter: () => ({ text: "[\n  42\n]", count: 1 }),
+  });
+  resize(pane, 620, 600);
+  const body = () => screen.getByRole("textbox", { name: "Response body" });
+  await waitFor(() => expect(body()).toHaveTextContent('"a": 1'));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Show the JSONPath filter" }),
+  );
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+    "$.a",
+  );
+  await waitFor(() => expect(body()).toHaveTextContent("42"));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Hide the JSONPath filter" }),
+  );
+  await waitFor(() => expect(body()).toHaveTextContent('"a": 1'));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Show the JSONPath filter" }),
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+  ).toHaveValue("$.a");
+  await waitFor(() => expect(body()).toHaveTextContent("42"));
 });

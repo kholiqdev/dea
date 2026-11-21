@@ -40,6 +40,7 @@ export type ExchangeState =
   | { phase: "idle" }
   | {
       phase: "sending";
+      environment: string | null;
       startedAt: number;
       host: string | null;
       steps: SendStep[];
@@ -162,6 +163,7 @@ export class Exchange {
     const environment = projectApi().environment?.name ?? null;
     this.state = {
       phase: "sending",
+      environment,
       startedAt: performance.now(),
       host: null,
       steps: [],

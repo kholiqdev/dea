@@ -1,19 +1,17 @@
 <!--
-  The body of a response in the view its kind offers: Pretty and Raw in the
-  read-only editor, a JSONPath over JSON, and a word for what has no text.
+  The body of a response in the view its controls chose: Pretty and Raw in
+  the read-only editor, what a JSONPath selects of JSON, and a word for what
+  has no text. The view and the filter are set in the response header.
 -->
 <script lang="ts">
-  import { tick } from "svelte";
   import type { BodyText } from "$lib/ipc/bindings/BodyText";
-  import type { Filtered } from "$lib/ipc/bindings/Filtered";
   import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
   import { errorMessage } from "$lib/ipc/errors";
   import { responseText } from "$lib/ipc/responses";
   import { formatBytes } from "../../lib/format";
-  import type { BodyView } from "./body-view";
   import type { SseRow } from "../../state/exchange.svelte";
+  import type { BodyControls } from "./body-controls.svelte";
   import EventList from "./EventList.svelte";
-  import JsonFilter from "./JsonFilter.svelte";
   import LargeBody from "./LargeBody.svelte";
   import Preview from "./Preview.svelte";
 
@@ -24,8 +22,7 @@
     events,
     dropped,
     startedAt,
-    view,
-    onview,
+    controls,
   }: {
     tabId: string;
     /** The request's name, which a saved body is named after. */
@@ -35,16 +32,10 @@
     events: SseRow[];
     dropped: number;
     startedAt: number;
-    /** The view chosen for this response; `null` for the first of its kind. */
-    view: BodyView | null;
-    onview: (view: BodyView) => void;
+    /** The view and the filter of this response. */
+    controls: BodyControls;
   } = $props();
 
-  const LABELS: Record<BodyView, string> = {
-    pretty: "Pretty",
-    raw: "Raw",
-    preview: "Preview",
-  };
   const KINDS: Record<string, string> = {
     json: "JSON",
     xml: "XML",
@@ -56,31 +47,17 @@
     kind === "json" || kind === "xml" || kind === "html" || kind === "text",
   );
   const large = $derived(viewable && response.large);
-  const views = $derived<BodyView[]>(
-    kind === "json" || kind === "xml"
-      ? ["pretty", "raw"]
-      : kind === "html"
-        ? ["pretty", "raw", "preview"]
-        : kind === "image" || kind === "pdf"
-          ? ["preview"]
-          : kind === "text"
-            ? ["raw"]
-            : [],
-  );
-  const current = $derived(
-    view !== null && views.includes(view) ? view : (views[0] ?? "raw"),
-  );
+  const current = $derived(controls.view);
   const language = $derived(
     kind === "json" || kind === "xml" || kind === "html" ? kind : "text",
   );
-  const filterable = $derived(kind === "json" && !response.large);
+  const filtered = $derived(controls.filtered);
 
   let loaded = $state<{
     key: string;
     body: BodyText | null;
     error?: string;
   } | null>(null);
-  let filtered = $state<Filtered | null>(null);
   const wanted = $derived(`${tabId}:${current}`);
 
   $effect(() => {
@@ -104,29 +81,7 @@
     loaded?.key === wanted ? (loaded.error ?? null) : null,
   );
 
-  let radios = $state<HTMLElement>();
-  async function onviewkeys(e: KeyboardEvent): Promise<void> {
-    const at = views.indexOf(current);
-    const to: Record<string, number> = {
-      ArrowRight: (at + 1) % views.length,
-      ArrowDown: (at + 1) % views.length,
-      ArrowLeft: (at - 1 + views.length) % views.length,
-      ArrowUp: (at - 1 + views.length) % views.length,
-      Home: 0,
-      End: views.length - 1,
-    };
-    const next = views[to[e.key] ?? -1];
-    if (!next) return;
-    e.preventDefault();
-    onview(next);
-    await tick();
-    radios?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
-  }
-  const shown = $derived(
-    filterable && current !== "preview" && filtered
-      ? filtered.text
-      : body?.text,
-  );
+  const shown = $derived(filtered ? filtered.text : body?.text);
   const folded = $derived(current === "pretty" || filtered !== null);
 </script>
 
@@ -147,67 +102,42 @@
       {kind}
       contentType={response.contentType}
     />
+  {:else if current === "preview"}
+    <Preview id={tabId} {kind} contentType={response.contentType} />
   {:else}
-    <div
-      class="views"
-      role="radiogroup"
-      aria-label="Body view"
-      tabindex="-1"
-      bind:this={radios}
-      onkeydown={(e) => void onviewkeys(e)}
-    >
-      {#each views as option (option)}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={current === option}
-          tabindex={current === option ? 0 : -1}
-          onclick={() => onview(option)}
-        >
-          {LABELS[option]}
-        </button>
-      {/each}
-    </div>
-    {#if current === "preview"}
-      <Preview id={tabId} {kind} contentType={response.contentType} />
-    {:else}
-      {#if filterable}
-        <JsonFilter
-          {tabId}
-          onresult={(result: Filtered | null) => (filtered = result)}
-        />
-      {/if}
-      {#if current === "pretty" && body && !body.formatted && !filtered}
-        <p class="unformatted">
-          Not valid {KINDS[kind] ?? "text"}, shown as received.
-        </p>
-      {/if}
-      {#if unread !== null}
-        <p class="unread" role="alert">The body could not be read: {unread}</p>
-      {/if}
-      <div class="editor">
-        {#if shown !== undefined}
-          {#key `${current}:${folded}`}
-            {#await import("@dea/editor/CodeEditor.svelte") then { default: CodeEditor }}
-              <CodeEditor
-                value={shown}
-                language={filtered
-                  ? "json"
-                  : current === "pretty"
-                    ? language
-                    : "text"}
-                label="Response body"
-                readonly
-                fold={folded}
-                search
-              />
-            {:catch}
-              <p class="load-error">The editor could not load.</p>
-            {/await}
-          {/key}
-        {/if}
-      </div>
+    {#if controls.filterError !== null}
+      <p class="filter-error" role="alert">{controls.filterError}</p>
     {/if}
+    {#if current === "pretty" && body && !body.formatted && !filtered}
+      <p class="unformatted">
+        Not valid {KINDS[kind] ?? "text"}, shown as received.
+      </p>
+    {/if}
+    {#if unread !== null}
+      <p class="unread" role="alert">The body could not be read: {unread}</p>
+    {/if}
+    <div class="editor">
+      {#if shown !== undefined}
+        {#key `${current}:${folded}`}
+          {#await import("@dea/editor/CodeEditor.svelte") then { default: CodeEditor }}
+            <CodeEditor
+              value={shown}
+              language={filtered
+                ? "json"
+                : current === "pretty"
+                  ? language
+                  : "text"}
+              label="Response body"
+              readonly
+              fold={folded}
+              search
+            />
+          {:catch}
+            <p class="load-error">The editor could not load.</p>
+          {/await}
+        {/key}
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -235,39 +165,16 @@
     box-shadow: inset 0 -1px 0 var(--line);
   }
 
-  .views {
-    flex: none;
-    display: inline-flex;
-    align-self: flex-start;
-    margin: var(--s-2) var(--s-4);
-    padding: 2px;
-    border-radius: var(--r-ctl);
-    background: var(--bg-3);
-    box-shadow: inset 0 0 0 1px var(--line);
-  }
-
-  .views button {
-    height: 24px;
-    padding: 0 var(--s-3);
-    border: 0;
-    border-radius: var(--r-small);
-    background: none;
-    color: var(--text-2);
-  }
-
-  .views button[aria-checked="true"] {
-    background: var(--bg-hover);
-    color: var(--text-1);
-  }
-
-  .unread {
+  .unread,
+  .filter-error {
     margin: 0;
     padding: var(--s-2) var(--s-4);
     color: var(--negative-text);
   }
 
-  .views:focus {
-    outline: none;
+  .filter-error {
+    flex: none;
+    box-shadow: inset 0 -1px 0 var(--line);
   }
 
   .editor {
