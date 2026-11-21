@@ -108,6 +108,24 @@ test("pdf_preview_draws_each_page", async () => {
   expect(fake.destroy).toHaveBeenCalled();
 });
 
+test("a_long_pdf_draws_its_first_20_pages", async () => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+    {} as CanvasRenderingContext2D,
+  );
+  const fake = fakeDocument(25);
+  pdf.loadPdf.mockResolvedValue(fake.doc);
+  fakeRequestsIpc({ response: fakeResponse({ bytes: new Uint8Array([1]) }) });
+  render(Preview, { id: "t1", kind: "pdf", contentType: "application/pdf" });
+  expect(await screen.findByText("25 pages")).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Showing the first 20 pages. Save it to a file to see them all.",
+    ),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(fake.render).toHaveBeenCalledTimes(20));
+  expect(document.querySelectorAll("canvas")).toHaveLength(20);
+});
+
 test("a_pdf_that_fails_says_so", async () => {
   pdf.loadPdf.mockRejectedValue(new Error("bad"));
   fakeRequestsIpc({ response: fakeResponse({ bytes: new Uint8Array([1]) }) });
