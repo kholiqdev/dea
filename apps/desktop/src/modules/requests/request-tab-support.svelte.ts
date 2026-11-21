@@ -28,7 +28,7 @@ export class FakeShell implements ShellApi {
   /** Every tab closeTab was asked to close. */
   closing: string[] = [];
   /** Every tab activateTab was asked to show. */
-  activated: string[] = [];
+  activated: string[] = $state([]);
   /** Every command runCommand was asked to run. */
   commands: string[] = [];
   #opened = 0;
