@@ -23,18 +23,18 @@ use crate::session::{Refusal, Session};
 use crate::state::{AppState, e2e_picked_path};
 
 /// A path from the UI, relative to the project root with `/`.
-fn rel(path: &str) -> PathBuf {
+pub(crate) fn rel(path: &str) -> PathBuf {
     path.split('/').collect()
 }
 
 /// The window's session, for a command that only reads.
-fn session_of(app: &AppHandle, window: &str) -> Result<Session, IpcError> {
+pub(crate) fn session_of(app: &AppHandle, window: &str) -> Result<Session, IpcError> {
     let session = app.state::<AppState>().sessions().get(window).cloned();
     Ok(session.ok_or(Refusal::NoProject)?)
 }
 
 /// The request tree of the window's project, read the first time.
-fn tree_of(
+pub(crate) fn tree_of(
     app: &AppHandle,
     window: &str,
     session: &Session,

@@ -7,6 +7,8 @@ mod commands;
 mod error;
 mod session;
 mod state;
+#[cfg(test)]
+mod testing;
 mod vault;
 
 use state::AppState;
@@ -105,6 +107,10 @@ pub fn run() {
             commands::requests::inspect_request,
             commands::requests::pick_request_file,
             commands::requests::describe_file_ref,
+            commands::send::send_request,
+            commands::send::cancel_send,
+            commands::send::answer_send_confirmation,
+            commands::send::resend_send_confirmations,
             commands::vault::vault_info,
             commands::vault::vault_secrets,
             commands::vault::vault_unlock,
