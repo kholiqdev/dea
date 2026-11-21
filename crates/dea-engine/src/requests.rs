@@ -2,7 +2,8 @@
 //! production environment, opens the Vault when a secret is needed, and
 //! keeps a cookie jar per project and environment (decisions 12 and 14).
 //!
-//! [`RequestService::prepare`] does everything up to the network and may
+//! [`RequestService::prepare`] takes the draft to send, saved or not, like
+//! [`RequestService::inspect`], does everything up to the network and may
 //! show dialogs, so it blocks. [`RequestService::send`] is the network
 //! part.
 
@@ -17,7 +18,7 @@ use dea_http::{Body, ClientIdentity, Options, Part, PartValue, Request, SendCont
 use dea_project::{
     FieldValue, LocalFiles, Project, RequestContext, RequestError, RequestFile, RequestTree,
     Resolved, ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError,
-    SystemDynamicSource, VaultManifest, is_local_ref, resolve_draft, resolve_request,
+    SystemDynamicSource, VaultManifest, is_local_ref, resolve_draft,
 };
 use url::Url;
 use zeroize::Zeroizing;
@@ -160,27 +161,31 @@ impl RequestService {
         }
     }
 
-    /// Resolves the request at `path` for `environment` (`None` is "No
-    /// environment"), in this order:
+    /// Resolves `draft`, as if it were saved at `path`, for `environment`
+    /// (`None` is "No environment"), in this order:
     ///
-    /// 1. a preview that never touches the Vault, for the method, the URL
-    ///    and the secrets it needs;
+    /// 1. a preview of the draft, resolved the way `inspect` does, that
+    ///    never touches the Vault, for the method, the URL and the secrets
+    ///    it needs;
     /// 2. for a production environment, the confirmation, unless the
     ///    person stopped the asking for this `GET`, `HEAD` or `OPTIONS`;
+    ///    [`SendConfirmation::secrets`] tells whether the request uses any
+    ///    Vault secret;
     /// 3. when secrets are used, production authentication, or for another
     ///    environment an unlock of a locked Vault;
     /// 4. when secrets are used, the real resolution with the Vault's
     ///    values; otherwise the preview is the request.
     ///
-    /// The Vault is opened only at step 3, so a request without secrets
-    /// never reaches the keychain. Blocks: steps 2 and 3 may show dialogs.
-    /// Nothing is sent.
+    /// `path` places the draft among the folders it inherits from; the
+    /// file there, if any, is not read. The Vault is opened only at step 3,
+    /// so a request without secrets never reaches the keychain. Blocks:
+    /// steps 2 and 3 may show dialogs. Nothing is sent.
     ///
     /// # Errors
     ///
     /// [`SendError::NotConfirmed`] when the person cancels; nothing was
     /// read from the Vault then. [`SendError::Secret`] when the Vault
-    /// cannot be opened, [`SendError::Request`] when the request cannot be
+    /// cannot be opened, [`SendError::Request`] when the draft cannot be
     /// resolved, [`SendError::Unresolved`] or [`SendError::InvalidUrl`]
     /// for a URL that cannot be sent to, [`SendError::File`] for a
     /// certificate that cannot be read.
@@ -189,17 +194,26 @@ impl RequestService {
         project: &Project,
         tree: &RequestTree,
         path: &Path,
+        draft: &RequestFile,
         environment: Option<&str>,
     ) -> Result<PreparedRequest, SendError> {
         let scope = project.vault_scope();
-        let preview = resolve(&self.store, project, tree, path, environment, &Placeholders)?;
+        let preview = resolve(
+            &self.store,
+            project,
+            tree,
+            path,
+            draft,
+            environment,
+            &Placeholders,
+        )?;
         let url = with_scheme(&preview.url).redacted;
         let production = environment.filter(|env| is_production(project, env));
+        let names = preview.secret_names();
         if let Some(env) = production {
-            self.confirm(&scope, env, &preview.method, &url)?;
+            self.confirm(&scope, env, &preview.method, &url, !names.is_empty())?;
         }
 
-        let names = preview.secret_names();
         let resolved = if names.is_empty() {
             // Placeholders only stand in for secrets, so without any the
             // preview is the request, and the Vault stays closed.
@@ -220,7 +234,15 @@ impl RequestService {
                 vault.unlock(&production_reason(&action, &names))?;
             }
             let lookup = vault.lookup(project);
-            resolve(&self.store, project, tree, path, environment, &lookup)?
+            resolve(
+                &self.store,
+                project,
+                tree,
+                path,
+                draft,
+                environment,
+                &lookup,
+            )?
         };
         let jar = resolved
             .options
@@ -344,6 +366,7 @@ impl RequestService {
         environment: &str,
         method: &str,
         url: &str,
+        secrets: bool,
     ) -> Result<(), SendError> {
         let can_skip = SKIPPABLE.contains(&method);
         let key = (scope.to_string(), environment.to_string());
@@ -355,6 +378,7 @@ impl RequestService {
             url: url.to_string(),
             environment: environment.to_string(),
             can_skip,
+            secrets,
         };
         match self.prompter.confirm_send(&confirmation) {
             SendAnswer::Cancel => Err(SendError::NotConfirmed),
@@ -468,6 +492,7 @@ fn resolve(
     project: &Project,
     tree: &RequestTree,
     path: &Path,
+    draft: &RequestFile,
     environment: Option<&str>,
     secrets: &dyn SecretLookup,
 ) -> Result<ResolvedRequest, RequestError> {
@@ -477,7 +502,7 @@ fn resolve(
         environment,
         secrets,
         &local_files,
-        |ctx| resolve_request(path, ctx),
+        |ctx| resolve_draft(path, draft, ctx),
         tree,
     )
 }

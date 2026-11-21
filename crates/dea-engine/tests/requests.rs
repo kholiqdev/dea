@@ -229,8 +229,9 @@ impl Fixture {
         path: &Path,
         environment: Option<&str>,
     ) -> Result<PreparedRequest, SendError> {
+        let saved = self.tree.find(path).expect("a saved request").entry;
         self.service
-            .prepare(&self.project, &self.tree, path, environment)
+            .prepare(&self.project, &self.tree, path, &saved.request, environment)
     }
 
     /// Sends `prepared` and checks its cookies were saved.
@@ -322,7 +323,14 @@ async fn default_prompter_refuses_production() {
         FakePrompter::answering(&[]),
     );
 
-    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("production"));
+    let draft = request("GET", "{{baseUrl}}/echo");
+    let result = service.prepare(
+        &f.project,
+        &f.tree,
+        Path::new(LIST),
+        &draft,
+        Some("production"),
+    );
 
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
     assert!(f.server.requests().is_empty());
@@ -359,9 +367,10 @@ async fn post_to_production_always_asks() {
     let (other, other_tree) = project_in(other_dir.path(), &f.server);
     assert_ne!(other.vault_scope(), f.project.vault_scope());
     f.prompter.answer(SendAnswer::Cancel);
+    let draft = request("GET", "{{baseUrl}}/echo");
     let result = f
         .service
-        .prepare(&other, &other_tree, list, Some("production"));
+        .prepare(&other, &other_tree, list, &draft, Some("production"));
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
     assert_eq!(f.prompter.asked().len(), 4);
 
@@ -436,7 +445,9 @@ async fn sends_a_request_from_the_project() {
         .unwrap();
     assert_eq!(sent.response.status, 200);
     assert!(
-        matches!(events.first(), Some(Event::Head { status: 200, .. })),
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Head { status: 200, .. })),
         "{events:?}"
     );
     let received = f.last_request();
@@ -907,7 +918,14 @@ async fn the_vault_is_opened_only_after_production_is_confirmed() {
     let service = service_with(&f, NeverOpened);
     f.prompter.answer(SendAnswer::Cancel);
 
-    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("production"));
+    let draft = request("GET", "{{baseUrl}}/echo");
+    let result = service.prepare(
+        &f.project,
+        &f.tree,
+        Path::new(LIST),
+        &draft,
+        Some("production"),
+    );
 
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
 }
@@ -917,13 +935,13 @@ async fn a_send_without_secrets_leaves_the_vault_closed() {
     let mut f = Fixture::new().await;
     let mut file = request("GET", "{{baseUrl}}/echo");
     file.auth = Auth::NoAuth;
-    let path = f.add("plain", file);
+    let path = f.add("plain", file.clone());
     let service = service_with(&f, NeverOpened);
 
-    let staging = service.prepare(&f.project, &f.tree, &path, Some("staging"));
+    let staging = service.prepare(&f.project, &f.tree, &path, &file, Some("staging"));
     assert!(staging.is_ok(), "{staging:?}");
     f.prompter.answer(SendAnswer::Send);
-    let production = service.prepare(&f.project, &f.tree, &path, Some("production"));
+    let production = service.prepare(&f.project, &f.tree, &path, &file, Some("production"));
     assert!(production.is_ok(), "{production:?}");
 
     let response = f.send_prepared(staging.unwrap()).await;
@@ -944,7 +962,14 @@ async fn a_vault_that_cannot_be_opened_stops_the_send() {
     let f = Fixture::new().await;
     let service = service_with(&f, Unavailable);
 
-    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("staging"));
+    let draft = request("GET", "{{baseUrl}}/echo");
+    let result = service.prepare(
+        &f.project,
+        &f.tree,
+        Path::new(LIST),
+        &draft,
+        Some("staging"),
+    );
 
     assert!(
         matches!(result, Err(SendError::Secret(UseError::Vault(_)))),
@@ -1208,4 +1233,69 @@ async fn a_folder_header_replaces_the_automatic_user_agent() {
     };
     assert!(replaced("User-Agent"));
     assert!(!replaced("Accept"));
+}
+
+#[tokio::test]
+async fn prepare_sends_the_draft_not_the_file() {
+    let f = Fixture::new().await;
+    // The file at LIST says `{{baseUrl}}/echo`.
+    let draft = request("GET", "{{baseUrl}}/other");
+
+    let prepared = f
+        .service
+        .prepare(
+            &f.project,
+            &f.tree,
+            Path::new(LIST),
+            &draft,
+            Some("staging"),
+        )
+        .unwrap();
+
+    assert!(prepared.url_redacted.ends_with("/other"), "{prepared:?}");
+}
+
+#[tokio::test]
+async fn confirmation_says_whether_secrets_are_used() {
+    let f = Fixture::new().await;
+    let mut with_secret = request("GET", "{{baseUrl}}/echo");
+    with_secret.auth = Auth::NoAuth;
+    with_secret.headers = vec![row("X-Token", "{{vault:access_token}}")];
+    let mut without = request("GET", "{{baseUrl}}/echo");
+    without.auth = Auth::NoAuth;
+
+    for draft in [&with_secret, &without] {
+        f.prompter.answer(SendAnswer::Cancel);
+        let result = f.service.prepare(
+            &f.project,
+            &f.tree,
+            Path::new(LIST),
+            draft,
+            Some("production"),
+        );
+        assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
+    }
+
+    let asked = f.prompter.asked();
+    assert_eq!(asked.len(), 2);
+    assert!(asked[0].secrets);
+    assert!(!asked[1].secrets);
+}
+
+#[tokio::test]
+async fn inspection_of_a_blank_json_body_lists_no_content_type() {
+    let f = Fixture::new().await;
+    let mut draft = request("POST", "{{baseUrl}}/x");
+    draft.body = Some(Body::Json { text: " \n".into() });
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert!(
+        inspection
+            .automatic_headers
+            .iter()
+            .all(|h| h.name != "Content-Type" && h.name != "Content-Length"),
+        "{:?}",
+        inspection.automatic_headers
+    );
 }

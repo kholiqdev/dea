@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 
 /// What to show in a Vault password prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +27,13 @@ pub enum PromptProblem {
 }
 
 /// What `Send to production?` shows before a request leaves.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub struct SendConfirmation {
     pub method: String,
     /// The final URL, every secret shown as `[secret:<name>]`.
@@ -35,10 +42,19 @@ pub struct SendConfirmation {
     /// Whether "Don't ask again in this session" may be offered: only for
     /// `GET`, `HEAD` and `OPTIONS`.
     pub can_skip: bool,
+    /// Whether the request uses at least one Vault secret, so sending asks
+    /// for the Vault too.
+    pub secrets: bool,
 }
 
 /// The answer to a [`SendConfirmation`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
 pub enum SendAnswer {
     Send,
     /// Send, and send the same kind of request to this environment of this
