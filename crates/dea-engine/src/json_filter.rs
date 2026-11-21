@@ -3,7 +3,7 @@
 use serde_json::Value;
 use serde_json_path::JsonPath;
 
-use crate::pretty::pretty_json;
+use crate::pretty::reindent_json;
 
 /// The nodes a path selected, as a pretty JSON array.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -33,7 +33,10 @@ pub fn filter_json(text: &str, path: &str) -> Result<Filtered, FilterError> {
     let path = JsonPath::parse(path).map_err(|e| FilterError::InvalidPath(e.to_string()))?;
     let nodes = path.query(&doc).all();
     let count = nodes.len();
-    let json = serde_json::to_string(&nodes).map_err(|_| FilterError::NotJson)?;
-    let text = pretty_json(&json).unwrap_or_else(|| "[]".to_owned());
-    Ok(Filtered { text, count })
+    // `Value`'s Display cannot fail; the result is valid JSON by construction.
+    let array = Value::Array(nodes.into_iter().cloned().collect());
+    Ok(Filtered {
+        text: reindent_json(&array.to_string()),
+        count,
+    })
 }

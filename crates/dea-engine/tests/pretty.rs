@@ -113,3 +113,32 @@ fn malformed_markup_does_not_panic() {
         assert_eq!(squash(&out), squash(s));
     }
 }
+
+#[test]
+fn deep_nesting_is_formatted_in_linear_size() {
+    let n = 200_000;
+    let input = "<a>".repeat(n);
+    let started = std::time::Instant::now();
+    let out = pretty_markup(&input, false);
+    assert!(started.elapsed().as_secs() < 5);
+    assert_eq!(squash(&out), squash(&input));
+    // at most 64 levels of 2 spaces plus the tag and a newline per line
+    assert!(out.len() <= n * (64 * 2 + "<a>".len() + 1));
+}
+
+#[test]
+fn filter_text_always_holds_its_matches() {
+    // The deepest document serde_json still parses; the result array adds a level.
+    let depth = (1..=200)
+        .rev()
+        .find(|d| serde_json::from_str::<serde_json::Value>(&nested(*d)).is_ok())
+        .unwrap();
+    let out = filter_json(&nested(depth), "$").unwrap();
+    assert_eq!(out.count, 1);
+    assert_ne!(out.text, "[]");
+    assert_eq!(squash(&out.text), format!("[{}]", nested(depth)));
+}
+
+fn nested(depth: usize) -> String {
+    format!("{}{}", "[".repeat(depth), "]".repeat(depth))
+}
