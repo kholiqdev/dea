@@ -458,6 +458,36 @@ describe("reading responses", () => {
     expect(longest).toBeLessThanOrEqual(FRAME_BUDGET_MS); // F1-REQ-16 #3
   });
 
+  it("jumping_to_the_middle_of_10_mb_json_keeps_frames_under_50_ms", async () => {
+    const path = `/json-size/${TEN_MB}`;
+    const root = serverProject({
+      "ten-megabytes.yaml": getRequest("Ten megabytes", path),
+    });
+    await openRequest(root, "staging", "Ten megabytes");
+
+    await sendAndShow();
+    await waitForBody("showed the JSON", (l) => l.length > 1, 60_000);
+    await waitForView("Pretty");
+    await waitForQuiet();
+
+    // Like dragging the scrollbar: far past what was parsed, then on a few
+    // pages from there.
+    let middle = 0;
+    const longest = await longestFrameDuring(async () => {
+      const start = await scrollBody(BODY_EDITOR, null);
+      middle = Math.round(start.height / 2);
+      await scrollBody(BODY_EDITOR, middle);
+      await browser.pause(SCROLL_PAUSE_MS);
+      for (let i = 1; i <= 5; i++) {
+        await scrollBody(BODY_EDITOR, middle + i * start.client);
+        await browser.pause(SCROLL_PAUSE_MS);
+      }
+    });
+    const end = await scrollBody(BODY_EDITOR, null);
+    expect(end.top).toBeGreaterThan(middle / 2);
+    expect(longest).toBeLessThanOrEqual(FRAME_BUDGET_MS); // F1-REQ-16 #3
+  });
+
   it("a_12_mb_response_uses_the_virtual_viewer_and_saves_to_file", async () => {
     const path = `/json-line-size/${TWELVE_MIB}`;
     const root = serverProject({
