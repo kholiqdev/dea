@@ -23,6 +23,8 @@ export class FakeShell implements ShellApi {
   tabs = $state<FakeTab[]>([]);
   saveHandlers: Record<string, (tabId: string) => Promise<void>> = {};
   toasts: string[] = [];
+  /** The action of each toast, by the same index as `toasts`. */
+  toastActions: ({ label: string; run: () => void } | undefined)[] = [];
   /** Every tab closeTab was asked to close. */
   closing: string[] = [];
   /** Every tab activateTab was asked to show. */
@@ -118,8 +120,12 @@ export class FakeShell implements ShellApi {
     return Promise.resolve();
   }
 
-  toast(text: string): number {
+  toast(
+    text: string,
+    opts?: { action?: { label: string; run: () => void } },
+  ): number {
     this.toasts.push(text);
+    this.toastActions.push(opts?.action);
     return this.toasts.length;
   }
 

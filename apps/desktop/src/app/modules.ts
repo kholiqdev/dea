@@ -3,6 +3,7 @@
 
 import type { Component } from "svelte";
 import ArrowLeftRight from "@lucide/svelte/icons/arrow-left-right";
+import Cookie from "@lucide/svelte/icons/cookie";
 import Database from "@lucide/svelte/icons/database";
 import KeyRound from "@lucide/svelte/icons/key-round";
 import Layers from "@lucide/svelte/icons/layers";
@@ -36,6 +37,7 @@ type Icon = Component<{ size?: number; strokeWidth?: number }>;
 // Rail icons by the name a manifest gives.
 const ICONS: Record<string, Icon> = {
   "arrow-left-right": ArrowLeftRight,
+  cookie: Cookie,
   database: Database,
   "square-terminal": SquareTerminal,
   smartphone: Smartphone,
