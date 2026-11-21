@@ -119,13 +119,10 @@ pub fn reopen_last(app: &AppHandle, window: &str) {
     }
 }
 
-/// Forgets the project of a closed window and cancels its Vault password
-/// prompts.
+/// Forgets the project of a closed window and ends what it waits on: its
+/// prompts, its sends and its responses.
 pub fn window_closed(app: &AppHandle, window: &str) {
-    app.state::<AppState>()
-        .vault
-        .prompter()
-        .cancel_window(window);
+    app.state::<AppState>().window_closed(window);
     unbind(app, window);
 }
 

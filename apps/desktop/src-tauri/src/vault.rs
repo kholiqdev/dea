@@ -1,7 +1,7 @@
-//! The one Vault of the app, and the Vault password dialog of each window.
-//! The Vault is opened by the first command that needs it, so starting Dea
-//! never touches the keychain, and it is shared by every window and
-//! project.
+//! The one Vault of the app, and the dialogs each window is asked through:
+//! the Vault password and the production send confirmation. The Vault is
+//! opened by the first command that needs it, so starting Dea never touches
+//! the keychain, and it is shared by every window and project.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -11,11 +11,12 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
-use dea_engine::VaultProvider;
+use dea_engine::requests::CancellationToken;
 use dea_engine::vault::{
     PasswordPrompt, PromptProblem, Prompter, SecretString, SystemClipboard, UseError, VaultError,
     VaultService, app_vault_has_values, open_app_vault,
 };
+use dea_engine::{SendAnswer, SendConfirmation, VaultProvider};
 use dea_project::Project;
 use serde::Serialize;
 use tauri::webview::PageLoadEvent;
@@ -30,6 +31,9 @@ pub const VAULT_STATUS: &str = "vault-status";
 /// The event that asks one window for the Vault password, with a
 /// [`VaultPromptEvent`].
 pub const VAULT_PROMPT: &str = "vault-prompt";
+/// The event that asks one window whether to send a request to
+/// production, with a [`SendConfirmEvent`].
+pub const SEND_CONFIRM: &str = "send-confirm";
 /// Where a prompt goes when no window asked for it and none has focus.
 const MAIN_WINDOW: &str = "main";
 
@@ -112,7 +116,8 @@ impl AppVault {
         }
     }
 
-    /// Where Vault password prompts go and their answers come back.
+    /// Where Vault password prompts and send confirmations go and their
+    /// answers come back.
     pub fn prompter(&self) -> &UiPrompter {
         &self.prompter
     }
@@ -138,14 +143,14 @@ impl VaultProvider for VaultOnDemand {
     }
 }
 
-/// The windows a Vault password prompt can be shown in: the app's own, or
-/// a recorder in tests.
+/// The windows a prompt can be shown in: the app's own, or a recorder in
+/// tests.
 pub trait PromptWindows: Send + Sync {
     /// The label of the window that has focus, if any.
     fn focused(&self) -> Option<String>;
     /// Shows `prompt` in `window`. False when the window is gone, so no
     /// answer can come.
-    fn show(&self, window: &str, prompt: VaultPromptEvent) -> bool;
+    fn show(&self, window: &str, prompt: Prompt) -> bool;
 }
 
 impl<R: Runtime> PromptWindows for AppHandle<R> {
@@ -156,9 +161,9 @@ impl<R: Runtime> PromptWindows for AppHandle<R> {
             .map(|(label, _)| label)
     }
 
-    fn show(&self, window: &str, prompt: VaultPromptEvent) -> bool {
+    fn show(&self, window: &str, prompt: Prompt) -> bool {
         self.get_webview_window(window).is_some()
-            && self.emit_to(window, VAULT_PROMPT, prompt).is_ok()
+            && self.emit_to(window, prompt.event(), prompt).is_ok()
     }
 }
 
@@ -172,8 +177,29 @@ impl PromptWindows for NoWindows {
         None
     }
 
-    fn show(&self, _window: &str, _prompt: VaultPromptEvent) -> bool {
+    fn show(&self, _window: &str, _prompt: Prompt) -> bool {
         false
+    }
+}
+
+/// A dialog for one window to show and then answer by its id. Its payload
+/// is the event inside.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum Prompt {
+    /// The Vault password, as `vault-prompt`.
+    Vault(VaultPromptEvent),
+    /// Whether to send to production, as `send-confirm`.
+    Send(SendConfirmEvent),
+}
+
+impl Prompt {
+    /// The name of the event that carries it.
+    pub fn event(&self) -> &'static str {
+        match self {
+            Self::Vault(_) => VAULT_PROMPT,
+            Self::Send(_) => SEND_CONFIRM,
+        }
     }
 }
 
@@ -198,6 +224,16 @@ pub enum VaultPromptKind {
     Password,
     /// A new Vault password, the first time one is needed.
     NewPassword,
+}
+
+/// A production send confirmation for one window to show and then answer
+/// with `answer_send_confirmation`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SendConfirmEvent {
+    /// Identifies the answer.
+    pub id: u64,
+    #[serde(flatten)]
+    pub confirmation: SendConfirmation,
 }
 
 /// [`PromptProblem`] as the dialog reads it.
@@ -232,23 +268,40 @@ fn whole_seconds(wait: Duration) -> u64 {
     (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1)
 }
 
-/// Asks for the Vault password in a window of Dea (Linux). Each prompt goes
-/// as `vault-prompt` to the window that asked, and the asking thread waits
-/// until that window answers or closes.
+/// Asks in a window of Dea for the Vault password (Linux) and whether to
+/// send a request to production. Each prompt goes to the window that asked,
+/// as `vault-prompt` or `send-confirm`, and the asking thread waits until
+/// that window answers or closes, or the send that asked is cancelled.
 pub struct UiPrompter {
     windows: Box<dyn PromptWindows>,
     next_id: AtomicU64,
-    /// The window each thread asks for while it runs inside `asking`.
-    requesters: Mutex<HashMap<ThreadId, String>>,
+    /// Who each thread asks for while it runs inside `asking` or `sending`.
+    requesters: Mutex<HashMap<ThreadId, Requester>>,
     /// Prompts waiting for an answer, by id.
     waiting: Mutex<HashMap<u64, Waiting>>,
 }
 
+/// The window a prompt goes to, and the send that asks, if one does.
+#[derive(Clone)]
+struct Requester {
+    window: String,
+    send: Option<CancellationToken>,
+}
+
 struct Waiting {
     window: String,
+    /// Cancels the prompt, with [`UiPrompter::withdraw_cancelled`].
+    send: Option<CancellationToken>,
     /// What was sent, to send again to a page that missed it.
-    event: VaultPromptEvent,
-    answer: Sender<Option<SecretString>>,
+    prompt: Prompt,
+    answer: Answer,
+}
+
+/// Where the answer to a prompt goes. Dropping it wakes the asker with no
+/// answer.
+enum Answer {
+    Password(Sender<Option<SecretString>>),
+    Send(Sender<SendAnswer>),
 }
 
 impl UiPrompter {
@@ -264,8 +317,31 @@ impl UiPrompter {
 
     /// Runs `f`, sending every prompt it causes on this thread to `window`.
     pub fn asking<T>(&self, window: &str, f: impl FnOnce() -> T) -> T {
+        self.asking_for(
+            Requester {
+                window: window.to_string(),
+                send: None,
+            },
+            f,
+        )
+    }
+
+    /// Runs `f` for a send of `window` that `send` cancels: every prompt it
+    /// causes on this thread goes to `window`, and is cancelled with the
+    /// send by [`UiPrompter::withdraw_cancelled`].
+    pub fn sending<T>(&self, window: &str, send: &CancellationToken, f: impl FnOnce() -> T) -> T {
+        self.asking_for(
+            Requester {
+                window: window.to_string(),
+                send: Some(send.clone()),
+            },
+            f,
+        )
+    }
+
+    fn asking_for<T>(&self, requester: Requester, f: impl FnOnce() -> T) -> T {
         let thread = thread::current().id();
-        let previous = guard(&self.requesters).insert(thread, window.to_string());
+        let previous = guard(&self.requesters).insert(thread, requester);
         let _restore = Restore {
             requesters: &self.requesters,
             thread,
@@ -274,13 +350,40 @@ impl UiPrompter {
         f()
     }
 
-    /// Answers prompt `id`; `None` cancels it. An unknown id, such as a
-    /// prompt already cancelled, is ignored.
+    /// Answers Vault password prompt `id`; `None` cancels it. An unknown
+    /// id, such as a prompt already cancelled, is ignored.
     pub fn answer(&self, id: u64, password: Option<String>) {
-        let password = password.map(SecretString::from);
-        if let Some(waiting) = guard(&self.waiting).remove(&id) {
-            let _ = waiting.answer.send(password);
+        // A confirmation is cancelled: a password does not answer it.
+        if let Some(Answer::Password(answer)) = self.take(id) {
+            let _ = answer.send(password.map(SecretString::from));
         }
+    }
+
+    /// Answers send confirmation `id`. An unknown id, such as a
+    /// confirmation already cancelled, is ignored.
+    pub fn answer_send(&self, id: u64, answer: SendAnswer) {
+        // A Vault password prompt is cancelled: this does not answer it.
+        if let Some(Answer::Send(sender)) = self.take(id) {
+            let _ = sender.send(answer);
+        }
+    }
+
+    /// Stops prompt `id` waiting, and gives where its answer goes.
+    fn take(&self, id: u64) -> Option<Answer> {
+        guard(&self.waiting)
+            .remove(&id)
+            .map(|waiting| waiting.answer)
+    }
+
+    /// Cancels every prompt whose send was cancelled. The dialog stays in
+    /// its window until answered, and the answer is ignored.
+    pub fn withdraw_cancelled(&self) {
+        guard(&self.waiting).retain(|_, waiting| {
+            !waiting
+                .send
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+        });
     }
 
     /// Cancels every prompt of `window`, which has closed.
@@ -298,78 +401,120 @@ impl UiPrompter {
         }
     }
 
-    /// Sends `window` every prompt still waiting for it again. A page that
-    /// starts listening calls this, as a prompt sent while it loaded is
-    /// lost and would keep its asker waiting. A window that is gone has its
-    /// prompts cancelled.
+    /// Sends `window` every Vault password prompt still waiting for it
+    /// again. A page that starts listening calls this, as a prompt sent
+    /// while it loaded is lost and would keep its asker waiting. A window
+    /// that is gone has its prompts cancelled.
     pub fn resend(&self, window: &str) {
-        let events: Vec<VaultPromptEvent> = guard(&self.waiting)
-            .values()
-            .filter(|waiting| waiting.window == window)
-            .map(|waiting| waiting.event.clone())
+        self.resend_where(window, |prompt| matches!(prompt, Prompt::Vault(_)));
+    }
+
+    /// [`UiPrompter::resend`] for the send confirmations of `window`.
+    pub fn resend_confirmations(&self, window: &str) {
+        self.resend_where(window, |prompt| matches!(prompt, Prompt::Send(_)));
+    }
+
+    fn resend_where(&self, window: &str, kind: impl Fn(&Prompt) -> bool) {
+        let prompts: Vec<(u64, Prompt)> = guard(&self.waiting)
+            .iter()
+            .filter(|(_, waiting)| waiting.window == window && kind(&waiting.prompt))
+            .map(|(id, waiting)| (*id, waiting.prompt.clone()))
             .collect();
-        for event in events {
-            let id = event.id;
-            if !self.windows.show(window, event) {
+        for (id, prompt) in prompts {
+            if !self.windows.show(window, prompt) {
                 guard(&self.waiting).remove(&id);
             }
         }
     }
 
-    fn ask(&self, kind: VaultPromptKind, prompt: &PasswordPrompt) -> Option<SecretString> {
+    /// Shows the prompt `prompt` makes from its id in the window this
+    /// thread asks for, and waits for the answer that `answer` carries.
+    /// `None` when no answer comes: the window is gone, closes or reloads,
+    /// or the send that asks was cancelled.
+    fn ask<A>(
+        &self,
+        prompt: impl FnOnce(u64) -> Prompt,
+        answer: impl FnOnce(Sender<A>) -> Answer,
+    ) -> Option<A> {
         let requester = guard(&self.requesters)
             .get(&thread::current().id())
             .cloned();
-        let window = requester
-            .or_else(|| self.windows.focused())
-            .unwrap_or_else(|| MAIN_WINDOW.to_string());
+        let Requester { window, send } = requester.unwrap_or_else(|| Requester {
+            window: self
+                .windows
+                .focused()
+                .unwrap_or_else(|| MAIN_WINDOW.to_string()),
+            send: None,
+        });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (answer, answered) = mpsc::channel();
-        let event = VaultPromptEvent {
-            id,
-            kind,
-            reason: prompt.reason.clone(),
-            problem: prompt.problem.as_ref().map(VaultPromptProblem::from),
-        };
+        let (sender, answered) = mpsc::channel();
+        let prompt = prompt(id);
         guard(&self.waiting).insert(
             id,
             Waiting {
                 window: window.clone(),
-                event: event.clone(),
-                answer,
+                send: send.clone(),
+                prompt: prompt.clone(),
+                answer: answer(sender),
             },
         );
-        if !self.windows.show(&window, event) {
+        // Checked once it waits: a send cancelled later is withdrawn.
+        let cancelled = send.as_ref().is_some_and(CancellationToken::is_cancelled);
+        if cancelled || !self.windows.show(&window, prompt) {
             guard(&self.waiting).remove(&id);
             return None;
         }
-        answered.recv().ok().flatten()
+        answered.recv().ok()
+    }
+
+    fn ask_password(&self, kind: VaultPromptKind, prompt: &PasswordPrompt) -> Option<SecretString> {
+        let event = |id| {
+            Prompt::Vault(VaultPromptEvent {
+                id,
+                kind,
+                reason: prompt.reason.clone(),
+                problem: prompt.problem.as_ref().map(VaultPromptProblem::from),
+            })
+        };
+        self.ask(event, Answer::Password).flatten()
     }
 }
 
 impl Prompter for UiPrompter {
     fn vault_password(&self, prompt: &PasswordPrompt) -> Option<SecretString> {
-        self.ask(VaultPromptKind::Password, prompt)
+        self.ask_password(VaultPromptKind::Password, prompt)
     }
 
     fn new_vault_password(&self, prompt: &PasswordPrompt) -> Option<SecretString> {
-        self.ask(VaultPromptKind::NewPassword, prompt)
+        self.ask_password(VaultPromptKind::NewPassword, prompt)
+    }
+
+    /// Nothing is sent without an answer: a window that closes or reloads,
+    /// or a send that is cancelled, answers [`SendAnswer::Cancel`].
+    fn confirm_send(&self, confirmation: &SendConfirmation) -> SendAnswer {
+        let event = |id| {
+            Prompt::Send(SendConfirmEvent {
+                id,
+                confirmation: confirmation.clone(),
+            })
+        };
+        self.ask(event, Answer::Send).unwrap_or(SendAnswer::Cancel)
     }
 }
 
-/// Puts back the window a thread asked for before `asking`, even when `f`
-/// panics: blocking threads are reused.
+/// Puts back who a thread asked for before `asking`, even when `f` panics:
+/// blocking threads are reused.
 struct Restore<'a> {
-    requesters: &'a Mutex<HashMap<ThreadId, String>>,
+    requesters: &'a Mutex<HashMap<ThreadId, Requester>>,
     thread: ThreadId,
-    previous: Option<String>,
+    previous: Option<Requester>,
 }
 
 impl Drop for Restore<'_> {
     fn drop(&mut self) {
         let mut requesters = guard(self.requesters);
         match self.previous.take() {
-            Some(window) => requesters.insert(self.thread, window),
+            Some(requester) => requesters.insert(self.thread, requester),
             None => requesters.remove(&self.thread),
         };
     }
@@ -382,43 +527,24 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::testing::{Confirms, RecordingWindows, Shown, WAIT, confirmation};
 
-    const WAIT: Duration = Duration::from_secs(5);
-
-    /// Windows that pass each prompt on to the test. Only `open` windows
-    /// exist.
-    struct Recorder {
-        shown: Mutex<Sender<(String, VaultPromptEvent)>>,
-        open: Vec<&'static str>,
+    /// A prompter for the `open` windows, `focused` having focus, and the
+    /// Vault prompts and confirmations they are shown.
+    fn recorded(
+        open: &[&'static str],
         focused: Option<&'static str>,
+    ) -> (Arc<UiPrompter>, Shown, Confirms) {
+        let (windows, shown, confirms) = RecordingWindows::new(open, focused);
+        (Arc::new(UiPrompter::new(windows)), shown, confirms)
     }
-
-    impl PromptWindows for Recorder {
-        fn focused(&self) -> Option<String> {
-            self.focused.map(str::to_string)
-        }
-
-        fn show(&self, window: &str, prompt: VaultPromptEvent) -> bool {
-            self.open.contains(&window)
-                && guard(&self.shown)
-                    .send((window.to_string(), prompt))
-                    .is_ok()
-        }
-    }
-
-    type Shown = Receiver<(String, VaultPromptEvent)>;
 
     fn windows_with(
         open: &[&'static str],
         focused: Option<&'static str>,
     ) -> (Arc<UiPrompter>, Shown) {
-        let (shown, receiver) = channel();
-        let windows = Recorder {
-            shown: Mutex::new(shown),
-            open: open.to_vec(),
-            focused,
-        };
-        (Arc::new(UiPrompter::new(windows)), receiver)
+        let (prompter, shown, _) = recorded(open, focused);
+        (prompter, shown)
     }
 
     fn prompt(problem: Option<PromptProblem>) -> PasswordPrompt {
@@ -455,6 +581,19 @@ mod tests {
     ) -> Asked {
         let prompter = Arc::clone(prompter);
         on_thread(move || prompter.asking(window, || prompter.vault_password(&prompt(problem))))
+    }
+
+    /// Asks on another thread whether to send, for send `send` of
+    /// `window`.
+    fn confirm_from(
+        prompter: &Arc<UiPrompter>,
+        window: &'static str,
+        send: &CancellationToken,
+    ) -> Receiver<SendAnswer> {
+        let (prompter, send) = (Arc::clone(prompter), send.clone());
+        crate::testing::on_thread(move || {
+            prompter.sending(window, &send, || prompter.confirm_send(&confirmation()))
+        })
     }
 
     #[test]
@@ -603,5 +742,131 @@ mod tests {
             shape(PromptProblem::RetryAfter(Duration::from_secs(30))),
             json!({ "kind": "retryAfter", "seconds": 30 })
         );
+    }
+
+    #[test]
+    fn send_confirmation_goes_to_the_window_that_sent() {
+        let (prompter, shown, confirms) = recorded(&["main", "project-1"], Some("main"));
+        let asked = confirm_from(&prompter, "project-1", &CancellationToken::new());
+
+        let (window, event) = confirms.recv_timeout(WAIT).unwrap();
+        assert_eq!(window, "project-1");
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            json!({
+                "id": event.id,
+                "method": "POST",
+                "url": "https://api.test/v1/x",
+                "environment": "production",
+                "canSkip": false,
+                "secrets": true,
+            })
+        );
+        // An answer for another prompt changes nothing.
+        prompter.answer_send(event.id + 1, SendAnswer::Send);
+        prompter.answer_send(event.id, SendAnswer::SendAndStopAsking);
+        assert_eq!(
+            asked.recv_timeout(WAIT).unwrap(),
+            SendAnswer::SendAndStopAsking
+        );
+        assert!(
+            confirms.try_recv().is_err(),
+            "only one confirmation was sent"
+        );
+        assert!(shown.try_recv().is_err(), "no Vault prompt was sent");
+    }
+
+    #[test]
+    fn a_confirmation_without_an_answer_is_a_cancel() {
+        let (prompter, _shown, confirms) = recorded(&["main", "project-1"], None);
+        let send = CancellationToken::new();
+
+        let closed = confirm_from(&prompter, "project-1", &send);
+        confirms.recv_timeout(WAIT).unwrap();
+        prompter.cancel_window("project-1");
+        assert_eq!(closed.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+
+        let reloaded = confirm_from(&prompter, "project-1", &send);
+        confirms.recv_timeout(WAIT).unwrap();
+        prompter.page_load("project-1", PageLoadEvent::Started);
+        assert_eq!(reloaded.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+
+        // A password does not answer whether to send.
+        let mixed_up = confirm_from(&prompter, "main", &send);
+        let (_, event) = confirms.recv_timeout(WAIT).unwrap();
+        prompter.answer(event.id, Some("correct horse".into()));
+        assert_eq!(mixed_up.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+
+        // A window that is already gone cannot answer, so nothing waits.
+        let gone = confirm_from(&prompter, "project-9", &send);
+        assert_eq!(gone.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+    }
+
+    #[test]
+    fn a_cancelled_send_withdraws_only_its_own_prompts() {
+        let (prompter, shown, confirms) = recorded(&["main"], None);
+        let (first, second) = (CancellationToken::new(), CancellationToken::new());
+        let first_asked = confirm_from(&prompter, "main", &first);
+        confirms.recv_timeout(WAIT).unwrap();
+        let second_asked = confirm_from(&prompter, "main", &second);
+        let (_, second_event) = confirms.recv_timeout(WAIT).unwrap();
+        // The Vault password a send asks for (Linux) belongs to it too.
+        let password = {
+            let (prompter, first) = (Arc::clone(&prompter), first.clone());
+            on_thread(move || {
+                prompter.sending("main", &first, || prompter.vault_password(&prompt(None)))
+            })
+        };
+        shown.recv_timeout(WAIT).unwrap();
+
+        // Withdrawing before cancelling changes nothing.
+        prompter.withdraw_cancelled();
+        first.cancel();
+        prompter.withdraw_cancelled();
+        assert_eq!(first_asked.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        assert!(!password.got_password());
+
+        // The other send still waits for its answer.
+        prompter.answer_send(second_event.id, SendAnswer::Send);
+        assert_eq!(second_asked.recv_timeout(WAIT).unwrap(), SendAnswer::Send);
+
+        // A send cancelled before it asks is never asked.
+        let late = confirm_from(&prompter, "main", &first);
+        assert_eq!(late.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        assert!(confirms.try_recv().is_err(), "nothing was shown");
+    }
+
+    #[test]
+    fn prompts_and_confirmations_are_sent_again_apart() {
+        let (prompter, shown, confirms) = recorded(&["project-1"], None);
+        let confirmed = confirm_from(&prompter, "project-1", &CancellationToken::new());
+        let (_, confirmation) = confirms.recv_timeout(WAIT).unwrap();
+        let asked = ask_from(&prompter, "project-1", None);
+        let (_, vault_prompt) = shown.recv_timeout(WAIT).unwrap();
+
+        // Each listener asks for what it missed once it listens.
+        prompter.resend_confirmations("project-1");
+        assert_eq!(
+            confirms.recv_timeout(WAIT).unwrap(),
+            ("project-1".to_string(), confirmation.clone())
+        );
+        assert!(
+            shown.try_recv().is_err(),
+            "the Vault prompt is not sent again"
+        );
+        prompter.resend("project-1");
+        assert_eq!(
+            shown.recv_timeout(WAIT).unwrap(),
+            ("project-1".to_string(), vault_prompt.clone())
+        );
+        assert!(
+            confirms.try_recv().is_err(),
+            "the confirmation is not sent again"
+        );
+
+        prompter.answer_send(confirmation.id, SendAnswer::Send);
+        assert_eq!(confirmed.recv_timeout(WAIT).unwrap(), SendAnswer::Send);
+        prompter.answer(vault_prompt.id, None);
+        assert!(!asked.got_password());
     }
 }

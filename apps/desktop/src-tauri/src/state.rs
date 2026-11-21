@@ -6,7 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use dea_engine::requests::{Client, ClientConfig, RequestService, VaultProvider};
+use dea_engine::ResponseStore;
+use dea_engine::requests::{
+    CancellationToken, Client, ClientConfig, RequestService, VaultProvider,
+};
 use dea_engine::store::Store;
 use dea_project::{DeletedItem, LoadedRequests, ProjectChange, ProjectError, ProjectWatcher};
 use tauri::{AppHandle, Manager, Runtime};
@@ -38,6 +41,10 @@ pub struct AppState {
     pub vault: AppVault,
     /// Resolves and sends requests for every window.
     pub requests: RequestService,
+    /// The sends in flight, by `"<window>/<tab>"`.
+    pub sends: Sends,
+    /// The last response of each tab, by `"<window>/<tab>"`.
+    pub responses: ResponseStore,
     sessions: Mutex<Sessions>,
     // One watcher per window with a project, by window label.
     watchers: Mutex<HashMap<String, ProjectWatcher>>,
@@ -82,6 +89,8 @@ impl AppState {
             store,
             vault: app_vault,
             requests,
+            sends: Sends::default(),
+            responses: ResponseStore::default(),
             sessions: Mutex::new(Sessions::default()),
             watchers: Mutex::new(HashMap::new()),
             trees: Mutex::new(HashMap::new()),
@@ -158,6 +167,16 @@ impl AppState {
             .retain(|_, (owner, _, _, _)| owner != window);
     }
 
+    /// Ends what `window` still waits on as it closes: the prompts shown in
+    /// it, its sends, and the responses its tabs kept.
+    pub fn window_closed(&self, window: &str) {
+        let prefix = format!("{window}/");
+        // Sends first, so one woken from its prompt ends as cancelled.
+        self.sends.cancel_prefix(&prefix);
+        self.vault.prompter().cancel_window(window);
+        self.responses.release_prefix(&prefix);
+    }
+
     /// Keeps `item`, deleted by `window` at `now` from the project at
     /// `root`, for Undo; returns its id.
     pub fn keep_deleted(&self, window: &str, root: &Path, item: DeletedItem, now: Instant) -> u64 {
@@ -193,6 +212,62 @@ impl AppState {
         let mut deleted = guard(&self.deleted);
         deleted.retain(|_, (_, _, _, at)| now.saturating_duration_since(*at) <= KEEP_DELETED);
         deleted
+    }
+}
+
+/// The sends in flight, each with the token that cancels it, by key. The
+/// desktop uses `"<window>/<tab>"`.
+#[derive(Default)]
+pub struct Sends {
+    running: Mutex<HashMap<String, CancellationToken>>,
+}
+
+impl Sends {
+    /// Starts a send under `key`, cancelling the one it replaces.
+    pub fn start(&self, key: &str) -> CancellationToken {
+        let token = CancellationToken::new();
+        if let Some(old) = guard(&self.running).insert(key.to_string(), token.clone()) {
+            old.cancel();
+        }
+        token
+    }
+
+    /// Cancels the send under `key`. An unknown key is ignored.
+    pub fn cancel(&self, key: &str) {
+        if let Some(token) = guard(&self.running).remove(key) {
+            token.cancel();
+        }
+    }
+
+    /// Cancels every send whose key starts with `prefix`, such as
+    /// `"<window>/"`.
+    pub fn cancel_prefix(&self, prefix: &str) {
+        let mut running = guard(&self.running);
+        for (_, token) in running.extract_if(|key, _| key.starts_with(prefix)) {
+            token.cancel();
+        }
+    }
+
+    /// Runs `f` while `token` is still the send under `key`, holding the
+    /// lock the cancels take, so nothing is kept for a send cancelled or
+    /// replaced meanwhile. `None`, without running `f`, otherwise.
+    pub fn if_running<T>(
+        &self,
+        key: &str,
+        token: &CancellationToken,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let running = guard(&self.running);
+        (running.get(key) == Some(token) && !token.is_cancelled()).then(f)
+    }
+
+    /// Forgets the send under `key` once it ended, unless a newer one
+    /// took its place.
+    pub fn finish(&self, key: &str, token: &CancellationToken) {
+        let mut running = guard(&self.running);
+        if running.get(key) == Some(token) {
+            running.remove(key);
+        }
     }
 }
 
@@ -233,7 +308,10 @@ pub(crate) fn take_line(file: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::take_line;
+    use dea_engine::{Prompter, SendAnswer};
+
+    use super::*;
+    use crate::testing::{RecordingWindows, WAIT, confirmation, on_thread, state_with};
 
     #[test]
     fn a_picked_folder_is_used_once() {
@@ -243,5 +321,79 @@ mod tests {
         assert_eq!(take_line(&file).as_deref(), Some("/work/plain"));
         assert!(!file.exists());
         assert_eq!(take_line(&file), None);
+    }
+
+    #[test]
+    fn a_new_send_with_the_same_key_cancels_the_old_one() {
+        let sends = Sends::default();
+        let first = sends.start("main/t1");
+        let second = sends.start("main/t1");
+        assert!(first.is_cancelled());
+        sends.finish("main/t1", &first); // stale: must not remove the second
+        sends.cancel("main/t1");
+        assert!(second.is_cancelled());
+    }
+
+    #[test]
+    fn a_send_keeps_its_response_only_while_it_runs() {
+        let sends = Sends::default();
+        let first = sends.start("main/t1");
+        assert_eq!(sends.if_running("main/t1", &first, || 1), Some(1));
+
+        let second = sends.start("main/t1");
+        assert_eq!(sends.if_running("main/t1", &first, || 2), None);
+        sends.cancel("main/t1");
+        assert_eq!(sends.if_running("main/t1", &second, || 3), None);
+
+        let third = sends.start("main/t1");
+        sends.finish("main/t1", &third);
+        assert_eq!(sends.if_running("main/t1", &third, || 4), None);
+        assert!(!third.is_cancelled(), "a send that ended is not cancelled");
+    }
+
+    #[test]
+    fn cancelling_a_prefix_spares_other_windows() {
+        let sends = Sends::default();
+        let ours = [sends.start("project-1/t1"), sends.start("project-1/t2")];
+        let theirs = [sends.start("project-10/t1"), sends.start("main/t1")];
+        sends.cancel_prefix("project-1/");
+        assert!(ours.iter().all(CancellationToken::is_cancelled));
+        assert!(!theirs.iter().any(CancellationToken::is_cancelled));
+    }
+
+    #[test]
+    fn closing_a_window_cancels_its_sends_and_confirmations() {
+        let dir = tempfile::tempdir().unwrap();
+        let (windows, _shown, confirms) = RecordingWindows::new(&["main", "project-1"], None);
+        let state = state_with(dir.path(), windows);
+        let confirm_from = |window: &'static str, key: &'static str| {
+            let state = Arc::clone(&state);
+            let send = state.sends.start(key);
+            let asked = on_thread(move || {
+                let prompter = state.vault.prompter();
+                prompter.sending(window, &send, || prompter.confirm_send(&confirmation()))
+            });
+            let (_, event) = confirms.recv_timeout(WAIT).unwrap();
+            (asked, event)
+        };
+        let closing = state.sends.start("project-1/t1");
+        let (closing_asked, _) = confirm_from("project-1", "project-1/t2");
+        let staying = state.sends.start("main/t1");
+        let (staying_asked, waiting) = confirm_from("main", "main/t2");
+
+        state.window_closed("project-1");
+        assert!(closing.is_cancelled());
+        assert_eq!(
+            closing_asked.recv_timeout(WAIT).unwrap(),
+            SendAnswer::Cancel
+        );
+
+        // The other window goes on.
+        assert!(!staying.is_cancelled());
+        state
+            .vault
+            .prompter()
+            .answer_send(waiting.id, SendAnswer::Send);
+        assert_eq!(staying_asked.recv_timeout(WAIT).unwrap(), SendAnswer::Send);
     }
 }
