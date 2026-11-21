@@ -19,7 +19,7 @@ use crate::pretty::{pretty_json, pretty_markup};
 use crate::requests::Sent;
 
 /// The most bytes in one row of the viewer.
-pub const ROW_BYTES: usize = 1024;
+pub const ROW_BYTES: usize = 256;
 
 /// The most rows one [`ResponseStore::rows`] call returns.
 const MAX_ROWS: u32 = 500;
