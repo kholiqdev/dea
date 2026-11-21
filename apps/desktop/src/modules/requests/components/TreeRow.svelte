@@ -10,6 +10,7 @@
     row,
     id,
     selected,
+    current = false,
     dragging = false,
     onclick,
     onpointerdown,
@@ -18,6 +19,8 @@
     row: TreeRowData;
     id: string;
     selected: boolean;
+    /** The request whose tab is in front. */
+    current?: boolean;
     /** The row is being dragged. */
     dragging?: boolean;
     onclick: () => void;
@@ -30,6 +33,7 @@
   {id}
   class="row"
   class:selected
+  class:current
   class:dragging
   role="treeitem"
   tabindex="-1"
@@ -38,6 +42,7 @@
   aria-posinset={row.position}
   aria-expanded={row.kind === "folder" ? row.open : undefined}
   aria-selected={selected}
+  aria-current={current ? "page" : undefined}
   style:padding-left="calc(var(--s-2) + {row.depth * 14}px)"
   {onclick}
   {onpointerdown}
@@ -84,6 +89,19 @@
     color: var(--text-1);
     /* Room for the More actions button over the row. */
     padding-right: 32px;
+  }
+
+  .current {
+    background: var(--bg-3);
+    box-shadow: inset 2px 0 0 var(--accent);
+    color: var(--text-1);
+  }
+
+  /* Both: the bar and the selection's highlight. */
+  .current.selected {
+    box-shadow:
+      inset 2px 0 0 var(--accent),
+      var(--highlight);
   }
 
   .dragging {
