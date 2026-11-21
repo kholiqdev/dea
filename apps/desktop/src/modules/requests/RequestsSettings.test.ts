@@ -32,3 +32,16 @@ test("the switch turns autosave on and says when it saves", async () => {
   await waitFor(() => expect(saved.at(-1)?.requests.autosave).toBe(true));
   expect(toggle).toBeChecked();
 });
+
+test("the position control moves the response below", async () => {
+  render(RequestsSettings);
+  const right = screen.getByRole("radio", { name: "Right" });
+  expect(right).toBeChecked();
+  await userEvent.click(screen.getByRole("radio", { name: "Below" }));
+  await waitFor(() =>
+    expect(saved.at(-1)?.requests.responseLayout).toBe("below"),
+  );
+  expect(
+    screen.getByRole("radiogroup", { name: "Response position" }),
+  ).toBeInTheDocument();
+});

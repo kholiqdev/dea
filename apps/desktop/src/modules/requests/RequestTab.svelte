@@ -7,6 +7,7 @@
   import FileExclamationPoint from "@lucide/svelte/icons/file-exclamation-point";
   import FileX from "@lucide/svelte/icons/file-x";
   import { tick, untrack } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import FileBanner from "@dea/ui/FileBanner.svelte";
   import Placeholder from "@dea/ui/Placeholder.svelte";
   import { projectApi } from "$app/contributions/project-api";
@@ -18,6 +19,7 @@
   import HeadersSection from "./components/HeadersSection.svelte";
   import NetworkOptions from "./components/NetworkOptions.svelte";
   import OutsideChange from "./components/OutsideChange.svelte";
+  import ResponsePane from "./components/response/ResponsePane.svelte";
   import ParamsSection from "./components/ParamsSection.svelte";
   import RequestLine from "./components/RequestLine.svelte";
   import {
@@ -66,6 +68,12 @@
       ),
     ),
   });
+  // The response sits right of the editor unless the setting or a narrow
+  // window puts it below.
+  const narrow = new MediaQuery("(max-width: 959px)");
+  const layout = $derived(
+    narrow.current ? "below" : settings.requests.responseLayout,
+  );
   let tablist = $state<HTMLElement>();
   let editor = $state<HTMLElement>();
 
@@ -113,6 +121,14 @@
 
   function save(): void {
     draft.save().catch((e: unknown) => shell.toast(errorMessage(e)));
+  }
+
+  function toggleLayout(): void {
+    const responseLayout =
+      settings.requests.responseLayout === "right" ? "below" : "right";
+    settings
+      .update({ requests: { responseLayout } })
+      .catch((e: unknown) => shell.toast(errorMessage(e)));
   }
 
   function close(): void {
@@ -169,89 +185,130 @@
 {:else if !draft.saved}
   {#if draft.error}{@render problem(draft.error)}{/if}
 {:else}
-  <div class="editor" bind:this={editor}>
-    <OutsideChange {draft} onclose={close} />
-    {#if draft.error}{@render problem(draft.error)}{/if}
-    {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
-    <RequestLine
-      {draft}
-      {variables}
-      {readonly}
-      sending={exchange.state.phase === "sending"}
-      onsave={save}
-      onsend={() => void exchange.send(draft)}
-      oncancel={() => exchange.cancel()}
-    />
-    {#if exchange.warning}
-      <UndefinedWarning
-        names={exchange.warning}
-        environment={project.environment?.name ?? null}
-        ondefine={() => void shell.runCommand("project.editEnvironments")}
-        onsendanyway={() => void exchange.send(draft, { anyway: true })}
+  <div class="split" data-layout={layout}>
+    <div class="editor" bind:this={editor}>
+      <OutsideChange {draft} onclose={close} />
+      {#if draft.error}{@render problem(draft.error)}{/if}
+      {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
+      <RequestLine
+        {draft}
+        {variables}
+        {readonly}
+        sending={exchange.state.phase === "sending"}
+        onsave={save}
+        onsend={() => void exchange.send(draft)}
+        oncancel={() => exchange.cancel()}
       />
-    {/if}
-    <TlsWarning {effective} />
-    <div
-      class="sections"
-      role="tablist"
-      aria-label="Request sections"
-      tabindex="-1"
-      bind:this={tablist}
-      onkeydown={(e) => void onkeydown(e)}
-    >
-      {#each SECTIONS as section (section.id)}
-        {@const selected = draft.section === section.id}
-        <button
-          type="button"
-          role="tab"
-          id="{uid}-{section.id}"
-          aria-selected={selected}
-          aria-controls="{uid}-panel"
-          tabindex={selected ? 0 : -1}
-          onclick={() => (draft.section = section.id)}
-        >
-          {section.label}
-          {#if counts[section.id]}<span class="count">{counts[section.id]}</span
-            >{/if}
-        </button>
-      {/each}
-    </div>
-    <div
-      class="panel"
-      role="tabpanel"
-      id="{uid}-panel"
-      aria-labelledby="{uid}-{draft.section}"
-    >
-      {#if draft.section === "params"}
-        <ParamsSection {draft} {variables} {readonly} />
-      {:else if draft.section === "headers"}
-        <HeadersSection {draft} {variables} {readonly} />
-      {:else if draft.section === "body"}
-        <BodySection
-          {draft}
-          {variables}
-          {readonly}
-          onerror={(message: string) => shell.toast(message)}
-        />
-      {:else}
-        <NetworkOptions
-          options={draft.draft.options ?? {}}
-          effective={draft.inspection?.options ?? null}
-          scope="request"
-          disabled={readonly}
-          onchange={(options: SendOptions) => draft.setOptions(options)}
+      {#if exchange.warning}
+        <UndefinedWarning
+          names={exchange.warning}
+          environment={project.environment?.name ?? null}
+          ondefine={() => void shell.runCommand("project.editEnvironments")}
+          onsendanyway={() => void exchange.send(draft, { anyway: true })}
         />
       {/if}
+      <TlsWarning {effective} />
+      <div
+        class="sections"
+        role="tablist"
+        aria-label="Request sections"
+        tabindex="-1"
+        bind:this={tablist}
+        onkeydown={(e) => void onkeydown(e)}
+      >
+        {#each SECTIONS as section (section.id)}
+          {@const selected = draft.section === section.id}
+          <button
+            type="button"
+            role="tab"
+            id="{uid}-{section.id}"
+            aria-selected={selected}
+            aria-controls="{uid}-panel"
+            tabindex={selected ? 0 : -1}
+            onclick={() => (draft.section = section.id)}
+          >
+            {section.label}
+            {#if counts[section.id]}<span class="count"
+                >{counts[section.id]}</span
+              >{/if}
+          </button>
+        {/each}
+      </div>
+      <div
+        class="panel"
+        role="tabpanel"
+        id="{uid}-panel"
+        aria-labelledby="{uid}-{draft.section}"
+      >
+        {#if draft.section === "params"}
+          <ParamsSection {draft} {variables} {readonly} />
+        {:else if draft.section === "headers"}
+          <HeadersSection {draft} {variables} {readonly} />
+        {:else if draft.section === "body"}
+          <BodySection
+            {draft}
+            {variables}
+            {readonly}
+            onerror={(message: string) => shell.toast(message)}
+          />
+        {:else}
+          <NetworkOptions
+            options={draft.draft.options ?? {}}
+            effective={draft.inspection?.options ?? null}
+            scope="request"
+            disabled={readonly}
+            onchange={(options: SendOptions) => draft.setOptions(options)}
+          />
+        {/if}
+      </div>
+    </div>
+    <div class="response">
+      <ResponsePane
+        tabId={id}
+        name={tab.title}
+        {exchange}
+        layout={settings.requests.responseLayout}
+        stacked={narrow.current}
+        ontogglelayout={toggleLayout}
+      />
     </div>
   </div>
 {/if}
 
 <style>
-  .editor {
+  .split {
     flex: 1;
     min-height: 0;
     display: flex;
+  }
+
+  .split[data-layout="below"] {
     flex-direction: column;
+  }
+
+  .editor {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .response {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    box-shadow: inset 0 1px 0 var(--line);
+  }
+
+  .split[data-layout="right"] .response {
+    flex: 1.15;
+    box-shadow: inset 1px 0 0 var(--line);
+  }
+
+  .split[data-layout="below"] .response {
+    flex: 1;
   }
 
   .sections {

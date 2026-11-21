@@ -45,6 +45,11 @@ export const manifest: ModuleManifest = {
       action: { type: "intent", intent: "requests.send" },
       scope: "project",
     },
+    {
+      id: "requests.toggleLayout",
+      title: "Toggle response position",
+      action: { type: "intent", intent: "requests.toggleLayout" },
+    },
   ],
   shortcuts: [
     { command: "requests.open", chord: "Mod+1" },
@@ -78,6 +83,10 @@ export const manifest: ModuleManifest = {
     {
       intent: "requests.send",
       handler: () => import("./intents/send"),
+    },
+    {
+      intent: "requests.toggleLayout",
+      handler: () => import("./intents/toggle-layout"),
     },
   ],
 };

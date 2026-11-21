@@ -3,6 +3,11 @@
 
 import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { BodyKind } from "$lib/ipc/bindings/BodyKind";
+import type { CookieInfo } from "$lib/ipc/bindings/CookieInfo";
+import type { Filtered } from "$lib/ipc/bindings/Filtered";
+import type { Found } from "$lib/ipc/bindings/Found";
+import type { RowsPage } from "$lib/ipc/bindings/RowsPage";
 import type { FileErrorInfo } from "$lib/ipc/bindings/FileErrorInfo";
 import type { FileRef } from "$lib/ipc/bindings/FileRef";
 import type { FolderFile } from "$lib/ipc/bindings/FolderFile";
@@ -46,6 +51,59 @@ export interface RequestsIpc {
   send: FakeSend;
   /** Ends every held send, with `outcome` or else `send.outcome`. */
   finishSends(outcome?: SendOutcome): void;
+  /** Every `response_rows` call, in order. */
+  rowCalls: { id: string; from: number; count: number }[];
+  /** Every `list_cookies` call: the environment it asked for. */
+  cookieCalls: (string | null)[];
+  /** Every `save_response`, in order. */
+  savedResponses: { id: string; name: string }[];
+}
+
+/** What the fake answers about the last response of a tab. */
+export interface FakeResponseBody {
+  text?: { pretty?: string; raw?: string; formatted?: boolean };
+  bytes?: Uint8Array;
+  rows?: (from: number, count: number) => RowsPage;
+  filter?: (path: string) => Filtered | IpcError;
+  find?: Found | null;
+}
+
+/** `opts` as the `response` option of `fakeRequestsIpc`. */
+export function fakeResponse(opts: FakeResponseBody = {}): FakeResponseBody {
+  return opts;
+}
+
+/** Rows `row 0`, `row 1`, … of a body of `total` rows. */
+export function fakeRows(
+  opts: { total?: number; row?: (n: number) => string } = {},
+): (from: number, count: number) => RowsPage {
+  const total = opts.total ?? 0;
+  const row = opts.row ?? ((n: number) => `row ${n}`);
+  return (from, count) => ({
+    total,
+    from,
+    rows: Array.from(
+      { length: Math.max(0, Math.min(count, total - from)) },
+      (_, i) => row(from + i),
+    ),
+  });
+}
+
+/** The cookies of each environment, by its name. */
+export function fakeCookies(
+  byEnv: Record<string, CookieInfo[]>,
+): Record<string, CookieInfo[]> {
+  return byEnv;
+}
+
+/** A `send` option that ends with a response of `kind`, with `over` on top. */
+export function doneExchange(
+  kind: BodyKind,
+  over: Partial<ResponseInfo> = {},
+): Partial<FakeSend> {
+  return {
+    outcome: { type: "response", response: responseInfo({ kind, ...over }) },
+  };
 }
 
 /**
@@ -210,6 +268,10 @@ export function fakeRequestsIpc(
     secrets?: string[];
     /** How `send_request` answers; a 200 response by default. */
     send?: Partial<FakeSend>;
+    /** What the response commands answer. */
+    response?: FakeResponseBody;
+    /** The cookie jars, by environment name. */
+    cookies?: Record<string, CookieInfo[]>;
   } = {},
 ): RequestsIpc {
   // The sends `hold` keeps running, with what ends each.
@@ -238,6 +300,9 @@ export function fakeRequestsIpc(
       ...opts.send,
     },
     finishSends: (outcome) => finish(() => true, outcome ?? ipc.send.outcome),
+    rowCalls: [],
+    cookieCalls: [],
+    savedResponses: [],
   };
   if (opts.errors) ipc.tree.errors = opts.errors;
   const trash = new Map<
@@ -460,6 +525,45 @@ export function fakeRequestsIpc(
       case "cancel_send":
         finish((h) => h.id === args.id, { type: "cancelled" });
         return null;
+      case "response_text": {
+        const text = opts.response?.text ?? {};
+        const pretty = args.view === "pretty";
+        return {
+          text: (pretty ? text.pretty : text.raw) ?? text.raw ?? "",
+          formatted: pretty && (text.formatted ?? text.pretty !== undefined),
+        };
+      }
+      case "response_bytes":
+        return opts.response?.bytes ?? new Uint8Array();
+      case "response_rows": {
+        const id = args.id as string;
+        const from = args.from as number;
+        const count = args.count as number;
+        ipc.rowCalls.push({ id, from, count });
+        return (opts.response?.rows ?? fakeRows())(from, count);
+      }
+      case "find_in_response":
+        return opts.response?.find ?? null;
+      case "filter_response": {
+        const answer = opts.response?.filter?.(args.path as string);
+        if (!answer) return { text: "[]", count: 0 };
+        // Dea's commands reject with a plain { kind, message }.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if ("message" in answer) throw answer;
+        return answer;
+      }
+      case "copy_response":
+        return null;
+      case "save_response": {
+        const name = args.name as string;
+        ipc.savedResponses.push({ id: args.id as string, name });
+        return name;
+      }
+      case "list_cookies": {
+        const environment = args.environment as string | null;
+        ipc.cookieCalls.push(environment);
+        return structuredClone(opts.cookies?.[environment ?? ""] ?? []);
+      }
       case "describe_file_ref": {
         const value = args.value as string;
         return {
