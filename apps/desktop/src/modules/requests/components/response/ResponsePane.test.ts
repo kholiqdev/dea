@@ -28,6 +28,7 @@ import {
   type RequestsIpc,
 } from "../../test-support";
 import { sessionView } from "../../state/session-view.svelte";
+import toolbarSource from "./ResponseToolbar.svelte?raw";
 
 const PATH = "requests/shipments/list.yaml";
 const file: RequestFile = {
@@ -188,6 +189,43 @@ test("the_legend_lists_every_phase_and_a_reused_connection", async () => {
     "Waiting for server 96 ms",
     "Download 18 ms",
   ]);
+});
+
+test("a_narrow_legend_keeps_every_name_for_assistive_tech", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 0,
+        connectMs: 0,
+        tlsMs: 0,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 114,
+        reused: true,
+      },
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  const items = within(
+    screen.getByRole("list", { name: "Timing" }),
+  ).getAllByRole("listitem");
+  expect(items.map((item) => item.getAttribute("title"))).toEqual([
+    "DNS 0 ms",
+    "Connect 0 ms",
+    "TLS 0 ms",
+    "Waiting for server 96 ms",
+    "Download 18 ms",
+  ]);
+  expect(items.map((item) => item.querySelector(".name")?.textContent)).toEqual(
+    ["DNS", "Connect", "TLS", "Waiting for server", "Download"],
+  );
+  // Short of room, the names leave the screen but not the page.
+  const compact =
+    /@container \(width < \d+px\) \{[^@]*?\.name \{([^}]*)\}/.exec(
+      toolbarSource,
+    )?.[1] ?? "";
+  expect(compact).toContain("clip-path: inset(50%)");
+  expect(compact).not.toContain("display: none");
 });
 
 test("the_legend_ends_with_size_and_version", async () => {

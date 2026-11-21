@@ -359,3 +359,28 @@ test("a_hidden_filter_keeps_its_path_but_stops_filtering", async () => {
   ).toHaveValue("$.a");
   await waitFor(() => expect(body()).toHaveTextContent("42"));
 });
+
+test("a_declined_send_keeps_the_view_and_the_filter", async () => {
+  const ipc = await open("json", {
+    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
+    filter: () => ({ text: "[\n  1\n]", count: 1 }),
+  });
+  await screen.findByRole("textbox", { name: "Response body" });
+  await userEvent.click(screen.getByRole("radio", { name: "Raw" }));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+    "$.a",
+  );
+  expect(await screen.findByText("1 match")).toBeInTheDocument();
+  // Declined at the production prompt: the same response comes back.
+  ipc.send = { ...ipc.send, outcome: { type: "notConfirmed" } };
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(ipc.sends).toHaveLength(2));
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: "Raw" })).toBeChecked(),
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+  ).toHaveValue("$.a");
+  expect(await screen.findByText("1 match")).toBeInTheDocument();
+});

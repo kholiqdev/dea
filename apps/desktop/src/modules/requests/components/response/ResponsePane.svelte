@@ -7,6 +7,7 @@
 <script lang="ts">
   import ListFilter from "@lucide/svelte/icons/list-filter";
   import { projectApi } from "$app/contributions/project-api";
+  import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
   import { chordParts, currentPlatform, parseChord } from "$lib/keyboard/chord";
   import { tick } from "svelte";
   import { watchWidth } from "../../lib/columns";
@@ -82,10 +83,19 @@
   const project = projectApi();
   const sendKeys = chordParts(parseChord("Mod+Enter"), currentPlatform());
   const current = $derived(exchange.state);
-  // The view and filter chosen for a response last while it stays.
-  const controls = $derived(
-    current.phase === "done" ? new BodyControls(current.response) : null,
-  );
+  // The view and filter chosen for a response last while it stays, and
+  // when it comes back after a send that did not go out.
+  const kept = new WeakMap<ResponseInfo, BodyControls>();
+  const controls = $derived.by(() => {
+    if (current.phase !== "done") return null;
+    const response = current.response;
+    let found = kept.get(response);
+    if (!found) {
+      found = new BodyControls(response);
+      kept.set(response, found);
+    }
+    return found;
+  });
 
   async function onviewkeys(e: KeyboardEvent): Promise<void> {
     if (!controls) return;

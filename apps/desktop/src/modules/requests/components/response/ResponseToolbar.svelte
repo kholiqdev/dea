@@ -85,102 +85,114 @@
   }
 </script>
 
-<div
-  class="toolbar"
-  role="toolbar"
-  aria-label="Response"
-  data-tone={response ? statusTone(response.status) : "muted"}
->
-  {#if response}
-    <span class="dot" aria-hidden="true"></span>
-    <span class="code">{response.status}</span>
-    <span class="reason">{response.reason}</span>
-    <span class="fact">{formatMs(response.timing.totalMs)}</span>
-    <TimingBar timing={response.timing} controls="{uid}-legend" />
-    <span class="fact size">{formatBytes(response.size)}</span>
-    <span class="fact version">{response.version}</span>
-    {#if environment}
-      <SentInPill {...environment} />
-    {/if}
-    <span class="actions">
-      <button
-        type="button"
-        class="icon"
-        aria-label="Copy response"
-        title={copyOff || "Copy response"}
-        disabled={copyOff !== null}
-        onclick={() => void copy()}
-      >
-        <Copy size={16} strokeWidth={1.5} />
-      </button>
-      <button
-        type="button"
-        class="icon"
-        aria-label="Save response to file"
-        title="Save response to file"
-        disabled={empty}
-        onclick={() => void save()}
-      >
-        <Download size={16} strokeWidth={1.5} />
-      </button>
-      {#if !stacked}
-        {@const label =
-          layout === "right"
-            ? "Show response below"
-            : "Show response on the right"}
+<!-- Its width, the pane's, decides what the rows leave out. -->
+<div class="head">
+  <div
+    class="toolbar"
+    role="toolbar"
+    aria-label="Response"
+    data-tone={response ? statusTone(response.status) : "muted"}
+  >
+    {#if response}
+      <span class="dot" aria-hidden="true"></span>
+      <span class="code">{response.status}</span>
+      <span class="reason">{response.reason}</span>
+      <span class="fact">{formatMs(response.timing.totalMs)}</span>
+      <TimingBar timing={response.timing} controls="{uid}-legend" />
+      <span class="fact size">{formatBytes(response.size)}</span>
+      <span class="fact version">{response.version}</span>
+      {#if environment}
+        <SentInPill {...environment} />
+      {/if}
+      <span class="actions">
         <button
           type="button"
           class="icon"
-          aria-label={label}
-          title={label}
-          onclick={ontogglelayout}
+          aria-label="Copy response"
+          title={copyOff || "Copy response"}
+          disabled={copyOff !== null}
+          onclick={() => void copy()}
         >
-          {#if layout === "right"}
-            <PanelBottom size={16} strokeWidth={1.5} />
-          {:else}
-            <PanelRight size={16} strokeWidth={1.5} />
-          {/if}
+          <Copy size={16} strokeWidth={1.5} />
         </button>
+        <button
+          type="button"
+          class="icon"
+          aria-label="Save response to file"
+          title="Save response to file"
+          disabled={empty}
+          onclick={() => void save()}
+        >
+          <Download size={16} strokeWidth={1.5} />
+        </button>
+        {#if !stacked}
+          {@const label =
+            layout === "right"
+              ? "Show response below"
+              : "Show response on the right"}
+          <button
+            type="button"
+            class="icon"
+            aria-label={label}
+            title={label}
+            onclick={ontogglelayout}
+          >
+            {#if layout === "right"}
+              <PanelBottom size={16} strokeWidth={1.5} />
+            {:else}
+              <PanelRight size={16} strokeWidth={1.5} />
+            {/if}
+          </button>
+        {/if}
+      </span>
+    {:else}
+      <span class="sending">Sending</span>
+      {#if elapsed !== null}<span class="fact">{formatSeconds(elapsed)}</span
+        >{/if}
+      {#if environment}
+        <SentInPill {...environment} />
       {/if}
-    </span>
-  {:else}
-    <span class="sending">Sending</span>
-    {#if elapsed !== null}<span class="fact">{formatSeconds(elapsed)}</span
-      >{/if}
-    {#if environment}
-      <SentInPill {...environment} />
     {/if}
+  </div>
+  {#if response && sessionView.timingLegend}
+    {@const timing = response.timing}
+    <div class="legend" id="{uid}-legend">
+      <ul class="phases" aria-label="Timing">
+        {#each timingPhases(timing) as phase (phase.id)}
+          {@const ms = formatMs(phase.ms)}
+          <li class={{ zero: phase.ms <= 0 }} title="{phase.label} {ms}">
+            <span
+              class="swatch"
+              style:background={phase.color}
+              aria-hidden="true"
+            ></span>
+            <span class="name">{phase.label}</span>
+            <span class="ms">{ms}</span>
+            {#if timing.reused && phase.id === "tls"}
+              <span class="reused">reused</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+      <span class="fact size">{formatBytes(response.size)}</span>
+      <span class="fact version">{response.version}</span>
+    </div>
   {/if}
 </div>
-{#if response && sessionView.timingLegend}
-  {@const timing = response.timing}
-  <div class="legend" id="{uid}-legend">
-    <ul class="phases" aria-label="Timing">
-      {#each timingPhases(timing) as phase (phase.id)}
-        <li>
-          <span class="swatch" style:background={phase.color} aria-hidden="true"
-          ></span>
-          <span>{phase.label}</span>
-          <span class="ms">{formatMs(phase.ms)}</span>
-          {#if timing.reused && phase.id === "tls"}
-            <span class="reused">reused</span>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-    <span class="fact size">{formatBytes(response.size)}</span>
-    <span class="fact version">{response.version}</span>
-  </div>
-{/if}
 
 <style>
+  /* Both rows are as wide as the pane. Their container has no padding, so
+     the widths the rows are measured by below are the rows' own. */
+  .head {
+    flex: none;
+    container-type: inline-size;
+  }
+
   /* One row whatever its width. A narrow row leaves out the version, then
      the size; short of room, the reason gives way first, then the
      environment. */
   .toolbar {
-    container-type: inline-size;
     height: 40px;
-    flex: none;
     display: flex;
     align-items: center;
     gap: var(--s-3);
@@ -292,17 +304,14 @@
   }
 
   /* The timing legend, under the row: its phases, then the size and the
-     version when the row above leaves them out. Both rows are as wide as
-     the pane. Short of room, the phases scroll; the size and version stay
-     in view. */
+     version when the row above leaves them out. */
   .legend {
-    container-type: inline-size;
     height: 28px;
-    flex: none;
     display: flex;
     align-items: center;
     gap: var(--s-4);
     padding: 0 var(--s-4);
+    overflow: hidden;
     white-space: nowrap;
     box-shadow: inset 0 -1px 0 var(--line);
     font-size: 12px;
@@ -323,27 +332,8 @@
     scrollbar-width: none;
   }
 
-  @container (width >= 560px) {
-    .legend .version {
-      display: none;
-    }
-  }
-
-  @container (width >= 480px) {
-    .legend .size {
-      display: none;
-    }
-  }
-
-  /* Where phases that do not fit are cut off, before the version. */
-  @container (width < 560px) {
-    .phases {
-      padding-right: var(--s-4);
-      box-shadow: inset -1px 0 0 var(--line);
-    }
-  }
-
   .phases li {
+    position: relative;
     flex: none;
     display: flex;
     align-items: center;
@@ -366,5 +356,86 @@
     border-radius: var(--r-key);
     background: var(--bg-3);
     color: var(--text-2);
+  }
+
+  @container (width >= 560px) {
+    .legend .version {
+      display: none;
+    }
+  }
+
+  @container (width >= 480px) {
+    .legend .size {
+      display: none;
+    }
+  }
+
+  /* Too narrow for the names, which take about 610 px with a fresh
+     connection and 640 px with a reused one: each phase is its colour and
+     its time, and its name stays for a screen reader and in its title. */
+  @container (width < 680px) {
+    .name {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .legend,
+    .phases {
+      gap: var(--s-2);
+    }
+
+    .phases li {
+      gap: var(--s-1);
+    }
+  }
+
+  /* The version, and then the size, follow the phases: a line parts them. */
+  @container (width < 560px) {
+    .phases {
+      padding-right: var(--s-2);
+      box-shadow: inset -1px 0 0 var(--line);
+    }
+  }
+
+  /* With the size to fit as well, down to the 400 px of the narrowest
+     pane: smaller and closer, and a phase that took no time shows only
+     its colour, its time kept like its name. */
+  @container (width < 480px) {
+    .legend,
+    .legend .fact {
+      font-size: 11px;
+    }
+
+    .legend,
+    .phases {
+      gap: 6px;
+    }
+
+    .phases {
+      padding-right: 6px;
+    }
+
+    .phases li {
+      gap: 3px;
+    }
+
+    .zero .ms {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
   }
 </style>
