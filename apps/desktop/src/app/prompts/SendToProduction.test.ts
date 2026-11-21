@@ -83,6 +83,67 @@ test("the_url_and_environment_are_named", async () => {
   expect(within(dialog).getByText("production")).toHaveClass("env-prod");
 });
 
+/** Shows the confirmation `post` with `over` on top, and its dialog. */
+async function showConfirmation(over: Partial<SendConfirmEvent>) {
+  fakeSendConfirm({ ...post, ...over });
+  render(SendToProduction, { confirmations: sendConfirmations });
+  await screen.findByRole("dialog");
+}
+
+/** What row `label` of the dialog's details says; null without one. */
+function rowOf(dialog: HTMLElement, label: string): HTMLElement | null {
+  const term = [...dialog.querySelectorAll("dt")].find(
+    (dt) => dt.textContent === label,
+  );
+  return term?.nextElementSibling instanceof HTMLElement
+    ? term.nextElementSibling
+    : null;
+}
+
+test("the_dialog_names_the_host_and_undefined_names", async () => {
+  await showConfirmation({
+    method: "DELETE",
+    host: "api.harbor.test",
+    url: "https://api.harbor.test/v1/shipments/42",
+    environment: "production",
+    undefined: ["traceId"],
+    canSkip: false,
+    secrets: false,
+  });
+  const dialog = screen.getByRole("dialog", {
+    name: "Send this request to production?",
+  });
+  expect(rowOf(dialog, "Host")).toHaveTextContent("api.harbor.test");
+  expect(rowOf(dialog, "Undefined")).toHaveTextContent(
+    "traceId sent as written",
+  );
+  expect(within(dialog).getByText("DELETE").style.color).toBe(
+    "var(--method-delete)",
+  );
+  expect(
+    [...dialog.querySelectorAll("dt")].map((dt) => dt.textContent),
+  ).toEqual(["Method", "Host", "URL", "Environment", "Undefined"]);
+});
+
+test("each_undefined_name_is_code_and_they_are_comma_separated", async () => {
+  await showConfirmation({ undefined: ["traceId", "tenant"] });
+  const row = rowOf(screen.getByRole("dialog"), "Undefined");
+  expect(row).toHaveTextContent("traceId, tenant sent as written");
+  expect(
+    [...(row?.querySelectorAll("code") ?? [])].map((c) => c.textContent),
+  ).toEqual(["traceId", "tenant"]);
+});
+
+test("the_dialog_hides_host_and_undefined_when_empty", async () => {
+  await showConfirmation({ host: "", undefined: [] });
+  const dialog = screen.getByRole("dialog");
+  expect(rowOf(dialog, "Host")).toBeNull();
+  expect(rowOf(dialog, "Undefined")).toBeNull();
+  expect(
+    [...dialog.querySelectorAll("dt")].map((dt) => dt.textContent),
+  ).toEqual(["Method", "URL", "Environment"]);
+});
+
 test("the_subtitle_mentions_secrets_only_when_used", async () => {
   fakeSendConfirm(post);
   render(SendToProduction, { confirmations: sendConfirmations });
