@@ -11,6 +11,7 @@ import {
   doneExchange,
   fakeRequestsIpc,
   fakeResponse,
+  fakeRows,
   type RequestsIpc,
 } from "../../test-support";
 import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
@@ -145,17 +146,20 @@ test("empty_says_there_is_no_body", async () => {
   expect(screen.getByText("No body")).toBeInTheDocument();
 });
 
-test("large_and_events_leave_room_for_their_viewers", async () => {
-  await open("json", {}, { large: true });
-  expect(document.querySelector('[data-slot="large-body"]')).not.toBeNull();
+test("a_large_body_opens_in_the_row_viewer", async () => {
+  await open("json", { rows: fakeRows({ total: 3 }) }, { large: true });
+  expect(await screen.findByText("row 2")).toBeInTheDocument();
+  expect(screen.getByRole("document", { name: "Response body" })).toBeVisible();
   expect(
     screen.queryByRole("textbox", { name: "Filter with JSONPath" }),
   ).toBeNull();
 });
 
-test("events_leave_room_for_their_list", async () => {
+test("an_event_stream_opens_in_the_event_list", async () => {
   await open("events");
-  expect(document.querySelector('[data-slot="event-list"]')).not.toBeNull();
+  expect(
+    screen.getByRole("list", { name: "Server-sent events" }),
+  ).toBeInTheDocument();
 });
 
 test("not_valid_json_says_it_is_shown_as_received", async () => {

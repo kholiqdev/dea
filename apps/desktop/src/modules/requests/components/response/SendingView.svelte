@@ -5,6 +5,8 @@
 <script lang="ts">
   import { formatBytes, formatMs, formatSeconds } from "../../lib/format";
   import type { ExchangeState } from "../../state/exchange.svelte";
+  import EventList from "./EventList.svelte";
+  import StreamingText from "./StreamingText.svelte";
 
   let {
     sending,
@@ -17,6 +19,13 @@
 
   const LABELS = { dns: "DNS lookup", connect: "Connect", tls: "TLS" } as const;
   const downloading = $derived(sending.head !== null);
+  const stream = $derived(
+    sending.head?.headers.some(
+      (h) =>
+        h.name.toLowerCase() === "content-type" &&
+        h.value.toLowerCase().includes("text/event-stream"),
+    ) ?? false,
+  );
 </script>
 
 <div class="sending">
@@ -46,15 +55,23 @@
       </li>
     {/if}
   </ul>
-  <div class="skeleton" aria-hidden="true">
-    {#each [92, 64, 78, 40, 70, 52] as width, i (i)}
-      <span style:width="{width}%"></span>
-    {/each}
-  </div>
+  {#if !downloading}
+    <div class="skeleton" aria-hidden="true">
+      {#each [92, 64, 78, 40, 70, 52] as width, i (i)}
+        <span style:width="{width}%"></span>
+      {/each}
+    </div>
+  {:else if stream}
+    <EventList events={sending.events} startedAt={sending.startedAt} />
+  {:else}
+    <StreamingText text={sending.text} received={sending.received} />
+  {/if}
 </div>
 
 <style>
   .sending {
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: var(--s-4);
