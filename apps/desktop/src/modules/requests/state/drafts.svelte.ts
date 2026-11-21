@@ -253,8 +253,9 @@ export class RequestDraft extends SyncedFile<RequestFile> {
   /** Text typed in the URL bar: it stays as typed, its query fills the params. */
   typeUrl(text: string): void {
     this.typedUrl = text;
-    const { base, query } = splitUrl(text);
-    this.draft.url = base;
+    const { base, query, fragment } = splitUrl(text);
+    // The fragment stays in the URL, after the base, and never in the params.
+    this.draft.url = fragment === null ? base : `${base}#${fragment}`;
     this.draft.params = syncParams(
       (this.draft.params ?? []).filter((p) => !isBlank(p)),
       query,
