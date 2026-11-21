@@ -3,6 +3,7 @@
   no PDF viewer and the CSP blocks `blob:` frames, so pdf.js draws it.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { responseBytes } from "$lib/ipc/responses";
   import { loadPdf, type PdfDocument } from "../../lib/pdf";
 
@@ -21,10 +22,15 @@
     failed = false;
     void (async () => {
       try {
-        doc = await loadPdf(await responseBytes(at));
-        if (!live) return;
+        const loaded = await loadPdf(await responseBytes(at));
+        if (!live) {
+          // The preview closed while this was loading: nobody else will.
+          void loaded.destroy();
+          return;
+        }
+        doc = loaded;
         pages = doc.numPages;
-        await Promise.resolve();
+        await tick();
         const width = pane?.clientWidth || 600;
         const ratio = window.devicePixelRatio || 1;
         for (let n = 1; n <= doc.numPages; n++) {
@@ -32,7 +38,7 @@
           if (!live) return;
           const canvas = canvases[n - 1];
           const context = canvas?.getContext("2d");
-          if (!canvas || !context) continue;
+          if (!canvas || !context) throw new Error("No canvas for the page");
           const base = page.getViewport({ scale: 1 });
           const viewport = page.getViewport({
             scale: (width / base.width) * ratio,
