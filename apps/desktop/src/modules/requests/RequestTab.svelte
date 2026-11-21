@@ -98,6 +98,14 @@
     return () => draft.cancelInspection();
   });
 
+  // An edit takes the undefined-variable warning down: it was about the
+  // draft as it was. The name is left out, as a rename from the sidebar
+  // rewrites it without anyone editing the request.
+  $effect(() => {
+    void JSON.stringify({ ...draft.draft, name: undefined });
+    untrack(() => exchange.clearWarning());
+  });
+
   $effect(() => shell.setTabDirty(id, draft.dirty));
 
   // Autosaves a second after the last edit, or after an outside change is

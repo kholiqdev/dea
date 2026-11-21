@@ -1,5 +1,5 @@
 import type { Channel } from "@tauri-apps/api/core";
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
 import type { SendOutcome } from "$lib/ipc/bindings/SendOutcome";
@@ -26,6 +26,7 @@ import {
   exchangeFor,
   exchanges,
   MAX_EVENTS,
+  SECOND_SEND_GAP_MS,
   type SendResult,
 } from "./exchange.svelte";
 
@@ -43,6 +44,10 @@ let project: FakeProject;
 
 beforeEach(() => {
   ({ shell, project } = setUpRequestTabs());
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /** The draft of an open request tab `id`, read from `path`. */
@@ -658,4 +663,74 @@ test("text_bytes_count_utf8_not_characters", async () => {
     textBytes: 7,
   });
   ipc.finishSends();
+});
+
+test("a_second_send_sends_while_the_warning_shows", async () => {
+  vi.useFakeTimers({ toFake: ["performance"] });
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["traceId"] },
+  });
+  const draft = await openDraft("t1", PATH);
+  const exchange = exchangeFor("t1");
+  expect(await exchange.send(draft)).toBe("warned");
+  vi.advanceTimersByTime(SECOND_SEND_GAP_MS);
+  expect(await exchange.send(draft)).toBe("sent");
+  expect(ipc.sends).toHaveLength(1);
+  expect(exchange.warning).toBeNull();
+});
+
+test("a_second_send_right_after_the_warning_is_ignored", async () => {
+  vi.useFakeTimers({ toFake: ["performance"] });
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["traceId"] },
+  });
+  const draft = await openDraft("t1", PATH);
+  const exchange = exchangeFor("t1");
+  expect(await exchange.send(draft)).toBe("warned");
+  vi.advanceTimersByTime(SECOND_SEND_GAP_MS - 1);
+  expect(await exchange.send(draft)).toBe("ignored");
+  expect(ipc.sends).toHaveLength(0);
+  expect(exchange.warning).toEqual(["traceId"]);
+});
+
+test("different_names_warn_again", async () => {
+  vi.useFakeTimers({ toFake: ["performance"] });
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: (_path, request) => ({
+      undefined: request.url.includes("{{tenant}}") ? ["tenant"] : ["traceId"],
+    }),
+  });
+  const draft = await openDraft("t1", PATH);
+  const exchange = exchangeFor("t1");
+  expect(await exchange.send(draft)).toBe("warned");
+  expect(exchange.warning).toEqual(["traceId"]);
+  vi.advanceTimersByTime(SECOND_SEND_GAP_MS * 2);
+  draft.typeUrl("{{baseUrl}}/v1/{{tenant}}");
+  expect(await exchange.send(draft)).toBe("warned");
+  expect(exchange.warning).toEqual(["tenant"]);
+  // The count started again with the new banner.
+  vi.advanceTimersByTime(SECOND_SEND_GAP_MS - 1);
+  expect(await exchange.send(draft)).toBe("ignored");
+  vi.advanceTimersByTime(1);
+  expect(await exchange.send(draft)).toBe("sent");
+  expect(ipc.sends).toHaveLength(1);
+});
+
+test("clearing_the_warning_makes_the_next_send_warn_again", async () => {
+  vi.useFakeTimers({ toFake: ["performance"] });
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["traceId"] },
+  });
+  const draft = await openDraft("t1", PATH);
+  const exchange = exchangeFor("t1");
+  await exchange.send(draft);
+  vi.advanceTimersByTime(SECOND_SEND_GAP_MS);
+  exchange.clearWarning();
+  expect(exchange.warning).toBeNull();
+  expect(await exchange.send(draft)).toBe("warned");
+  expect(ipc.sends).toHaveLength(0);
 });

@@ -278,6 +278,7 @@
       {name}
       {response}
       environment={sentIn}
+      stale={exchange.warning !== null}
       {layout}
       {stacked}
       {ontogglelayout}

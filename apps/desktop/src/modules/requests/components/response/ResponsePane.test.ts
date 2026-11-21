@@ -698,3 +698,30 @@ test("a_finished_stream_keeps_its_event_list", async () => {
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
   expect(screen.getByText("tick")).toBeInTheDocument();
 });
+
+test("the_previous_response_is_labelled_while_a_warning_shows", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: (_path, request) => ({
+      undefined: request.url.includes("{{traceId}}") ? ["traceId"] : [],
+    }),
+  });
+  openRequestTab(PATH);
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  expect(within(bar).queryByText("Previous response")).toBeNull();
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "URL" }),
+    "/{{{{traceId}}",
+  );
+  await send();
+  await screen.findByRole("status");
+  expect(within(bar).getByText("Previous response")).toBeInTheDocument();
+  expect(calls(ipc, "send_request")).toHaveLength(1);
+  // Edited again, the warning and the label go.
+  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
+  await waitFor(() =>
+    expect(within(bar).queryByText("Previous response")).toBeNull(),
+  );
+});

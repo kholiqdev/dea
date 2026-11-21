@@ -330,6 +330,37 @@ test("undefined_variables_show_a_warning_with_define_and_send_anyway", async () 
   await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 });
 
+test("editing_clears_the_warning", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["carrierCode"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  expect(await screen.findByRole("status")).toBeInTheDocument();
+  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  // The next send warns again, whatever the time since the first.
+  await new Promise((done) => setTimeout(done, 450));
+  await userEvent.click(await sendButton());
+  expect(await screen.findByRole("status")).toBeInTheDocument();
+  expect(ipc.sends).toEqual([]);
+});
+
+test("a_second_send_sends_past_the_banner", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["carrierCode"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await screen.findByRole("status");
+  await new Promise((done) => setTimeout(done, 450));
+  await userEvent.click(await sendButton());
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+});
+
 test("the_warning_names_the_environment_in_use", async () => {
   fakeRequestsIpc({
     files,

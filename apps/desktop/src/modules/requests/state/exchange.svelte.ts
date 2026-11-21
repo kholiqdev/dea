@@ -79,6 +79,12 @@ export type ExchangeState =
  */
 export type SendResult = "sent" | "warned" | "notConfirmed" | "ignored";
 
+/**
+ * How long after a warning appears a second send is still ignored, in
+ * milliseconds: a double click would otherwise send past it unread.
+ */
+export const SECOND_SEND_GAP_MS = 400;
+
 /** Events kept of a stream; the older ones are dropped. */
 export const MAX_EVENTS = 10_000;
 
@@ -105,6 +111,10 @@ function hostOf(url: string): string | null {
  */
 const MAX_LOOKS = 3;
 
+function sameNames(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((name) => b.includes(name));
+}
+
 let sendsEnded = $state(0);
 
 /**
@@ -122,6 +132,8 @@ export class Exchange {
   warning = $state.raw<string[] | null>(null);
 
   readonly #id: string;
+  // The `performance.now()` at which the warning last appeared or changed.
+  #warnedAt = 0;
   // From the look at the draft until the outcome: a second send is ignored.
   #busy = false;
   #disposed = false;
@@ -138,6 +150,8 @@ export class Exchange {
    * Sends the draft as it is in the editor, saved or not. It stops at a
    * warning when the draft uses variables nothing defines, unless sent
    * `anyway` or to production, where the confirmation names them instead.
+   * While that warning shows for the same names, a second send goes out,
+   * except one right after the warning appeared.
    */
   async send(
     draft: RequestDraft,
@@ -157,14 +171,26 @@ export class Exchange {
       const names = draft.inspection?.undefined ?? [];
       const production = projectApi().environment?.production ?? false;
       if (!opts.anyway && !production && names.length > 0) {
-        this.warning = [...names];
-        return "warned";
+        const shown = this.warning;
+        const again = shown !== null && sameNames(shown, names);
+        if (!again) {
+          this.warning = [...names];
+          this.#warnedAt = performance.now();
+          return "warned";
+        }
+        if (performance.now() - this.#warnedAt < SECOND_SEND_GAP_MS)
+          return "ignored";
       }
       this.warning = null;
       return await this.#send(draft);
     } finally {
       this.#busy = false;
     }
+  }
+
+  /** Takes the warning down, as when the draft is edited. */
+  clearWarning(): void {
+    this.warning = null;
   }
 
   async #send(draft: RequestDraft): Promise<"sent" | "notConfirmed"> {

@@ -1,7 +1,8 @@
 <!--
   The first row of the response header: its status, time, timing bar, size
-  and version, the environment it was sent in, and what it can do (copy,
-  save, move the panel). It never wraps: the reason gives way first, and a
+  and version, the environment it was sent in, "Previous response" while a
+  warning stands in front of it, and what it can do (copy, save, move the
+  panel). It never wraps: the reason gives way first, and a
   narrow row drops the version, then the size, which the timing legend
   under it still shows. While sending it shows the seconds that went by;
   while Dea asks whether to send to production, that it waits.
@@ -34,6 +35,7 @@
     elapsed = null,
     waiting = false,
     environment = null,
+    stale = false,
     layout,
     stacked,
     ontogglelayout,
@@ -48,6 +50,8 @@
     waiting?: boolean;
     /** The environment the request was sent in. */
     environment?: { name: string; production: boolean; moved: boolean } | null;
+    /** A warning stands in front of this response: it is the previous one. */
+    stale?: boolean;
     layout: "right" | "below";
     /** The panel is below whatever the setting says. */
     stacked: boolean;
@@ -108,6 +112,7 @@
       {#if environment}
         <SentInPill {...environment} />
       {/if}
+      {#if stale}<span class="stale">Previous response</span>{/if}
       <span class="actions">
         <button
           type="button"
@@ -268,6 +273,12 @@
     font-size: 12px;
     line-height: 16px;
     color: var(--text-3);
+  }
+
+  .stale {
+    flex: none;
+    font-size: 13px;
+    color: var(--text-2);
   }
 
   @container (width < 560px) {
