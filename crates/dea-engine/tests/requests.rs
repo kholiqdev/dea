@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use dea_engine::requests::{PreparedRequest, RequestService, SendError, Sent, VaultProvider};
 use dea_engine::store::Store;
@@ -135,7 +136,7 @@ struct Fixture {
     prompter: Arc<RecordingPrompter>,
     /// Confirmations and authentication reasons, in the order they came.
     log: Arc<Mutex<Vec<String>>>,
-    service: RequestService,
+    service: Arc<RequestService>,
     /// The staging `access_token`.
     secret: String,
     /// The production `access_token`.
@@ -184,12 +185,12 @@ impl Fixture {
             log: Arc::clone(&log),
         });
         let store = Arc::new(Store::new(app_data.path()));
-        let service = RequestService::new(
+        let service = Arc::new(RequestService::new(
             client(app_data.path()),
             Arc::clone(&store),
             Arc::clone(&vault),
             Arc::clone(&prompter) as Arc<dyn Prompter>,
-        );
+        ));
         Fixture {
             project_dir,
             app_data,
@@ -208,12 +209,12 @@ impl Fixture {
 
     /// Another service over the same app data, as after a restart.
     fn restart(&mut self) {
-        self.service = RequestService::new(
+        self.service = Arc::new(RequestService::new(
             client(self.app_data.path()),
             Arc::new(Store::new(self.app_data.path())),
             Arc::clone(&self.vault),
             Arc::clone(&self.prompter) as Arc<dyn Prompter>,
-        );
+        ));
     }
 
     /// Saves `file` as `requests/shipments/<name>.yaml` and loads the tree
@@ -393,7 +394,8 @@ async fn post_to_production_always_asks() {
     assert_eq!(f.prompter.asked().len(), 4);
 
     // Clearing local data forgets the choice.
-    f.service.forget_project(&f.project.vault_scope());
+    let scope = f.project.vault_scope();
+    f.service.clear_project(&scope, || Ok(())).unwrap();
     f.prompter.answer(SendAnswer::Cancel);
     let result = f.prepare(list, Some("production"));
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
@@ -619,8 +621,9 @@ async fn cookies_persist_and_clear_with_local_data() {
 
     // Clear local data.
     let scope = f.project.vault_scope();
-    f.store.clear_project(&scope).unwrap();
-    f.service.forget_project(&scope);
+    f.service
+        .clear_project(&scope, || f.store.clear_project(&scope))
+        .unwrap();
     f.send("staging", "/echo").await;
     assert_eq!(f.last_request().header("cookie"), None);
     assert!(
@@ -1499,4 +1502,67 @@ async fn a_secret_password_in_the_url_is_hidden_in_its_urls() {
         assert!(!shown.contains("p@ss"), "{shown}");
         assert!(shown.contains("u:••••••••@127.0.0.1"), "{shown}");
     }
+}
+
+#[tokio::test]
+async fn clearing_while_a_send_is_in_flight_leaves_no_cookie_file() {
+    let mut f = Fixture::new().await;
+    let path = f.add(
+        "later",
+        request("GET", "{{baseUrl}}/cookies/set-later/300?session=abc"),
+    );
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let scope = f.project.vault_scope();
+    let file = f.app_data.path().join("cookies");
+    let cancel = CancellationToken::new();
+    // The clear starts while the send waits for its response, and takes
+    // until after the response came, as a slow disk would.
+    let clearing = {
+        let (service, store, scope) = (Arc::clone(&f.service), Arc::clone(&f.store), scope);
+        tokio::task::spawn_blocking(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            service
+                .clear_project(&scope, || {
+                    store.clear_project(&scope)?;
+                    std::thread::sleep(Duration::from_millis(400));
+                    Ok(())
+                })
+                .unwrap();
+        })
+    };
+    let sent = f.try_send(prepared, &cancel).await;
+    clearing.await.unwrap();
+    sent.unwrap();
+    assert!(
+        f.service
+            .list_cookies(&f.project, Some("staging"))
+            .is_empty()
+    );
+    assert!(
+        !file.exists() || fs::read_dir(&file).unwrap().next().is_none(),
+        "a cookie file was written after the clear"
+    );
+    assert!(f.saved_cookies().is_empty());
+}
+
+#[tokio::test]
+async fn cookie_changes_are_saved_at_once() {
+    let mut f = Fixture::new().await;
+    f.send("staging", "/cookies/set?session=s1").await;
+    let host = "127.0.0.1";
+    assert_eq!(f.service.list_cookies(&f.project, Some("staging")).len(), 1);
+    let removed = f
+        .service
+        .change_cookies(&f.project, Some("staging"), |jar| {
+            jar.remove(host, "/", "session")
+        })
+        .unwrap();
+    assert!(removed);
+    f.restart();
+    assert!(
+        f.service
+            .list_cookies(&f.project, Some("staging"))
+            .is_empty()
+    );
+    assert!(f.saved_cookies().is_empty());
 }
