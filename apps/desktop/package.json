@@ -18,7 +18,8 @@
     "@dea/editor": "workspace:*",
     "@dea/ui": "workspace:*",
     "@lucide/svelte": "^1.74.0",
-    "@tauri-apps/api": "^2.12.4"
+    "@tauri-apps/api": "^2.12.4",
+    "pdfjs-dist": "^6.5.438"
   },
   "devDependencies": {
     "@codemirror/view": "^6.43.15",

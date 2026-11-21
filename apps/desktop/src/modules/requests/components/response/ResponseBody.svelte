@@ -12,6 +12,7 @@
   import { formatBytes } from "../../lib/format";
   import type { BodyView } from "./body-view";
   import JsonFilter from "./JsonFilter.svelte";
+  import Preview from "./Preview.svelte";
   import ViewerPlaceholder from "./ViewerPlaceholder.svelte";
 
   let {
@@ -150,7 +151,7 @@
       {/each}
     </div>
     {#if current === "preview"}
-      <ViewerPlaceholder slot="preview" />
+      <Preview id={tabId} {kind} contentType={response.contentType} />
     {:else}
       {#if filterable}
         <JsonFilter
