@@ -976,3 +976,22 @@ test("a_filter_without_matches_says_so", async () => {
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(rowNames().length).toBeGreaterThan(0);
 });
+
+test("the_row_menu_groups_its_items", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  const request = await openMenu("Tracking events");
+  expect(within(request).getAllByRole("separator")).toHaveLength(1);
+  expect(
+    within(request).getByRole("menuitem", { name: "Delete…" }),
+  ).toHaveAttribute("data-tone", "danger");
+  await userEvent.keyboard("{Escape}");
+  const folderMenu = await openMenu("Carriers");
+  expect(within(folderMenu).getAllByRole("separator")).toHaveLength(3);
+  expect(
+    within(folderMenu).getByRole("menuitem", { name: "Delete…" }),
+  ).toHaveAttribute("data-tone", "danger");
+  expect(
+    within(folderMenu).getByRole("menuitem", { name: "Rename" }),
+  ).not.toHaveAttribute("data-tone");
+});
