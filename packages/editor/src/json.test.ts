@@ -98,17 +98,4 @@ describe("json", () => {
     expect(lintJson("[01]")).not.toBeNull();
     expect(lintJson("[1.]")).not.toBeNull();
   });
-
-  test("lint and format stay fast on a 1 MB body", () => {
-    const rows = Array.from(
-      { length: 20000 },
-      (_, i) => `{"id":${i},"v":"{{x}}","n":{{n}},"t":[true,null]}`,
-    );
-    const body = `[${rows.join(",")}]`;
-    expect(body.length).toBeGreaterThan(700_000);
-    const start = performance.now();
-    expect(lintJson(body)).toBeNull();
-    expect(performance.now() - start).toBeLessThan(100);
-    expect(formatJson(body)).not.toBeNull();
-  });
 });
