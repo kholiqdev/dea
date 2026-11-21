@@ -57,13 +57,18 @@ test("description_is_dropped_when_the_name_at_that_position_changes", () => {
 });
 
 test("question_mark_inside_a_variable_is_not_the_query", () => {
-  expect(splitUrl("{{a?b}}/x")).toEqual({ base: "{{a?b}}/x", query: [] });
+  expect(splitUrl("{{a?b}}/x")).toEqual({
+    base: "{{a?b}}/x",
+    query: [],
+    fragment: null,
+  });
   expect(splitUrl("{{a?b}}/x?k={{v&w=z}}&m=1")).toEqual({
     base: "{{a?b}}/x",
     query: [
       { name: "k", value: "{{v&w=z}}" },
       { name: "m", value: "1" },
     ],
+    fragment: null,
   });
 });
 
@@ -113,4 +118,36 @@ test("path_variable_values_are_kept_for_names_that_remain", () => {
     { name: "id", value: "7", description: "user" },
     { name: "new", value: "" },
   ]);
+});
+
+test("a_fragment_stays_out_of_the_last_query_value", () => {
+  const { base, query, fragment } = splitUrl("https://h.test/a?x=1#top");
+  expect(base).toBe("https://h.test/a");
+  expect(query).toEqual([{ name: "x", value: "1" }]);
+  expect(fragment).toBe("top");
+  expect(joinUrl("https://h.test/a#top", [{ name: "x", value: "2" }])).toBe(
+    "https://h.test/a?x=2#top",
+  );
+});
+
+test("fragment_only_and_query_only_urls_round_trip", () => {
+  expect(splitUrl("/a#top")).toEqual({
+    base: "/a",
+    query: [],
+    fragment: "top",
+  });
+  expect(joinUrl("/a#top", [])).toBe("/a#top");
+  expect(splitUrl("/a?a=1")).toEqual({
+    base: "/a",
+    query: [{ name: "a", value: "1" }],
+    fragment: null,
+  });
+  const empty = splitUrl("/a?a=1#");
+  expect(empty.fragment).toBe("");
+  expect(joinUrl(`${empty.base}#`, empty.query)).toBe("/a?a=1#");
+});
+
+test("a_hash_inside_a_variable_is_not_a_fragment", () => {
+  expect(splitUrl("/a?x={{t#1}}").fragment).toBeNull();
+  expect(splitUrl("/a?x={{t#1}}#f").fragment).toBe("f");
 });

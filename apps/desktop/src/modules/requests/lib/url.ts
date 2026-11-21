@@ -36,12 +36,23 @@ function splitOutside(text: string, char: string): string[] {
   return parts;
 }
 
-/** Splits the URL bar text at the first `?` outside a variable. Nothing is decoded. */
-export function splitUrl(text: string): { base: string; query: Pair[] } {
-  const at = indexOutside(text, "?");
-  if (at === -1) return { base: text, query: [] };
+/**
+ * Splits the URL bar text at the first `#` and then the first `?`, both outside a
+ * variable. The fragment is null when there is no `#`, and "" for a bare one.
+ * Nothing is decoded.
+ */
+export function splitUrl(text: string): {
+  base: string;
+  query: Pair[];
+  fragment: string | null;
+} {
+  const hash = indexOutside(text, "#");
+  const fragment = hash === -1 ? null : text.slice(hash + 1);
+  const front = hash === -1 ? text : text.slice(0, hash);
+  const at = indexOutside(front, "?");
+  if (at === -1) return { base: front, query: [], fragment };
   const query: Pair[] = [];
-  for (const part of splitOutside(text.slice(at + 1), "&")) {
+  for (const part of splitOutside(front.slice(at + 1), "&")) {
     if (part === "") continue;
     const eq = indexOutside(part, "=");
     query.push(
@@ -50,7 +61,7 @@ export function splitUrl(text: string): { base: string; query: Pair[] } {
         : { name: part.slice(0, eq), value: part.slice(eq + 1) },
     );
   }
-  return { base: text.slice(0, at), query };
+  return { base: front.slice(0, at), query, fragment };
 }
 
 /** Escapes only what would change the URL's structure; variables are left alone. */
@@ -73,8 +84,14 @@ function escapeChars(text: string, escapes: Record<string, string>): string {
 const NAME_ESCAPES = { "&": "%26", "#": "%23", "=": "%3D" };
 const VALUE_ESCAPES = { "&": "%26", "#": "%23" };
 
-/** Appends the enabled params to `base`. A bare name is written as `name=`. */
+/**
+ * Appends the enabled params to `base`, before its `#fragment` if it has one.
+ * A bare name is written as `name=`.
+ */
 export function joinUrl(base: string, params: KeyValue[]): string {
+  const hash = indexOutside(base, "#");
+  if (hash !== -1)
+    return joinUrl(base.slice(0, hash), params) + base.slice(hash);
   const pairs = params
     .filter((p) => p.enabled !== false)
     .map(
