@@ -1,4 +1,6 @@
 <script lang="ts">
+  // First: CodeMirror looks for requestIdleCallback once, as it loads.
+  import "./idle-callback";
   import { onMount } from "svelte";
   import { Compartment, EditorState } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers } from "@codemirror/view";
