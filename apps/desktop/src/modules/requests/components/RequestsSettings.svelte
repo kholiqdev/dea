@@ -1,9 +1,9 @@
 <!-- Settings > Requests: how the request editor saves. -->
 <script lang="ts">
   import type { ResponseLayout } from "$lib/ipc/bindings/ResponseLayout";
-  import type { Settings } from "$lib/ipc/bindings/Settings";
   import { errorMessage } from "$lib/ipc/errors";
   import { settings } from "$lib/settings/settings.svelte";
+  import { setResponseLayout } from "../state/layout";
 
   const POSITIONS: { value: ResponseLayout; label: string }[] = [
     { value: "right", label: "Right" },
@@ -12,9 +12,9 @@
 
   let error = $state<string | null>(null);
 
-  async function change(patch: Partial<Settings["requests"]>): Promise<void> {
+  async function change(save: () => Promise<void>): Promise<void> {
     try {
-      await settings.update({ requests: patch });
+      await save();
       error = null;
     } catch (e) {
       error = errorMessage(e);
@@ -40,7 +40,11 @@
               aria-describedby="autosave-hint"
               checked={settings.requests.autosave}
               onchange={(e) =>
-                void change({ autosave: e.currentTarget.checked })}
+                void change(() =>
+                  settings.update({
+                    requests: { autosave: e.currentTarget.checked },
+                  }),
+                )}
             />
             Save requests automatically
           </label>
@@ -71,7 +75,7 @@
                   value={position.value}
                   checked={settings.requests.responseLayout === position.value}
                   onchange={() =>
-                    void change({ responseLayout: position.value })}
+                    void change(() => setResponseLayout(position.value))}
                 />
                 {position.label}
               </label>
