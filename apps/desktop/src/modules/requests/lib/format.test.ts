@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   formatBytes,
+  formatCookieDate,
   formatMs,
   formatSeconds,
   statusTone,
@@ -40,4 +41,9 @@ test("suggested_names_follow_the_request_and_the_body", () => {
   expect(suggestedName("  !!  ", "pdf", "application/pdf")).toBe(
     "response.pdf",
   );
+});
+
+test("cookie_dates_are_short_or_session", () => {
+  expect(formatCookieDate(null)).toBe("Session");
+  expect(formatCookieDate("2026-11-04T12:00:00Z")).toBe("4 Nov 2026");
 });
