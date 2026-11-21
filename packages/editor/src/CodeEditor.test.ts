@@ -109,3 +109,47 @@ test("does not lint non-JSON bodies", async () => {
   expect(container.querySelector(".cm-lintRange, .cm-lint-marker")).toBeNull();
   expect(container.querySelector(".cm-gutter-lint")).toBeNull();
 });
+
+const isMac = /Mac|iP(hone|ad)/.test(navigator.platform);
+
+function press(target: HTMLElement, key: string) {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    metaKey: isMac,
+    ctrlKey: !isMac,
+    bubbles: true,
+    cancelable: true,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+test("mod_enter_is_left_to_the_app", () => {
+  mount({ value: "{}", label: "Body" });
+  const content = screen.getByRole("textbox", { name: "Body" });
+  expect(press(content, "Enter").defaultPrevented).toBe(false);
+});
+
+test("search_opens_with_mod_f_when_enabled", () => {
+  const { container } = mount({ value: "{}", search: true });
+  const content = screen.getByRole("textbox", { name: "Request body" });
+  press(content, "f");
+  expect(container.querySelector(".cm-search")).not.toBeNull();
+});
+
+test("search_is_off_by_default", () => {
+  const { container } = mount({ value: "{}" });
+  const content = screen.getByRole("textbox", { name: "Request body" });
+  press(content, "f");
+  expect(container.querySelector(".cm-search")).toBeNull();
+});
+
+test("folding_adds_a_gutter_when_enabled", () => {
+  const { container } = mount({ value: "{}", fold: true });
+  expect(container.querySelector(".cm-foldGutter")).not.toBeNull();
+});
+
+test("folding_is_off_by_default", () => {
+  const { container } = mount({ value: "{}" });
+  expect(container.querySelector(".cm-foldGutter")).toBeNull();
+});
