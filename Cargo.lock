@@ -1151,6 +1151,7 @@ name = "dea-engine"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "bytes",
  "dea-http",
  "dea-project",
  "dea-testkit",

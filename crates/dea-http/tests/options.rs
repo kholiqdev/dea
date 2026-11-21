@@ -403,6 +403,7 @@ async fn follows_redirects_up_to_the_limit() {
     assert_eq!(response.redirects[0].status, 302);
     assert!(response.redirects[0].url.ends_with("/redirect/10"));
     assert!(response.redirects[9].url.ends_with("/redirect/1"));
+    assert_eq!(response.url, server.url("/redirect/0"));
 
     let result = send(&client, get(&server.url("/redirect/11"))).await;
     assert!(
@@ -426,6 +427,7 @@ async fn follow_redirects_off_returns_the_redirect() {
     .unwrap();
     assert_eq!(response.status, 302);
     assert!(response.redirects.is_empty());
+    assert_eq!(response.url, server.url("/redirect/3"));
     assert_eq!(server.requests().len(), 1);
 }
 

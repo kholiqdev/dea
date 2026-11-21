@@ -75,6 +75,8 @@ pub enum Event {
     /// The response head arrived.
     Head {
         status: u16,
+        /// As the server wrote it, or the standard one for `status`.
+        reason: String,
         headers: Vec<(String, String)>,
     },
     /// One piece of the body, decoded when the body is, as it arrived.
@@ -359,6 +361,7 @@ impl Client {
                 None
             };
             let Some(next) = next else {
+                response.url = current.url.to_string();
                 response.redirects = redirects;
                 return Ok(response);
             };
@@ -510,6 +513,14 @@ impl Client {
         let head_at = Instant::now();
         let (parts, mut body) = head.into_parts();
         let status = parts.status.as_u16();
+        let reason = match parts.extensions.get::<hyper::ext::ReasonPhrase>() {
+            Some(reason) => String::from_utf8_lossy(reason.as_bytes()).into_owned(),
+            None => parts
+                .status
+                .canonical_reason()
+                .unwrap_or_default()
+                .to_owned(),
+        };
         let headers: Vec<(String, String)> = parts
             .headers
             .iter()
@@ -527,6 +538,7 @@ impl Client {
         if let Some(sink) = events {
             sink(Event::Head {
                 status,
+                reason: reason.clone(),
                 headers: headers.clone(),
             });
         }
@@ -591,14 +603,6 @@ impl Client {
             self.inner.pool.touch(key, &connection);
         }
 
-        let reason = match parts.extensions.get::<hyper::ext::ReasonPhrase>() {
-            Some(reason) => String::from_utf8_lossy(reason.as_bytes()).into_owned(),
-            None => parts
-                .status
-                .canonical_reason()
-                .unwrap_or_default()
-                .to_owned(),
-        };
         Ok(Response {
             version,
             status,
@@ -608,6 +612,8 @@ impl Client {
             truncated,
             content_encoding,
             timing: marks.finish(head_at, done_at),
+            // Both filled in by `follow`, which knows the hops.
+            url: String::new(),
             redirects: Vec::new(),
         })
     }

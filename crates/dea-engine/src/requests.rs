@@ -7,6 +7,7 @@
 //! show dialogs, so it blocks. [`RequestService::send`] is the network
 //! part.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -16,9 +17,10 @@ use std::time::Duration;
 
 use dea_http::{Body, ClientIdentity, Options, Part, PartValue, Request, SendContext, TlsConfig};
 use dea_project::{
-    FieldValue, LocalFiles, Project, RequestContext, RequestError, RequestFile, RequestTree,
-    Resolved, ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError,
-    SystemDynamicSource, VaultManifest, is_local_ref, resolve_draft,
+    FieldValue, HIDDEN, LocalFiles, Project, RequestContext, RequestError, RequestFile,
+    RequestTree, Resolved, ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup,
+    SecretLookupError, SystemDynamicSource, VaultManifest, encode_query_value, is_local_ref,
+    resolve_draft,
 };
 use url::Url;
 use zeroize::Zeroizing;
@@ -31,7 +33,7 @@ use crate::vault::{VaultService, is_production, production_reason};
 
 pub use crate::prompt::{SendAnswer, SendConfirmation};
 pub use dea_http::{
-    CancellationToken, Client, ClientConfig, CookieJar, Event, HttpError, Response,
+    CancellationToken, Client, ClientConfig, CookieJar, Event, HttpError, Response, TlsError,
 };
 
 /// The methods whose confirmation may be skipped for the rest of the
@@ -67,10 +69,14 @@ pub enum SendError {
     Http(#[from] HttpError),
 }
 
-/// What a send that reached the server gives back.
+/// What a send that reached the server gives back. Every secret value the
+/// request used is shown as `••••••••` in `url`, in `response.url` and in
+/// the URLs of `response.redirects`.
 #[derive(Debug)]
 pub struct Sent {
     pub response: Response,
+    /// The URL of the final hop.
+    pub url: String,
     /// Cookies from this exchange that could not be saved; they stay in
     /// memory and are saved again with the next send.
     pub cookies_not_saved: Option<StoreError>,
@@ -88,6 +94,8 @@ pub struct PreparedRequest {
     request: Request,
     /// The jar to use, `None` when the request has cookies off.
     jar: Option<Key>,
+    /// What `send` hides in what it reports.
+    secrets: SecretValues,
 }
 
 /// Shows the redacted URL only: the request itself holds secrets.
@@ -214,6 +222,7 @@ impl RequestService {
             self.confirm(&scope, env, &preview.method, &url, !names.is_empty())?;
         }
 
+        let mut secrets = SecretValues::default();
         let resolved = if names.is_empty() {
             // Placeholders only stand in for secrets, so without any the
             // preview is the request, and the Vault stays closed.
@@ -233,8 +242,12 @@ impl RequestService {
             } else if vault.status().locked {
                 vault.unlock(&production_reason(&action, &names))?;
             }
-            let lookup = vault.lookup(project);
-            resolve(
+            let vault_lookup = vault.lookup(project);
+            let lookup = Remembering {
+                inner: &vault_lookup,
+                values: RefCell::default(),
+            };
+            let resolved = resolve(
                 &self.store,
                 project,
                 tree,
@@ -242,7 +255,9 @@ impl RequestService {
                 draft,
                 environment,
                 &lookup,
-            )?
+            )?;
+            secrets = SecretValues::new(lookup.values.into_inner());
+            resolved
         };
         let jar = resolved
             .options
@@ -261,6 +276,7 @@ impl RequestService {
             unresolved,
             request,
             jar,
+            secrets,
         })
     }
 
@@ -302,6 +318,9 @@ impl RequestService {
     /// A response is never lost to a failed save: it comes back with
     /// [`Sent::cookies_not_saved`] set, and the cookies stay in use.
     ///
+    /// Every secret value the request used is shown as `••••••••` in the
+    /// URLs of the response and in the text of an error.
+    ///
     /// # Errors
     ///
     /// [`SendError::Http`] when the exchange fails. A save that fails then
@@ -313,7 +332,10 @@ impl RequestService {
         events: Option<&mut (dyn FnMut(Event) + Send)>,
     ) -> Result<Sent, SendError> {
         let PreparedRequest {
-            request, jar: key, ..
+            request,
+            jar: key,
+            secrets,
+            ..
         } = prepared;
         let jar = key.as_ref().map(|(scope, env)| self.jar(scope, env));
         // The client takes a shared callback; the lock is only held while
@@ -337,8 +359,14 @@ impl RequestService {
             (Some(key), Some(jar)) => self.save_pending(key, jar).await,
             _ => None,
         };
+        let mut response = result.map_err(|e| SendError::Http(secrets.hide_error(e)))?;
+        for redirect in &mut response.redirects {
+            redirect.url = secrets.hide(&redirect.url);
+        }
+        response.url = secrets.hide(&response.url);
         Ok(Sent {
-            response: result?,
+            url: response.url.clone(),
+            response,
             cookies_not_saved,
         })
     }
@@ -458,6 +486,99 @@ struct Placeholders;
 impl SecretLookup for Placeholders {
     fn lookup(&self, _environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
         Ok(Some(format!("[secret:{name}]")))
+    }
+}
+
+/// Reads secrets from `inner` and keeps each value it gives, so `send` can
+/// hide them.
+struct Remembering<'a> {
+    inner: &'a dyn SecretLookup,
+    values: RefCell<Vec<Zeroizing<String>>>,
+}
+
+impl SecretLookup for Remembering<'_> {
+    fn lookup(&self, environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
+        let value = self.inner.lookup(environment, name)?;
+        if let Some(value) = &value {
+            self.values.borrow_mut().push(Zeroizing::new(value.clone()));
+        }
+        Ok(value)
+    }
+}
+
+/// The secret values a request uses, as written, as a query parameter
+/// writes them, and in lower case as in a host name. Longest first, so a
+/// value inside a longer one does not leave the rest of that one showing.
+#[derive(Default)]
+struct SecretValues(Vec<Zeroizing<String>>);
+
+impl SecretValues {
+    fn new(values: Vec<Zeroizing<String>>) -> Self {
+        let mut forms: Vec<Zeroizing<String>> = Vec::new();
+        for value in &values {
+            let candidates = [
+                value.to_string(),
+                encode_query_value(value),
+                value.to_ascii_lowercase(),
+            ];
+            for form in candidates.map(Zeroizing::new) {
+                if !form.is_empty() && !forms.contains(&form) {
+                    forms.push(form);
+                }
+            }
+        }
+        forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+        SecretValues(forms)
+    }
+
+    /// `text` with every secret shown as `••••••••`.
+    fn hide(&self, text: &str) -> String {
+        let mut text = text.to_string();
+        for secret in &self.0 {
+            if text.contains(secret.as_str()) {
+                text = text.replace(secret.as_str(), HIDDEN);
+            }
+        }
+        text
+    }
+
+    /// `error` with every secret in its text shown as `••••••••`.
+    fn hide_error(&self, error: HttpError) -> HttpError {
+        match error {
+            HttpError::InvalidRequest(message) => HttpError::InvalidRequest(self.hide(&message)),
+            HttpError::Dns { host, message } => HttpError::Dns {
+                host: self.hide(&host),
+                message: self.hide(&message),
+            },
+            HttpError::Connect { addr, message } => HttpError::Connect {
+                addr,
+                message: self.hide(&message),
+            },
+            HttpError::Tls(TlsError { kind, message }) => HttpError::Tls(TlsError {
+                kind,
+                message: self.hide(&message),
+            }),
+            HttpError::Proxy(message) => HttpError::Proxy(self.hide(&message)),
+            HttpError::File { path, message } => {
+                let shown = path.to_string_lossy();
+                let hidden = self.hide(&shown);
+                let path = if hidden == shown {
+                    path
+                } else {
+                    PathBuf::from(hidden)
+                };
+                HttpError::File {
+                    path,
+                    message: self.hide(&message),
+                }
+            }
+            HttpError::Protocol(message) => HttpError::Protocol(self.hide(&message)),
+            // No text: an address, a duration or a count.
+            error @ (HttpError::ConnectionRefused { .. }
+            | HttpError::Timeout(_)
+            | HttpError::Cancelled
+            | HttpError::TooManyRedirects(_)) => error,
+        }
     }
 }
 

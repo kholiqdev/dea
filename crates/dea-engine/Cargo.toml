@@ -33,5 +33,6 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+bytes.workspace = true
 dea-testkit = { workspace = true, features = ["http"] }
 tokio = { workspace = true, features = ["macros", "rt"] }

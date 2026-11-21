@@ -118,3 +118,16 @@ async fn a_followed_hop_reports_its_phases_but_no_head() {
     // The first hop opens the connection; the second reuses it.
     assert_eq!(kinds(&events), ["dns", "connect", "reused", "head"]);
 }
+
+#[tokio::test]
+async fn the_head_carries_the_reason_phrase() {
+    let server = TestServer::start(Tls::None).await;
+    let client = Client::new(ClientConfig::default()).unwrap();
+    let (response, events) = send_collecting(&client, get(&server, "/status/404")).await;
+    let reason = events.iter().find_map(|event| match event {
+        Event::Head { reason, .. } => Some(reason.as_str()),
+        _ => None,
+    });
+    assert_eq!(reason, Some("Not Found"));
+    assert_eq!(response.reason, "Not Found");
+}
