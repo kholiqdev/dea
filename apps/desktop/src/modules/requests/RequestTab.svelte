@@ -117,6 +117,18 @@
       shell.updateTab(id, { title: name });
   });
 
+  // The tab shows the method of the request. A tab restored from an older
+  // session has only a path, and learns it here once the draft is loaded.
+  $effect(() => {
+    if (!draft.saved) return;
+    const method = draft.draft.method;
+    untrack(() => {
+      const params = tab.params as { path: string; method?: string } | null;
+      if (params && params.method !== method)
+        shell.updateTab(id, { params: { ...params, method } });
+    });
+  });
+
   // A closed tab takes its edits with it; reopening it reads the file.
   $effect(() => () => pruneDrafts());
 

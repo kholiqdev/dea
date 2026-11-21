@@ -166,7 +166,11 @@ test("Enter opens the selected request", async () => {
   tree.focus();
   await userEvent.keyboard("{ArrowDown}{Enter}");
   expect(opened).toEqual([
-    ["requests.request", "Manifest", { path: "requests/cargo/manifest.yaml" }],
+    [
+      "requests.request",
+      "Manifest",
+      { path: "requests/cargo/manifest.yaml", method: "GET" },
+    ],
   ]);
 });
 
@@ -177,7 +181,11 @@ test("clicking a request opens or activates its tab", async () => {
   await userEvent.click(screen.getByRole("treeitem", { name: /Cargo/ }));
   await userEvent.click(screen.getByRole("treeitem", { name: /Manifest/ }));
   expect(opened).toEqual([
-    ["requests.request", "Manifest", { path: "requests/cargo/manifest.yaml" }],
+    [
+      "requests.request",
+      "Manifest",
+      { path: "requests/cargo/manifest.yaml", method: "GET" },
+    ],
   ]);
   existing["requests/cargo/manifest.yaml"] = "tab-7";
   await userEvent.click(screen.getByRole("treeitem", { name: /Manifest/ }));

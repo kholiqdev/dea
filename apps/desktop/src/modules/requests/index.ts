@@ -1,3 +1,4 @@
+import { methodColor, methodLabel } from "$lib/http/method";
 import type { ModuleManifest } from "$app/contributions/types";
 
 export const manifest: ModuleManifest = {
@@ -13,6 +14,12 @@ export const manifest: ModuleManifest = {
       title: "Request",
       icon: "arrow-left-right",
       environment: "window",
+      badge: (params) => {
+        const method = (params as { method?: string } | null)?.method;
+        return method
+          ? { text: methodLabel(method), color: methodColor(method) }
+          : null;
+      },
       view: () => import("./RequestTab.svelte"),
     },
     {

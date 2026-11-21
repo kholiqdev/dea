@@ -27,6 +27,10 @@
     return railIcon(name);
   }
 
+  function badgeOf(tab: TabRecord) {
+    return ctx.registry.tabType(tab.tabType)?.badge?.(tab.params) ?? null;
+  }
+
   function close(tab: TabRecord): void {
     ctx.tabs.close(tab.id).catch((e: unknown) => toasts.show(errorMessage(e)));
   }
@@ -120,6 +124,7 @@
     {#each tabs as tab, index (tab.id)}
       {@const Icon = iconOf(tab)}
       {@const active = tab.id === activeId}
+      {@const badge = badgeOf(tab)}
       {@const env = ctx.tabs.environmentOf(tab, ctx.project.environment)}
       <div
         class="tab"
@@ -141,7 +146,9 @@
           onclick={() => ctx.tabs.activate(tab.id)}
           onkeydown={(e) => onkeydown(e, index)}
         >
-          {#if Icon}<Icon size={16} strokeWidth={1.5} />{/if}
+          {#if badge}
+            <span class="badge" style:color={badge.color}>{badge.text}</span>
+          {:else if Icon}<Icon size={16} strokeWidth={1.5} />{/if}
           <span class="title">{tab.title}</span>
           {#if env}
             <span
@@ -215,6 +222,11 @@
     background: none;
     color: inherit;
     white-space: nowrap;
+  }
+
+  .badge {
+    flex: none;
+    font: 500 11px/1 var(--font-mono);
   }
 
   .title {

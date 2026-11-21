@@ -343,3 +343,56 @@ test("closing a tab moves focus to the next tab, then to the work area", async (
   await waitFor(() => expect(tabs.tabs).toHaveLength(0));
   expect(screen.getByRole("main")).toHaveFocus();
 });
+
+async function windowSetup(environment: string) {
+  const registry = registryWith(
+    railModule("notes", 1, {
+      rail: { icon: "arrow-left-right", group: "main", order: 1 },
+      tabTypes: [
+        {
+          id: "notes.note",
+          title: "Note",
+          icon: "arrow-left-right",
+          view: view("note body"),
+          environment: "window",
+          badge: (params) => {
+            const method = (params as { method?: string } | null)?.method;
+            return method
+              ? { text: method, color: `var(--method-${method.toLowerCase()})` }
+              : null;
+          },
+        },
+        {
+          id: "notes.fixed",
+          title: "Fixed",
+          icon: "arrow-left-right",
+          view: view("fixed body"),
+        },
+      ],
+    }),
+  );
+  const shell = new Shell(registry);
+  const tabs = new Tabs(registry, shell, { confirmClose: closeQuestion.ask });
+  const project = openProject();
+  await project.setEnvironment(environment);
+  render(ShellView, { registry, shell, tabs, project });
+  return { tabs };
+}
+
+test("a_request_tab_shows_its_method", async () => {
+  const { tabs } = await windowSetup("staging");
+  tabs.open("notes.note", "Create shipment", { method: "POST" });
+  const tab = await screen.findByRole("tab", { name: /Create shipment/ });
+  const badge = within(tab).getByText("POST");
+  expect(badge).toHaveClass("badge");
+  expect(badge.style.color).toBe("var(--method-post)");
+  expect(tab.querySelector("svg")).toBeNull();
+});
+
+test("a_tab_without_a_badge_keeps_its_icon", async () => {
+  const { tabs } = await windowSetup("staging");
+  tabs.open("notes.note", "Old tab", { path: "a.yaml" });
+  const tab = await screen.findByRole("tab", { name: /Old tab/ });
+  expect(tab.querySelector(".badge")).toBeNull();
+  expect(tab.querySelector("svg")).not.toBeNull();
+});

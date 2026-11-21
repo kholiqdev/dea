@@ -15,7 +15,7 @@ export interface FakeTab {
   id: string;
   tabType: string;
   title: string;
-  params: { path: string };
+  params: { path: string; method?: string };
   dirty: boolean;
 }
 
@@ -52,7 +52,7 @@ export class FakeShell implements ShellApi {
       id,
       tabType,
       title,
-      params: params as { path: string },
+      params: params as { path: string; method?: string },
       dirty: false,
     });
     return id;
@@ -72,7 +72,7 @@ export class FakeShell implements ShellApi {
     if (!tab) return;
     if (patch.title !== undefined) tab.title = patch.title;
     if (patch.params !== undefined)
-      tab.params = patch.params as { path: string };
+      tab.params = patch.params as { path: string; method?: string };
   }
 
   activateTab(id: string): boolean {
@@ -154,11 +154,15 @@ export function setUpRequestTabs(): { shell: FakeShell; project: FakeProject } {
 
 /** Opens a tab for the request at `path` and shows it, as the shell does. */
 export function openRequestTab(
-  path: string,
+  target: string | { path: string; method?: string },
   title = "Request",
 ): { id: string; unmount: () => void } {
   if (!shell) throw new Error("Call setUpRequestTabs first");
-  const id = shell.openTab("requests.request", title, { path });
+  const id = shell.openTab(
+    "requests.request",
+    title,
+    typeof target === "string" ? { path: target } : target,
+  );
   const { unmount } = render(RequestTab, { props: { tab: shell.tab(id) } });
   return { id, unmount };
 }

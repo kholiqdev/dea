@@ -134,7 +134,11 @@
       (params) => (params as { path?: string } | null)?.path === row.path,
     );
     if (id !== undefined) shell.activateTab(id);
-    else shell.openTab("requests.request", row.name, { path: row.path });
+    else
+      shell.openTab("requests.request", row.name, {
+        path: row.path,
+        method: row.method,
+      });
   }
 
   function select(index: number): void {

@@ -26,7 +26,13 @@ export type Loader<T> = () => Promise<{ default: T }>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyComponent = Component<any>;
 
-export type TabTypeContribution = TabTypeData & { view: Loader<AnyComponent> };
+/** What a tab shows in place of its icon, from the tab's params. */
+export type TabBadge = { text: string; color: string };
+
+export type TabTypeContribution = TabTypeData & {
+  view: Loader<AnyComponent>;
+  badge?: (params: unknown) => TabBadge | null;
+};
 export type PanelContribution = PanelData & { view: Loader<AnyComponent> };
 export type StatusItemContribution = StatusItemData & {
   view: Loader<AnyComponent>;

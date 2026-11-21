@@ -693,3 +693,27 @@ test("a closed tab forgets its edits, even if it is reopened", async () => {
   expect(await urlField()).toHaveValue(BASE);
   expect(shell.tab(id).dirty).toBe(false);
 });
+
+test("changing_the_method_updates_the_tab", async () => {
+  shipmentsIpc();
+  const { id } = openRequestTab({ path: BY_ID, method: "GET" });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Method: GET" }),
+  );
+  await userEvent.click(
+    within(screen.getByRole("menu")).getByRole("menuitemradio", {
+      name: "DELETE",
+    }),
+  );
+  await waitFor(() =>
+    expect(shell.tab(id).params).toEqual({ path: BY_ID, method: "DELETE" }),
+  );
+});
+
+test("an_older_tab_learns_its_method_when_the_draft_loads", async () => {
+  shipmentsIpc({ method: "PUT" });
+  const { id } = openRequestTab(BY_ID);
+  await waitFor(() =>
+    expect(shell.tab(id).params).toEqual({ path: BY_ID, method: "PUT" }),
+  );
+});

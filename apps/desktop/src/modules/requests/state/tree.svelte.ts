@@ -276,7 +276,11 @@ export class RequestTreeState {
     if (this.selected && isWithin(this.selected, from))
       this.selected = moved(this.selected);
     eachTabWithin(from, (id, params) => {
-      const next = { ...params, path: moved(params.path) };
+      const next: PathParams = { ...params, path: moved(params.path) };
+      // A request tab from an older session has no method yet.
+      const node = this.find(params.path) ?? this.find(next.path);
+      if (node?.kind === "request" && next.method === undefined)
+        next.method = node.method;
       shellApi().updateTab(
         id,
         params.path === from && title !== undefined
@@ -330,7 +334,7 @@ export class RequestTreeState {
   }
 }
 
-type PathParams = { path: string };
+type PathParams = { path: string; method?: string };
 
 function hasPath(params: unknown): params is PathParams {
   return (
