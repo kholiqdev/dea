@@ -161,7 +161,7 @@ fn body_kind_follows_type_then_bytes() {
     assert_eq!(body_kind(some("text/html"), b"x"), BodyKind::Html);
     assert_eq!(body_kind(some("image/webp"), b"x"), BodyKind::Image);
     assert_eq!(body_kind(some("application/pdf"), b"x"), BodyKind::Pdf);
-    assert_eq!(body_kind(some("text/plain"), b"\x89PNG"), BodyKind::Text);
+    assert_eq!(body_kind(some("text/plain"), b"%PDF-1.7"), BodyKind::Text);
     assert_eq!(body_kind(some("text/csv"), b"a,b"), BodyKind::Text);
     // An empty body has nothing to show, whatever its type.
     assert_eq!(body_kind(None, b""), BodyKind::Empty);
@@ -186,6 +186,32 @@ fn body_kind_follows_type_then_bytes() {
     let mut head = vec![b'a'; 511];
     head.push(0xC3);
     assert_eq!(body_kind(None, &head), BodyKind::Text);
+}
+
+#[test]
+fn binary_labelled_text_is_binary() {
+    let plain = Some("text/plain; charset=utf-8");
+    assert_eq!(
+        body_kind(plain, b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"),
+        BodyKind::Binary
+    );
+    assert_eq!(
+        body_kind(Some("text/csv"), b"\0\x01\x02\xFF"),
+        BodyKind::Binary
+    );
+    // A character cut at the end of the first bytes is still text.
+    let mut head = vec![b'a'; 511];
+    head.push(0xC3);
+    assert_eq!(body_kind(plain, &head), BodyKind::Text);
+    // Types that name a format keep it: its view shows the bytes as sent.
+    let latin1 = b"<p>caf\xE9</p>";
+    assert_eq!(body_kind(Some("text/html"), latin1), BodyKind::Html);
+    assert_eq!(body_kind(Some("text/xml"), latin1), BodyKind::Xml);
+    assert_eq!(body_kind(Some("application/json"), b"\xFF"), BodyKind::Json);
+    assert_eq!(
+        body_kind(Some("text/event-stream"), b"\xFF"),
+        BodyKind::Events
+    );
 }
 
 fn failure(error: SendError) -> SendFailure {

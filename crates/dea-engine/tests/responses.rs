@@ -194,17 +194,22 @@ fn pretty_formats_json_and_markup_and_refuses_binary() {
 
 #[test]
 fn invalid_utf8_is_replaced() {
+    // The first 512 bytes are text, so the body is; a bad byte after them
+    // is replaced.
+    let text = "ok ".repeat(200);
+    let mut body = text.clone().into_bytes();
+    body.push(0xFF);
     let store = ResponseStore::default();
     store.insert(
         "w/t",
         sent(
             "text/plain; charset=utf-8",
-            ResponseBody::Memory(Bytes::from_static(b"ok \xFF")),
+            ResponseBody::Memory(Bytes::from(body)),
         ),
     );
     assert_eq!(
         store.text("w/t", TextView::Raw).unwrap().text,
-        "ok \u{FFFD}"
+        format!("{text}\u{FFFD}")
     );
 }
 
