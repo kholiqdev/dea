@@ -12,7 +12,7 @@ use crate::local_files::{LocalFiles, is_local_ref};
 use crate::request::{ApiKeyLocation, Auth, Body, KeyValue, RawLanguage, RequestFile, SendOptions};
 use crate::{
     DynamicSource, Folder, Project, RequestTree, ResolveContext, ResolveError, Scope, ScopeKind,
-    SecretLookup, SecretLookupError, UsedVariable, ValueSource, Variable, resolve,
+    SecretLookup, SecretLookupError, UsedVariable, ValueSource, Variable, portable_path, resolve,
 };
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -192,7 +192,7 @@ impl fmt::Debug for ResolvedRequest {
 
 #[derive(thiserror::Error, Debug)]
 pub enum RequestError {
-    #[error("there is no request at {0}")]
+    #[error("there is no request at {}", portable_path(.0))]
     NotFound(PathBuf),
     #[error("the folder {0} has a _folder.yaml that cannot be read: fix it first")]
     BrokenFolder(PathBuf),
