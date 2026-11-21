@@ -24,7 +24,7 @@
   import { formatBytes, suggestedName } from "../../lib/format";
 
   const ROW = 18;
-  const OVERSCAN = 50;
+  const OVERSCAN = 10;
   const PAGE = 200;
   const MAX_PAGES = 20;
   const MAX_SPACE = 8_000_000;

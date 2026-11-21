@@ -55,6 +55,23 @@ test("large_body_fetches_only_visible_rows", async () => {
   for (const call of ipc.rowCalls) expect(call.count).toBeLessThanOrEqual(200);
 });
 
+test("only_ten_rows_either_side_of_the_view_are_drawn", async () => {
+  fakeRequestsIpc({
+    response: fakeResponse({ rows: fakeRows({ total: 100_000 }) }),
+  });
+  render(LargeBody, { id: "t1", size: 1 });
+  await screen.findByText("row 0");
+  viewer().scrollTop = 50_000 * 18;
+  await fireEvent.scroll(viewer());
+  await screen.findByText("row 50000");
+  // A row can hold a kilobyte of unbroken text, and each drawn one is laid
+  // out after a jump: the 23 rows of a 400 px view, one more, and ten
+  // either side.
+  const drawn = [...document.querySelectorAll(".window .row")];
+  expect(drawn).toHaveLength(23 + 1 + 2 * 10);
+  expect(drawn[0]).toHaveTextContent("row 49990");
+});
+
 test("huge_row_counts_scale_the_scroll_space", async () => {
   fakeRequestsIpc({
     response: fakeResponse({ rows: fakeRows({ total: 2_000_000 }) }),
