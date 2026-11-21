@@ -1474,3 +1474,29 @@ async fn a_secret_ip_host_is_hidden_when_the_connection_is_refused() {
         format!("Nothing is listening on ••••••••:{port}.")
     );
 }
+
+#[tokio::test]
+async fn a_secret_password_in_the_url_is_hidden_in_its_urls() {
+    let mut f = Fixture::new().await;
+    // The URL parser writes it as `p%40ss%3Aword` in the userinfo.
+    f.set_secret("PW", "p@ss:word");
+    let url = format!(
+        "http://u:{{{{vault:PW}}}}@127.0.0.1:{}/redirect/1",
+        f.server.port()
+    );
+    let path = f.add("userinfo", request("GET", &url));
+
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let sent = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(sent.response.status, 200);
+    assert_eq!(sent.response.redirects.len(), 1);
+    for shown in [&sent.url, &sent.response.redirects[0].url] {
+        assert!(!shown.contains("p%40ss%3Aword"), "{shown}");
+        assert!(!shown.contains("p@ss"), "{shown}");
+        assert!(shown.contains("u:••••••••@127.0.0.1"), "{shown}");
+    }
+}

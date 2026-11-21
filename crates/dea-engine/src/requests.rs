@@ -507,8 +507,9 @@ impl SecretLookup for Remembering<'_> {
 }
 
 /// The secret values a request uses, as written, as a query parameter
-/// writes them, and in lower case as in a host name. Longest first, so a
-/// value inside a longer one does not leave the rest of that one showing.
+/// writes them, and as the URL parser writes them in each part of a URL.
+/// Longest first, so a value inside a longer one does not leave the rest
+/// of that one showing.
 #[derive(Default)]
 struct SecretValues(Vec<Zeroizing<String>>);
 
@@ -516,12 +517,9 @@ impl SecretValues {
     fn new(values: Vec<Zeroizing<String>>) -> Self {
         let mut forms: Vec<Zeroizing<String>> = Vec::new();
         for value in &values {
-            let candidates = [
-                value.to_string(),
-                encode_query_value(value),
-                value.to_ascii_lowercase(),
-            ];
-            for form in candidates.map(Zeroizing::new) {
+            let mut candidates = vec![value.to_string(), encode_query_value(value)];
+            candidates.extend(url_forms(value));
+            for form in candidates.into_iter().map(Zeroizing::new) {
                 if !form.is_empty() && !forms.contains(&form) {
                     forms.push(form);
                 }
@@ -582,6 +580,45 @@ impl SecretValues {
             | HttpError::TooManyRedirects(_)) => error,
         }
     }
+}
+
+/// `value` as the URL parser writes it in the userinfo, the path, the
+/// query and the fragment, and as a host when it is one: lower case,
+/// punycode, IP addresses in their usual form.
+fn url_forms(value: &str) -> Vec<String> {
+    let mut forms = Vec::new();
+    let Ok(mut scratch) = Url::parse("http://h/") else {
+        return forms;
+    };
+    if scratch.set_password(Some(value)).is_ok() {
+        forms.extend(scratch.password().map(str::to_string));
+    }
+    scratch.set_path(value);
+    let path = scratch.path();
+    // `set_path` adds the leading `/` when `value` has none.
+    let path = if value.starts_with('/') {
+        path
+    } else {
+        path.strip_prefix('/').unwrap_or(path)
+    };
+    forms.push(path.to_string());
+    scratch.set_query(Some(value));
+    forms.extend(scratch.query().map(str::to_string));
+    scratch.set_fragment(Some(value));
+    forms.extend(scratch.fragment().map(str::to_string));
+    // Only when `value` is a host and nothing else, so `ab/cd` does not
+    // add `ab`.
+    if let Ok(url) = Url::parse(&format!("http://{value}/"))
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+    {
+        forms.extend(url.host_str().map(str::to_string));
+    }
+    forms
 }
 
 /// Stands in for the Vault when inspecting: a secret `vault.yaml` declares
