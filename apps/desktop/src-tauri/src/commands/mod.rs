@@ -2,6 +2,7 @@
 
 pub mod project;
 pub mod requests;
+pub mod responses;
 pub mod send;
 pub mod settings;
 pub mod vault;

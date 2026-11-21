@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dea_engine::store::{
-    Appearance, MAX_CLOSED_TABS, Security, Settings, SidebarState, Store, StoreError,
-    TabEnvironment, TabState, ThemePreference, UiState,
+    Appearance, MAX_CLOSED_TABS, ResponseLayout, Security, Settings, SidebarState, Store,
+    StoreError, TabEnvironment, TabState, ThemePreference, UiState,
 };
 use dea_http::{CookieJar, StoredCookie};
 use dea_vault::{AutoLock, Policy};
@@ -334,6 +334,14 @@ fn settings_without_requests_get_the_default() {
         "the file was kept"
     );
     assert!(!dir.path().join("settings.json.damaged").exists());
+}
+
+#[test]
+fn settings_without_a_response_layout_read_as_right() {
+    let settings: Settings =
+        serde_json::from_str(r#"{"version":1,"requests":{"autosave":true}}"#).unwrap();
+    assert!(settings.requests.autosave);
+    assert_eq!(settings.requests.response_layout, ResponseLayout::Right);
 }
 
 #[test]

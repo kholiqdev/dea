@@ -298,6 +298,16 @@ pub fn e2e_picked_path() -> Option<String> {
     take_line(Path::new(&std::env::var_os("DEA_E2E_PICK_FILE")?))
 }
 
+/// In an end-to-end run, the path the next save dialog returns: the test
+/// writes it to the file that `DEA_E2E_SAVE_FILE` names. Each path is used
+/// once.
+pub fn e2e_save_path() -> Option<String> {
+    if !e2e() {
+        return None;
+    }
+    take_line(Path::new(&std::env::var_os("DEA_E2E_SAVE_FILE")?))
+}
+
 /// The first line of `file`, which is then removed.
 pub(crate) fn take_line(file: &Path) -> Option<String> {
     let text = std::fs::read_to_string(file).ok()?;

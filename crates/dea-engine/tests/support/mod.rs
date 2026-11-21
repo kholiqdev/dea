@@ -221,6 +221,11 @@ impl dea_engine::Clipboard for FakeClipboard {
         self.content.lock().unwrap().clone()
     }
 
+    fn set_text(&self, text: &str) -> Result<(), String> {
+        *self.content.lock().unwrap() = Some(text.to_string());
+        Ok(())
+    }
+
     fn set_secret_text(&self, text: &str) -> Result<(), String> {
         *self.content.lock().unwrap() = Some(text.to_string());
         Ok(())

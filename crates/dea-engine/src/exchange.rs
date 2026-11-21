@@ -144,6 +144,20 @@ pub struct CookieInfo {
     pub host_only: bool,
 }
 
+/// Names one cookie of a jar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub struct CookieKey {
+    pub domain: String,
+    pub path: String,
+    pub name: String,
+}
+
 /// The value is a secret.
 impl fmt::Debug for CookieInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
