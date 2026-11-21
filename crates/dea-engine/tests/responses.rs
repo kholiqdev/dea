@@ -55,8 +55,8 @@ fn one_long_line_is_split_into_rows() {
     let store = ResponseStore::default();
     store.insert("w/t", spilled(&body));
     let page = store.rows("w/t", 0, 500).unwrap();
-    assert_eq!(page.total, (body.len() as u64).div_ceil(4096));
-    assert!(page.rows.iter().all(|r| r.len() <= 4096));
+    assert_eq!(page.total, (body.len() as u64).div_ceil(1024));
+    assert!(page.rows.iter().all(|r| r.len() <= 1024));
 }
 
 #[test]
@@ -94,13 +94,13 @@ fn rows_follow_newlines_and_crlf() {
 
 #[test]
 fn rows_never_split_a_character() {
-    // `é` (two bytes) starts at byte 4095, so it ends past the 4096 limit.
-    let body = format!("{}é{}", "a".repeat(4095), "b".repeat(10));
+    // `é` (two bytes) starts at byte 1023, so it ends past the 1024 limit.
+    let body = format!("{}é{}", "a".repeat(1023), "b".repeat(10));
     let store = ResponseStore::default();
     store.insert("w/t", in_memory("text/plain", &body));
     let page = store.rows("w/t", 0, 10).unwrap();
     assert_eq!(page.total, 2);
-    assert_eq!(page.rows[0], "a".repeat(4095));
+    assert_eq!(page.rows[0], "a".repeat(1023));
     assert_eq!(page.rows[1], format!("é{}", "b".repeat(10)));
     // Nothing was replaced.
     assert!(page.rows.iter().all(|r| !r.contains('\u{FFFD}')));
