@@ -248,6 +248,23 @@ test("closing_a_sending_tab_cancels_it", async () => {
   expect(exchanges.has("t1")).toBe(false);
 });
 
+test("closing_a_background_tab_that_is_sending_cancels_it", async () => {
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const draft = await openDraft("t1", PATH);
+  void startSend(draft);
+  await vi.waitFor(() => expect(ipc.sends).toHaveLength(1));
+  // The tab is not shown, so nothing unmounts: only the tab list changes.
+  await shell.closeTab("t1");
+  await vi.waitFor(() => expect(exchanges.has("t1")).toBe(false));
+  const ends = ipc.calls
+    .map(([cmd, args]) => [cmd, args.id])
+    .filter(([cmd]) => cmd === "cancel_send" || cmd === "release_response");
+  expect(ends).toEqual([
+    ["cancel_send", "t1"],
+    ["release_response", "t1"],
+  ]);
+});
+
 test("a_response_keeps_the_environment_it_was_sent_in", async () => {
   const ipc = fakeRequestsIpc({ files, send: { hold: true } });
   await project.setEnvironment("staging");

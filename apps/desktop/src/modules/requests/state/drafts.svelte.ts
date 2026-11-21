@@ -9,6 +9,7 @@ import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { Variable } from "$lib/ipc/bindings/Variable";
 import { errorMessage } from "$lib/ipc/errors";
+import { untrack } from "svelte";
 import { lintJson } from "@dea/editor";
 import { projectApi } from "$app/contributions/project-api";
 import { inspectRequest, readRequest, saveRequest } from "../api";
@@ -398,12 +399,29 @@ function followDisk(changed: readonly string[]): void {
     if (changed.includes(draft.path)) void draft.check();
 }
 
+let stopFollowingTabs: (() => void) | null = null;
+
+/**
+ * Prunes the drafts each time the request tabs change, so closing a tab
+ * that is not shown stops its send too: nothing of it unmounts.
+ */
+function followTabs(): void {
+  if (stopFollowingTabs) return;
+  stopFollowingTabs = $effect.root(() => {
+    $effect(() => {
+      openTabs(TAB_TYPE);
+      untrack(pruneDrafts);
+    });
+  });
+}
+
 /**
  * The draft of the request tab `id` as it is shown: the one it had, after a
  * look at the file, or a new one read from `path`.
  */
 export function draftFor(id: string, path: string): RequestDraft {
   watchDisk(followDisk);
+  followTabs();
   pruneDrafts();
   return syncedFor(
     drafts,
@@ -417,8 +435,10 @@ export function draftFor(id: string, path: string): RequestDraft {
   );
 }
 
-/** Forgets every draft (tests). */
+/** Forgets every draft, and stops following the tabs (tests). */
 export function resetDrafts(): void {
+  stopFollowingTabs?.();
+  stopFollowingTabs = null;
   for (const draft of drafts.values()) {
     draft.cancelInspection();
     draft.cancelAutosave();
