@@ -17,7 +17,7 @@
       : undefined,
   );
   const sidebarVisible = $derived(
-    module ? ctx.shell.sidebar(module.id).visible : false,
+    module ? ctx.shell.sidebarShown(module.id) : false,
   );
   const toggleChord = $derived.by(() => {
     const b = effectiveShortcuts(ctx.registry, settings.shortcuts).find(

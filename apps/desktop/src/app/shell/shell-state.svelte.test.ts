@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { flushSync } from "svelte";
-import { Shell, clampSidebarWidth, persistUiState } from "./shell-state.svelte";
+import {
+  Shell,
+  clampSidebarWidth,
+  emptyUiState,
+  persistUiState,
+} from "./shell-state.svelte";
 import {
   fakeIpc,
   railModule,
@@ -106,4 +111,26 @@ test("sidebar width and visibility are saved after a pause", async () => {
     requests: { visible: false, width: 320 },
   });
   stop();
+});
+
+test("showing_the_sidebar_while_narrow_is_not_saved", () => {
+  const shell = new Shell(registryWith(railModule("requests", 1)));
+  shell.narrow = true;
+  expect(shell.sidebarShown("requests")).toBe(false);
+  shell.toggleSidebar("requests");
+  expect(shell.sidebarShown("requests")).toBe(true);
+  expect(shell.snapshot().sidebars.requests?.visible ?? true).toBe(true);
+  shell.narrow = false;
+  shell.narrow = true;
+  expect(shell.sidebarShown("requests")).toBe(false);
+});
+
+test("a_sidebar_hidden_by_the_user_stays_hidden_when_wide", () => {
+  const shell = new Shell(registryWith(railModule("requests", 1)));
+  shell.restore({
+    ...emptyUiState(),
+    sidebars: { requests: { visible: false, width: 280 } },
+  });
+  shell.narrow = false;
+  expect(shell.sidebarShown("requests")).toBe(false);
 });

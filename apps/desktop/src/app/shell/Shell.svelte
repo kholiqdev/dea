@@ -1,5 +1,6 @@
 <!-- The window: title bar, rail, sidebar, work area and status bar. -->
 <script lang="ts">
+  import { MediaQuery } from "svelte/reactivity";
   import { settings } from "$lib/settings/settings.svelte";
   import type { ProjectApi } from "../contributions/project-api";
   import type { Registry } from "../contributions/registry.svelte";
@@ -16,7 +17,7 @@
   import { createHotkeyHandler } from "./hotkeys.svelte";
   import { menus } from "./menus.svelte";
   import Rail from "./Rail.svelte";
-  import type { Shell } from "./shell-state.svelte";
+  import { NARROW_WINDOW, type Shell } from "./shell-state.svelte";
   import Sidebar from "./Sidebar.svelte";
   import StatusBar from "./StatusBar.svelte";
   import TitleBar from "./TitleBar.svelte";
@@ -50,6 +51,11 @@
 
   const onHotkey = createHotkeyHandler(ctx, () => settings.shortcuts);
 
+  const narrow = new MediaQuery(`(max-width: ${NARROW_WINDOW}px)`);
+  $effect.pre(() => {
+    shell.narrow = narrow.current;
+  });
+
   const module = $derived(
     shell.activeModule ? registry.module(shell.activeModule) : undefined,
   );
@@ -64,7 +70,7 @@
   <TitleBar />
   <div class="body">
     {#if !welcome}<Rail />{/if}
-    {#if module?.sidebar && shell.sidebar(module.id).visible}
+    {#if module?.sidebar && shell.sidebarShown(module.id)}
       <Sidebar {module} />
     {/if}
     <Workspace />
