@@ -7,18 +7,17 @@
   import { tick } from "svelte";
   import type { SseRow } from "../../state/exchange.svelte";
 
-  const LIMIT = 10_000;
-
   let {
     events,
     startedAt,
+    dropped = 0,
   }: {
     events: SseRow[];
+    /** How many older events the state let go of. */
+    dropped?: number;
     /** The `performance.now()` the request started at. */
     startedAt: number;
   } = $props();
-
-  const shown = $derived(events.length > LIMIT ? events.slice(-LIMIT) : events);
 
   const pad = (n: number, width = 2) => String(n).padStart(width, "0");
   /** `14:03:07.042`, in local time. */
@@ -37,7 +36,8 @@
   }
 
   $effect(() => {
-    void shown.length;
+    void events.length;
+    void dropped;
     if (!atBottom) return;
     void tick().then(() => {
       if (scroller && atBottom) scroller.scrollTop = scroller.scrollHeight;
@@ -47,8 +47,8 @@
 
 <div class="events">
   <p class="caption">
-    {events.length > LIMIT ? LIMIT.toLocaleString("en-US") : events.length} events
-    {#if events.length > LIMIT}
+    {events.length} events
+    {#if dropped > 0}
       <span>Showing the last 10,000 events.</span>
     {/if}
   </p>
@@ -59,7 +59,7 @@
     bind:this={scroller}
     {onscroll}
   >
-    {#each shown as item, i (events.length - shown.length + i)}
+    {#each events as item, i (dropped + i)}
       <li>
         <time>{arrival(item.atMs)}</time>
         <span class="name">{item.event ?? "message"}</span>

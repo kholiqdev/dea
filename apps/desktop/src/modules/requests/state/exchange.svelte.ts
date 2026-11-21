@@ -47,6 +47,7 @@ export type ExchangeState =
       received: number;
       text: string;
       events: SseRow[];
+      droppedEvents: number;
     }
   | {
       phase: "done";
@@ -54,6 +55,7 @@ export type ExchangeState =
       environment: string | null;
       startedAt: number;
       events: SseRow[];
+      droppedEvents: number;
     }
   | { phase: "failed"; failure: SendFailure; environment: string | null }
   | {
@@ -62,7 +64,11 @@ export type ExchangeState =
       startedAt: number;
       head: HeadInfo | null;
       events: SseRow[];
+      droppedEvents: number;
     };
+
+/** Events kept of a stream; the older ones are dropped. */
+export const MAX_EVENTS = 10_000;
 
 const PHASES = ["dns", "connect", "tls"] as const;
 
@@ -154,6 +160,7 @@ export class Exchange {
       received: 0,
       text: "",
       events: [],
+      droppedEvents: 0,
     };
     // What #hear fills in; only this send changes the state while it runs.
     const sent = this.state;
@@ -180,6 +187,7 @@ export class Exchange {
           environment,
           startedAt: sent.startedAt,
           events: sent.events,
+          droppedEvents: sent.droppedEvents,
         };
         if (response.cookiesNotSaved !== null)
           shellApi().toast(
@@ -197,6 +205,7 @@ export class Exchange {
           startedAt: sent.startedAt,
           head: sent.head,
           events: sent.events,
+          droppedEvents: sent.droppedEvents,
         };
         break;
     }
@@ -230,6 +239,11 @@ export class Exchange {
         break;
       case "event":
         s.events.push({ atMs: e.atMs, event: e.event, data: e.data, id: e.id });
+        // An endless stream keeps its last events only.
+        if (s.events.length > MAX_EVENTS) {
+          s.events.shift();
+          s.droppedEvents++;
+        }
         break;
     }
   }

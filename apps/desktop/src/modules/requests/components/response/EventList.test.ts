@@ -45,13 +45,15 @@ test("cancelling_a_stream_keeps_its_events", () => {
   expect(screen.getAllByRole("listitem")).toHaveLength(3);
 });
 
-test("only_the_last_ten_thousand_events_are_shown", () => {
-  const events = Array.from({ length: 10_005 }, (_, n) => row(n));
-  render(EventList, { props: { events, startedAt: 0 } });
-  expect(screen.getAllByRole("listitem")).toHaveLength(10_000);
+test("dropped_events_are_noted", () => {
+  const events = Array.from({ length: 3 }, (_, n) => row(n));
+  render(EventList, { props: { events, startedAt: 0, dropped: 5 } });
   expect(
     screen.getByText("Showing the last 10,000 events."),
   ).toBeInTheDocument();
-  expect(screen.queryByText("data 0")).toBeNull();
-  expect(screen.getByText("data 10004")).toBeInTheDocument();
+});
+
+test("no_note_when_nothing_was_dropped", () => {
+  render(EventList, { props: { events: [row(1)], startedAt: 0 } });
+  expect(screen.queryByText(/Showing the last/)).toBeNull();
 });
