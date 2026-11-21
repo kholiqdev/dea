@@ -47,7 +47,7 @@ pub use request_ops::{
 pub use request_resolve::{
     DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS, EffectiveOptions, FieldValue, RequestContext,
     RequestError, Resolved, ResolvedBody, ResolvedClientCertificate, ResolvedField,
-    ResolvedRequest, ResolvedTls, resolve_draft, resolve_request,
+    ResolvedRequest, ResolvedTls, encode_query_value, resolve_draft, resolve_request,
 };
 pub use request_tree_info::{FolderNode, RequestLeaf, RequestNode, RequestTreeInfo, tree_info};
 pub use requests::{

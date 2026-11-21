@@ -6,11 +6,15 @@
 mod clipboard;
 mod clock;
 mod error;
+mod exchange;
 mod file_ref;
 mod inspection;
+pub mod json_filter;
+pub mod pretty;
 pub mod projects;
 mod prompt;
 pub mod requests;
+mod responses;
 pub mod store;
 pub mod vault;
 mod vault_app;
@@ -18,10 +22,16 @@ mod vault_app;
 pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
 pub use clock::{Clock, SystemClock};
 pub use error::UseError;
+pub use exchange::{
+    BodyKind, CookieInfo, CookieKey, EventForwarder, FailureKind, HeaderRow, RedirectInfo,
+    ResponseInfo, SendEvent, SendFailure, SendOutcome, TEXT_PREVIEW_LIMIT, TimingInfo, body_kind,
+    outcome_of_error, response_info,
+};
 pub use file_ref::FileRef;
 pub use inspection::{AutomaticHeader, Inspection, OptionsInfo, VariableInfo};
 pub use prompt::{PasswordPrompt, PromptProblem, Prompter, SendAnswer, SendConfirmation};
 pub use requests::{PreparedRequest, RequestService, SendError, Sent, VaultProvider};
+pub use responses::{BodyText, Found, ROW_BYTES, ResponseError, ResponseStore, RowsPage, TextView};
 pub use vault::{
     PASSWORD_FILE, TICK, VaultBackground, VaultLookup, VaultService, VaultStatus, production_reason,
 };

@@ -33,7 +33,7 @@ export abstract class SyncedFile<T> {
   // Changes with every write and every file taken, so a read that started
   // before one is dropped.
   #version = 0;
-  // A check of the file after a move, which a save waits for.
+  // The checks of the file so far, which a save waits for.
   #settling: Promise<void> = Promise.resolve();
   #autosave: ReturnType<typeof setTimeout> | undefined;
 
@@ -97,6 +97,15 @@ export abstract class SyncedFile<T> {
    * it quietly; one with edits keeps them and asks.
    */
   check(): Promise<void> {
+    const checking = this.#look();
+    // A failed check must not hold back every save after it.
+    this.#settling = Promise.allSettled([this.#settling, checking]).then(
+      () => undefined,
+    );
+    return checking;
+  }
+
+  #look(): Promise<void> {
     if (!this.saved) return this.load();
     return this.#read().then((read) => {
       if (!read) return;
@@ -112,7 +121,7 @@ export abstract class SyncedFile<T> {
   async save(): Promise<void> {
     await this.#settling;
     if (this.outside !== null) throw new Error(this.#unanswered());
-    await this.#write();
+    await this.#write(true);
   }
 
   /** Writes the draft back after its file was deleted on disk ("Save again"). */
@@ -129,10 +138,12 @@ export abstract class SyncedFile<T> {
       : `This ${this.noun} was deleted on disk and cannot be saved.`;
   }
 
-  async #write(): Promise<void> {
+  async #write(guarded = false): Promise<void> {
     // Nothing was read, so there is nothing to write.
     if (!this.saved) return;
     const file = await this.prepare(this.clean(this.snapshot()));
+    // A check can land while the file is prepared: never write over what it found.
+    if (guarded && this.outside !== null) throw new Error(this.#unanswered());
     this.#version++;
     try {
       await this.writeFile(this.path, file);
@@ -195,7 +206,7 @@ export abstract class SyncedFile<T> {
    * rename that keeps the file name does. A save waits for the look.
    */
   recheck(): void {
-    this.#settling = this.check();
+    void this.check();
   }
 
   /** Drops the edits for the file on disk ("Take theirs"). */

@@ -22,6 +22,12 @@ export const manifest: ModuleManifest = {
       environment: "window",
       view: () => import("./FolderTab.svelte"),
     },
+    {
+      id: "requests.cookies",
+      title: "Cookies",
+      icon: "cookie",
+      view: () => import("./CookiesTab.svelte"),
+    },
   ],
   commands: [
     {
@@ -39,8 +45,28 @@ export const manifest: ModuleManifest = {
       title: "New collection",
       action: { type: "intent", intent: "requests.newCollection" },
     },
+    {
+      id: "requests.send",
+      title: "Send request",
+      action: { type: "intent", intent: "requests.send" },
+      scope: "project",
+    },
+    {
+      id: "requests.toggleLayout",
+      title: "Toggle response position",
+      action: { type: "intent", intent: "requests.toggleLayout" },
+    },
+    {
+      id: "requests.manageCookies",
+      title: "Manage cookies",
+      action: { type: "intent", intent: "requests.manageCookies" },
+      scope: "project",
+    },
   ],
-  shortcuts: [{ command: "requests.open", chord: "Mod+1" }],
+  shortcuts: [
+    { command: "requests.open", chord: "Mod+1" },
+    { command: "requests.send", chord: "Mod+Enter" },
+  ],
   searchSources: [
     {
       id: "requests.search",
@@ -65,6 +91,18 @@ export const manifest: ModuleManifest = {
     {
       intent: "requests.newCollection",
       handler: () => import("./intents/new-collection"),
+    },
+    {
+      intent: "requests.send",
+      handler: () => import("./intents/send"),
+    },
+    {
+      intent: "requests.toggleLayout",
+      handler: () => import("./intents/toggle-layout"),
+    },
+    {
+      intent: "requests.manageCookies",
+      handler: () => import("./intents/manage-cookies"),
     },
   ],
 };

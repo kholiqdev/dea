@@ -1,9 +1,21 @@
 <script lang="ts">
+  // First: CodeMirror looks for requestIdleCallback once, as it loads.
+  import "./idle-callback";
   import { onMount } from "svelte";
   import { Compartment, EditorState } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-  import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+  import {
+    HighlightStyle,
+    foldGutter,
+    foldKeymap,
+    syntaxHighlighting,
+  } from "@codemirror/language";
+  import {
+    highlightSelectionMatches,
+    search as searchExtension,
+    searchKeymap,
+  } from "@codemirror/search";
   import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
   import { json } from "@codemirror/lang-json";
   import { xml } from "@codemirror/lang-xml";
@@ -24,6 +36,8 @@
     label: string;
     readonly?: boolean;
     variables?: VariableState;
+    fold?: boolean;
+    search?: boolean;
     onchange?: (value: string) => void;
   }
 
@@ -33,6 +47,8 @@
     label,
     readonly = false,
     variables,
+    fold = false,
+    search = false,
     onchange,
   }: Props = $props();
 
@@ -58,6 +74,11 @@
         return [];
     }
   }
+
+  // Mod-Enter is the app's "Send request"; the default binding would swallow it.
+  const editorKeymap = defaultKeymap.filter(
+    (binding) => binding.key !== "Mod-Enter" && binding.mac !== "Mod-Enter",
+  );
 
   const highlightStyle = HighlightStyle.define([
     { tag: tags.propertyName, color: "var(--syn-key)" },
@@ -157,9 +178,15 @@
           history(),
           keymap.of([
             { key: "Mod-Shift-f", run: format },
-            ...defaultKeymap,
+            ...editorKeymap,
             ...historyKeymap,
+            ...(fold ? foldKeymap : []),
+            ...(search ? searchKeymap : []),
           ]),
+          fold ? foldGutter() : [],
+          search
+            ? [searchExtension({ top: true }), highlightSelectionMatches()]
+            : [],
           syntaxHighlighting(highlightStyle),
           theme,
           lintCompartment.of(lintExtension(language)),

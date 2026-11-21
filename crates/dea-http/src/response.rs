@@ -23,11 +23,14 @@ pub struct Response {
     /// The encoding the server sent the body in, before decoding.
     pub content_encoding: Option<String>,
     pub timing: Timing,
+    /// The URL of the hop that gave this response, after any redirects.
+    pub url: String,
     /// Earlier hops, oldest first.
     pub redirects: Vec<Redirect>,
 }
 
-/// Shows header names and the body size; values may be secrets.
+/// Shows header names and the body size; values and URLs may hold
+/// secrets.
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let names: Vec<&str> = self.headers.iter().map(|(name, _)| name.as_str()).collect();
@@ -125,11 +128,13 @@ mod tests {
             truncated: false,
             content_encoding: None,
             timing: Timing::default(),
+            url: "http://example.test/?token=url-secret".into(),
             redirects: Vec::new(),
         };
         let shown = format!("{response:?}");
         assert!(shown.contains("set-cookie"), "{shown}");
         assert!(!shown.contains("cookie-secret"), "{shown}");
         assert!(!shown.contains("body-secret"), "{shown}");
+        assert!(!shown.contains("url-secret"), "{shown}");
     }
 }

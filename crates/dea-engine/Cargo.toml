@@ -23,6 +23,7 @@ rand.workspace = true
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+serde_json_path.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
@@ -33,5 +34,6 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+bytes.workspace = true
 dea-testkit = { workspace = true, features = ["http"] }
 tokio = { workspace = true, features = ["macros", "rt"] }

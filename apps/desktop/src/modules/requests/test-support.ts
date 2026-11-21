@@ -1,7 +1,13 @@
 // IPC fakes for the Requests tests: an in-memory request tree that answers
 // every request command and records the calls.
 
+import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { BodyKind } from "$lib/ipc/bindings/BodyKind";
+import type { CookieInfo } from "$lib/ipc/bindings/CookieInfo";
+import type { Filtered } from "$lib/ipc/bindings/Filtered";
+import type { Found } from "$lib/ipc/bindings/Found";
+import type { RowsPage } from "$lib/ipc/bindings/RowsPage";
 import type { FileErrorInfo } from "$lib/ipc/bindings/FileErrorInfo";
 import type { FileRef } from "$lib/ipc/bindings/FileRef";
 import type { FolderFile } from "$lib/ipc/bindings/FolderFile";
@@ -10,6 +16,9 @@ import type { Inspection } from "$lib/ipc/bindings/Inspection";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { RequestNode } from "$lib/ipc/bindings/RequestNode";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
+import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
+import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
+import type { SendOutcome } from "$lib/ipc/bindings/SendOutcome";
 import { VariableLookup } from "./state/variables.svelte";
 import type { IpcError } from "$lib/ipc/errors";
 
@@ -36,6 +45,106 @@ export interface RequestsIpc {
   /** Commands that reject, with the error each rejects with. */
   failures: Map<string, IpcError>;
   inspection: FakeInspection;
+  /** Every `send_request`, in order. */
+  sends: { id: string; path: string; request: RequestFile }[];
+  /** How `send_request` answers; may change between sends. */
+  send: FakeSend;
+  /** Ends every held send, with `outcome` or else `send.outcome`. */
+  finishSends(outcome?: SendOutcome): void;
+  /** Every `response_rows` call, in order. */
+  rowCalls: { id: string; from: number; count: number }[];
+  /** Every `list_cookies` call: the environment it asked for. */
+  cookieCalls: (string | null)[];
+  /** Every `save_response`, in order. */
+  savedResponses: { id: string; name: string }[];
+}
+
+/** What the fake answers about the last response of a tab. */
+export interface FakeResponseBody {
+  text?: { pretty?: string; raw?: string; formatted?: boolean };
+  /** Makes `response_text` reject with this. */
+  textError?: IpcError;
+  bytes?: Uint8Array;
+  rows?: (from: number, count: number) => RowsPage;
+  filter?: (path: string) => Filtered | IpcError;
+  find?: Found | null;
+}
+
+/** `opts` as the `response` option of `fakeRequestsIpc`. */
+export function fakeResponse(opts: FakeResponseBody = {}): FakeResponseBody {
+  return opts;
+}
+
+/** Rows `row 0`, `row 1`, … of a body of `total` rows. */
+export function fakeRows(
+  opts: { total?: number; row?: (n: number) => string } = {},
+): (from: number, count: number) => RowsPage {
+  const total = opts.total ?? 0;
+  const row = opts.row ?? ((n: number) => `row ${n}`);
+  return (from, count) => ({
+    total,
+    from,
+    rows: Array.from(
+      { length: Math.max(0, Math.min(count, total - from)) },
+      (_, i) => row(from + i),
+    ),
+  });
+}
+
+/** The cookies of each environment, by its name. */
+export function fakeCookies(
+  byEnv: Record<string, CookieInfo[]>,
+): Record<string, CookieInfo[]> {
+  return byEnv;
+}
+
+/** A `send` option that ends with a response of `kind`, with `over` on top. */
+export function doneExchange(
+  kind: BodyKind,
+  over: Partial<ResponseInfo> = {},
+): Partial<FakeSend> {
+  return {
+    outcome: { type: "response", response: responseInfo({ kind, ...over }) },
+  };
+}
+
+/**
+ * How `send_request` answers: `events` go to its channel at once, then
+ * `outcome` ends it, unless `hold` keeps it running until `finishSends` or
+ * `cancel_send` (which ends it `cancelled`, as Dea does).
+ */
+export interface FakeSend {
+  outcome: SendOutcome;
+  events: SendEvent[];
+  hold: boolean;
+}
+
+/** A 200 response of an empty JSON array, with `over` on top. */
+export function responseInfo(over: Partial<ResponseInfo> = {}): ResponseInfo {
+  return {
+    status: 200,
+    reason: "OK",
+    version: "HTTP/1.1",
+    headers: [{ name: "content-type", value: "application/json" }],
+    cookies: [],
+    size: 2,
+    contentType: "application/json",
+    kind: "json",
+    large: false,
+    truncated: false,
+    timing: {
+      dnsMs: 4,
+      connectMs: 12,
+      tlsMs: 18,
+      waitingMs: 96,
+      downloadMs: 18,
+      totalMs: 148,
+      reused: false,
+    },
+    redirects: [],
+    cookiesNotSaved: null,
+    ...over,
+  };
 }
 
 export function leaf(
@@ -159,8 +268,24 @@ export function fakeRequestsIpc(
     describe?: Record<string, Partial<FileRef>>;
     /** The names `vault_secrets` lists (one row each, in `local`). */
     secrets?: string[];
+    /** How `send_request` answers; a 200 response by default. */
+    send?: Partial<FakeSend>;
+    /** What the response commands answer. */
+    response?: FakeResponseBody;
+    /** The cookie jars, by environment name. */
+    cookies?: Record<string, CookieInfo[]>;
   } = {},
 ): RequestsIpc {
+  // The sends `hold` keeps running, with what ends each.
+  let held: { id: string; end: (outcome: SendOutcome) => void }[] = [];
+  const finish = (
+    which: (send: { id: string }) => boolean,
+    outcome: SendOutcome,
+  ) => {
+    const ending = held.filter(which);
+    held = held.filter((h) => !which(h));
+    for (const send of ending) send.end(structuredClone(outcome));
+  };
   const ipc: RequestsIpc = {
     calls: [],
     tree: opts.tree ?? { collections: [], errors: [] },
@@ -169,6 +294,17 @@ export function fakeRequestsIpc(
     folders: new Map(),
     failures: new Map(),
     inspection: opts.inspection ?? {},
+    sends: [],
+    send: {
+      outcome: { type: "response", response: responseInfo() },
+      events: [],
+      hold: false,
+      ...opts.send,
+    },
+    finishSends: (outcome) => finish(() => true, outcome ?? ipc.send.outcome),
+    rowCalls: [],
+    cookieCalls: [],
+    savedResponses: [],
   };
   if (opts.errors) ipc.tree.errors = opts.errors;
   const trash = new Map<
@@ -373,6 +509,65 @@ export function fakeRequestsIpc(
         }));
       case "pick_request_file":
         return opts.pick ?? null;
+      case "send_request": {
+        const id = args.id as string;
+        ipc.sends.push(
+          structuredClone({
+            id,
+            path: args.path as string,
+            request: args.request as RequestFile,
+          }),
+        );
+        const channel = args.events as Channel<SendEvent>;
+        for (const event of ipc.send.events)
+          channel.onmessage(structuredClone(event));
+        if (!ipc.send.hold) return structuredClone(ipc.send.outcome);
+        return new Promise<SendOutcome>((end) => held.push({ id, end }));
+      }
+      case "cancel_send":
+        finish((h) => h.id === args.id, { type: "cancelled" });
+        return null;
+      case "response_text": {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (opts.response?.textError) throw opts.response.textError;
+        const text = opts.response?.text ?? {};
+        const pretty = args.view === "pretty";
+        return {
+          text: (pretty ? text.pretty : text.raw) ?? text.raw ?? "",
+          formatted: pretty && (text.formatted ?? text.pretty !== undefined),
+        };
+      }
+      case "response_bytes":
+        return opts.response?.bytes ?? new Uint8Array();
+      case "response_rows": {
+        const id = args.id as string;
+        const from = args.from as number;
+        const count = args.count as number;
+        ipc.rowCalls.push({ id, from, count });
+        return (opts.response?.rows ?? fakeRows())(from, count);
+      }
+      case "find_in_response":
+        return opts.response?.find ?? null;
+      case "filter_response": {
+        const answer = opts.response?.filter?.(args.path as string);
+        if (!answer) return { text: "[]", count: 0 };
+        // Dea's commands reject with a plain { kind, message }.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if ("message" in answer) throw answer;
+        return answer;
+      }
+      case "copy_response":
+        return null;
+      case "save_response": {
+        const name = args.name as string;
+        ipc.savedResponses.push({ id: args.id as string, name });
+        return name;
+      }
+      case "list_cookies": {
+        const environment = args.environment as string | null;
+        ipc.cookieCalls.push(environment);
+        return structuredClone(opts.cookies?.[environment ?? ""] ?? []);
+      }
       case "describe_file_ref": {
         const value = args.value as string;
         return {

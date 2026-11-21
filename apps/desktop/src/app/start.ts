@@ -13,6 +13,9 @@ import { setVaultApi } from "./contributions/vault-api";
 import { exposeE2eApi, isE2e } from "./e2e";
 import { registerBuiltInModules } from "./modules";
 import { thisProject } from "./project/project.svelte";
+import { errorMessage } from "$lib/ipc/errors";
+import { sendConfirmations } from "./prompts/send-confirm.svelte";
+import { toasts } from "./prompts/toasts.svelte";
 import { vaultPrompts } from "./prompts/vault-prompt.svelte";
 import { applyAppearance } from "./shell/appearance";
 import { NO_PROJECT, shell } from "./shell/shell-state.svelte";
@@ -46,6 +49,10 @@ export async function start(
       .then(() => thisVault.load()),
   ]);
   vaultPrompts.listen().catch(() => {});
+  // Without its listener no confirmation shows, and a send would wait for one.
+  sendConfirmations
+    .listen()
+    .catch((e: unknown) => toasts.show(errorMessage(e)));
   registry.setProjectOpen(info !== null);
   // Each window of a project keeps its own layout, tabs and environment.
   const scope = info?.scope ?? NO_PROJECT;

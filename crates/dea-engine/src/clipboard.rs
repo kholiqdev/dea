@@ -11,6 +11,8 @@ pub const CLIPBOARD_CLEAR_AFTER: Duration = Duration::from_secs(30);
 
 pub trait Clipboard: Send + Sync {
     fn text(&self) -> Option<String>;
+    /// Sets `text` as it is: not marked secret, and never cleared by Dea.
+    fn set_text(&self, text: &str) -> Result<(), String>;
     /// Sets `text`, marked where the OS allows so clipboard history and
     /// sync skip it.
     fn set_secret_text(&self, text: &str) -> Result<(), String>;
@@ -42,6 +44,10 @@ impl SystemClipboard {
 impl Clipboard for SystemClipboard {
     fn text(&self) -> Option<String> {
         self.with(arboard::Clipboard::get_text).ok()
+    }
+
+    fn set_text(&self, text: &str) -> Result<(), String> {
+        self.with(|clipboard| clipboard.set_text(text))
     }
 
     fn set_secret_text(&self, text: &str) -> Result<(), String> {

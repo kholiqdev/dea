@@ -15,7 +15,7 @@ use url::Url;
 use crate::body::Progress;
 use crate::connect::{self, Connection};
 use crate::cookies::CookieJar;
-use crate::error::{HttpError, describe};
+use crate::error::HttpError;
 use crate::pool::{Pool, PoolKey};
 use crate::proxy::{self, ProxyConfig};
 use crate::reader::{BodyReader, Encoding, ReaderConfig};
@@ -75,12 +75,53 @@ pub enum Event {
     /// The response head arrived.
     Head {
         status: u16,
+        /// As the server wrote it, or the standard one for `status`.
+        reason: String,
         headers: Vec<(String, String)>,
     },
     /// One piece of the body, decoded when the body is, as it arrived.
     Data(Bytes),
     /// A complete event of a `text/event-stream` body.
     Sse(SseEvent),
+    /// A phase of opening a new connection is done. Sent for every hop,
+    /// before its `Head`.
+    Phase { phase: Phase, took: Duration },
+    /// The hop goes over a connection taken from the pool. Sent instead
+    /// of the phases.
+    Reused,
+}
+
+/// A phase of opening a connection, in the order they happen. `Tls` is
+/// only reported for `https`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Dns,
+    Connect,
+    Tls,
+}
+
+/// Reports how the connection of a hop came about, from the same marks
+/// that fill its `Timing`.
+fn report_connection(sink: Option<&EventSink<'_>>, marks: &Marks, secure: bool) {
+    let Some(sink) = sink else { return };
+    if marks.reused {
+        sink(Event::Reused);
+        return;
+    }
+    sink(Event::Phase {
+        phase: Phase::Dns,
+        took: marks.resolved - marks.start,
+    });
+    sink(Event::Phase {
+        phase: Phase::Connect,
+        took: marks.connected - marks.resolved,
+    });
+    if secure {
+        sink(Event::Phase {
+            phase: Phase::Tls,
+            took: marks.secured - marks.connected,
+        });
+    }
 }
 
 impl<'a> SendContext<'a> {
@@ -93,7 +134,7 @@ impl<'a> SendContext<'a> {
     }
 
     /// Calls `sink` for every event of the response. A hop that is
-    /// followed as a redirect sends none.
+    /// followed as a redirect sends only its connection events.
     #[must_use]
     pub fn events(mut self, sink: &'a EventSink<'a>) -> Self {
         self.events = Some(sink);
@@ -243,6 +284,15 @@ struct Failure {
     retry: bool,
 }
 
+/// Whether sending `method` twice does what sending it once does (RFC 9110
+/// §9.2.2). Matched as sent, so `get` is not `GET`.
+fn idempotent(method: &str) -> bool {
+    matches!(
+        method,
+        "GET" | "HEAD" | "OPTIONS" | "TRACE" | "PUT" | "DELETE"
+    )
+}
+
 impl Client {
     pub fn new(config: ClientConfig) -> Result<Client, HttpError> {
         HeaderValue::from_str(&config.user_agent).map_err(|_| {
@@ -271,9 +321,10 @@ impl Client {
     ///
     /// `Options::timeout` limits each hop until its response head arrives,
     /// then the gap between pieces of its body (decision 9); `None` sets no
-    /// limit. A pooled
-    /// connection that fails before any of the response arrives (the
-    /// server closed it while idle) is replaced by a new one, once.
+    /// limit. A pooled connection that fails before any of the response
+    /// arrives (the server closed it while idle) is replaced by a new one,
+    /// once, when the request is safe to send again: not all of it was
+    /// written, or its method is idempotent.
     pub async fn send(
         &self,
         request: Request,
@@ -310,6 +361,7 @@ impl Client {
                 None
             };
             let Some(next) = next else {
+                response.url = current.url.to_string();
                 response.redirects = redirects;
                 return Ok(response);
             };
@@ -374,6 +426,7 @@ impl Client {
 
         if let Some(connection) = self.inner.pool.checkout(&key) {
             let marks = Marks::reused(Instant::now());
+            report_connection(run.events, &marks, false);
             let attempt = Attempt {
                 prepared: &prepared,
                 key: &key,
@@ -391,6 +444,7 @@ impl Client {
 
         let (connection, marks) =
             open(request, proxy.as_ref(), head_deadline, &self.inner.tls).await?;
+        report_connection(run.events, &marks, request.url.scheme() == "https");
         if let Some(shared) = connection.share() {
             self.inner.pool.checkin(key.clone(), shared);
         }
@@ -429,6 +483,7 @@ impl Client {
             error,
             retry: false,
         })?;
+        let idempotent = idempotent(wire.method().as_str());
         let progress = wire.body().progress();
         let sent = head(head_deadline, &progress, connection.send(wire)).await;
         let head = match sent {
@@ -444,17 +499,28 @@ impl Client {
                 });
             }
             Ok(Ok(head)) => head,
-            Ok(Err(e)) => {
+            Ok(Err(unanswered)) => {
                 let nothing_arrived = connection.bytes_received() == received_before;
+                // A server may have acted on a whole request it never
+                // answered.
+                let safe = !unanswered.written || idempotent;
                 return Err(Failure {
-                    error: HttpError::Protocol(describe(&e)),
-                    retry: marks.reused && nothing_arrived,
+                    error: connection.error(&unanswered.error),
+                    retry: marks.reused && nothing_arrived && safe,
                 });
             }
         };
         let head_at = Instant::now();
         let (parts, mut body) = head.into_parts();
         let status = parts.status.as_u16();
+        let reason = match parts.extensions.get::<hyper::ext::ReasonPhrase>() {
+            Some(reason) => String::from_utf8_lossy(reason.as_bytes()).into_owned(),
+            None => parts
+                .status
+                .canonical_reason()
+                .unwrap_or_default()
+                .to_owned(),
+        };
         let headers: Vec<(String, String)> = parts
             .headers
             .iter()
@@ -472,6 +538,7 @@ impl Client {
         if let Some(sink) = events {
             sink(Event::Head {
                 status,
+                reason: reason.clone(),
                 headers: headers.clone(),
             });
         }
@@ -516,7 +583,7 @@ impl Client {
                 }
                 Some(Err(e)) => {
                     return Err(Failure {
-                        error: HttpError::Protocol(describe(&e)),
+                        error: connection.error(&e),
                         retry: false,
                     });
                 }
@@ -536,14 +603,6 @@ impl Client {
             self.inner.pool.touch(key, &connection);
         }
 
-        let reason = match parts.extensions.get::<hyper::ext::ReasonPhrase>() {
-            Some(reason) => String::from_utf8_lossy(reason.as_bytes()).into_owned(),
-            None => parts
-                .status
-                .canonical_reason()
-                .unwrap_or_default()
-                .to_owned(),
-        };
         Ok(Response {
             version,
             status,
@@ -553,6 +612,8 @@ impl Client {
             truncated,
             content_encoding,
             timing: marks.finish(head_at, done_at),
+            // Both filled in by `follow`, which knows the hops.
+            url: String::new(),
             redirects: Vec::new(),
         })
     }
@@ -581,6 +642,16 @@ mod tests {
                 extra_roots_pem: vec![server.ca_pem()],
                 client_identity: None,
             },
+        }
+    }
+
+    #[test]
+    fn only_idempotent_methods_are_sent_again_once_written() {
+        for method in ["GET", "HEAD", "OPTIONS", "TRACE", "PUT", "DELETE"] {
+            assert!(idempotent(method), "{method}");
+        }
+        for method in ["POST", "PATCH", "CONNECT", "QUERY", "get"] {
+            assert!(!idempotent(method), "{method}");
         }
     }
 

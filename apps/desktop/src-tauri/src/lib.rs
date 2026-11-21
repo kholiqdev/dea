@@ -7,6 +7,8 @@ mod commands;
 mod error;
 mod session;
 mod state;
+#[cfg(test)]
+mod testing;
 mod vault;
 
 use state::AppState;
@@ -105,6 +107,22 @@ pub fn run() {
             commands::requests::inspect_request,
             commands::requests::pick_request_file,
             commands::requests::describe_file_ref,
+            commands::responses::response_text,
+            commands::responses::response_bytes,
+            commands::responses::response_rows,
+            commands::responses::find_in_response,
+            commands::responses::filter_response,
+            commands::responses::copy_response,
+            commands::responses::save_response,
+            commands::responses::release_response,
+            commands::responses::list_cookies,
+            commands::responses::save_cookie,
+            commands::responses::delete_cookie,
+            commands::responses::delete_domain_cookies,
+            commands::send::send_request,
+            commands::send::cancel_send,
+            commands::send::answer_send_confirmation,
+            commands::send::resend_send_confirmations,
             commands::vault::vault_info,
             commands::vault::vault_secrets,
             commands::vault::vault_unlock,
@@ -121,10 +139,7 @@ pub fn run() {
         .on_page_load(move |webview, payload| {
             // Before setup the state is not there yet, and nothing can wait.
             if let Some(state) = webview.try_state::<AppState>() {
-                state
-                    .vault
-                    .prompter()
-                    .page_load(webview.label(), payload.event());
+                state.page_load(webview.label(), payload.event());
             }
             if probe && payload.event() == PageLoadEvent::Finished {
                 probe_print("DEA_MARK page loaded");

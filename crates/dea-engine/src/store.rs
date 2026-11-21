@@ -90,6 +90,24 @@ impl Default for Settings {
 pub struct RequestSettings {
     /// Save an edited request a second after the last change.
     pub autosave: bool,
+    /// Where the response panel sits next to the request.
+    pub response_layout: ResponseLayout,
+}
+
+/// Where the response panel sits.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub enum ResponseLayout {
+    /// Beside the request.
+    #[default]
+    Right,
+    /// Under the request.
+    Below,
 }
 
 /// When the Vault locks and how long production secrets stay usable.
@@ -360,8 +378,8 @@ impl Store {
 
     /// Removes everything kept for project `scope`: the UI state of every
     /// window and the cookies of every environment (`Clear local data`).
-    /// A jar already loaded stays in memory until
-    /// [`crate::requests::RequestService::forget_project`].
+    /// A jar already loaded stays in memory, so clear through
+    /// [`crate::requests::RequestService::clear_project`].
     ///
     /// # Errors
     ///

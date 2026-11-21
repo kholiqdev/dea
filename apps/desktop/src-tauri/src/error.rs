@@ -3,10 +3,10 @@
 use std::error::Error;
 use std::fmt::Write;
 
-use dea_engine::SendError;
 use dea_engine::projects::OpenError;
 use dea_engine::store::StoreError;
 use dea_engine::vault::{SaveSecretError, UseError, VaultError};
+use dea_engine::{ResponseError, SendError};
 use dea_project::{ProjectError, RequestError};
 use serde::Serialize;
 
@@ -126,6 +126,20 @@ impl From<SendError> for IpcError {
             SendError::Unresolved(_) | SendError::InvalidUrl(_) | SendError::Http(_) => {
                 IpcErrorKind::Invalid
             }
+        };
+        Self::new(kind, &e)
+    }
+}
+
+impl From<ResponseError> for IpcError {
+    fn from(e: ResponseError) -> Self {
+        let kind = match e {
+            ResponseError::NotFound => IpcErrorKind::Missing,
+            ResponseError::TooLarge
+            | ResponseError::NotText
+            | ResponseError::NotJson
+            | ResponseError::InvalidPath(_) => IpcErrorKind::Invalid,
+            ResponseError::Io(_) => IpcErrorKind::Io,
         };
         Self::new(kind, &e)
     }

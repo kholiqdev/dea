@@ -7,12 +7,14 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use dea_engine::requests::{PreparedRequest, RequestService, SendError, Sent, VaultProvider};
 use dea_engine::store::Store;
 use dea_engine::vault::VaultError;
 use dea_engine::{
-    Inspection, PasswordPrompt, Prompter, SendAnswer, SendConfirmation, UseError, VaultService,
+    BodyKind, CookieInfo, FailureKind, Inspection, PasswordPrompt, Prompter, SendAnswer,
+    SendConfirmation, SendOutcome, UseError, VaultService, outcome_of_error, response_info,
 };
 use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
@@ -134,7 +136,7 @@ struct Fixture {
     prompter: Arc<RecordingPrompter>,
     /// Confirmations and authentication reasons, in the order they came.
     log: Arc<Mutex<Vec<String>>>,
-    service: RequestService,
+    service: Arc<RequestService>,
     /// The staging `access_token`.
     secret: String,
     /// The production `access_token`.
@@ -183,12 +185,12 @@ impl Fixture {
             log: Arc::clone(&log),
         });
         let store = Arc::new(Store::new(app_data.path()));
-        let service = RequestService::new(
+        let service = Arc::new(RequestService::new(
             client(app_data.path()),
             Arc::clone(&store),
             Arc::clone(&vault),
             Arc::clone(&prompter) as Arc<dyn Prompter>,
-        );
+        ));
         Fixture {
             project_dir,
             app_data,
@@ -207,12 +209,12 @@ impl Fixture {
 
     /// Another service over the same app data, as after a restart.
     fn restart(&mut self) {
-        self.service = RequestService::new(
+        self.service = Arc::new(RequestService::new(
             client(self.app_data.path()),
             Arc::new(Store::new(self.app_data.path())),
             Arc::clone(&self.vault),
             Arc::clone(&self.prompter) as Arc<dyn Prompter>,
-        );
+        ));
     }
 
     /// Saves `file` as `requests/shipments/<name>.yaml` and loads the tree
@@ -229,8 +231,9 @@ impl Fixture {
         path: &Path,
         environment: Option<&str>,
     ) -> Result<PreparedRequest, SendError> {
+        let saved = self.tree.find(path).expect("a saved request").entry;
         self.service
-            .prepare(&self.project, &self.tree, path, environment)
+            .prepare(&self.project, &self.tree, path, &saved.request, environment)
     }
 
     /// Sends `prepared` and checks its cookies were saved.
@@ -264,6 +267,23 @@ impl Fixture {
         let path = self.add("route", request("GET", &format!("{{{{baseUrl}}}}{route}")));
         let prepared = self.prepare(&path, Some(environment)).unwrap();
         self.send_prepared(prepared).await
+    }
+
+    /// Puts `value` in the Vault as the `staging` secret `name`, and locks
+    /// the Vault again.
+    fn set_secret(&self, name: &str, value: &str) {
+        self.vault.unlock("Set up the test").unwrap();
+        let key = SecretKey {
+            scope: self.project.vault_scope(),
+            environment: "staging".into(),
+            name: name.into(),
+        };
+        let data = SecretData::Text(SecretString::from(value.to_string()));
+        self.vault
+            .set_secret(&key, SecretKind::Token, &data)
+            .unwrap();
+        self.vault.lock();
+        self.log.lock().unwrap().clear();
     }
 
     fn last_request(&self) -> Received {
@@ -322,7 +342,14 @@ async fn default_prompter_refuses_production() {
         FakePrompter::answering(&[]),
     );
 
-    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("production"));
+    let draft = request("GET", "{{baseUrl}}/echo");
+    let result = service.prepare(
+        &f.project,
+        &f.tree,
+        Path::new(LIST),
+        &draft,
+        Some("production"),
+    );
 
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
     assert!(f.server.requests().is_empty());
@@ -359,14 +386,16 @@ async fn post_to_production_always_asks() {
     let (other, other_tree) = project_in(other_dir.path(), &f.server);
     assert_ne!(other.vault_scope(), f.project.vault_scope());
     f.prompter.answer(SendAnswer::Cancel);
+    let draft = request("GET", "{{baseUrl}}/echo");
     let result = f
         .service
-        .prepare(&other, &other_tree, list, Some("production"));
+        .prepare(&other, &other_tree, list, &draft, Some("production"));
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
     assert_eq!(f.prompter.asked().len(), 4);
 
     // Clearing local data forgets the choice.
-    f.service.forget_project(&f.project.vault_scope());
+    let scope = f.project.vault_scope();
+    f.service.clear_project(&scope, || Ok(())).unwrap();
     f.prompter.answer(SendAnswer::Cancel);
     let result = f.prepare(list, Some("production"));
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
@@ -436,7 +465,9 @@ async fn sends_a_request_from_the_project() {
         .unwrap();
     assert_eq!(sent.response.status, 200);
     assert!(
-        matches!(events.first(), Some(Event::Head { status: 200, .. })),
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Head { status: 200, .. })),
         "{events:?}"
     );
     let received = f.last_request();
@@ -590,8 +621,9 @@ async fn cookies_persist_and_clear_with_local_data() {
 
     // Clear local data.
     let scope = f.project.vault_scope();
-    f.store.clear_project(&scope).unwrap();
-    f.service.forget_project(&scope);
+    f.service
+        .clear_project(&scope, || f.store.clear_project(&scope))
+        .unwrap();
     f.send("staging", "/echo").await;
     assert_eq!(f.last_request().header("cookie"), None);
     assert!(
@@ -907,7 +939,14 @@ async fn the_vault_is_opened_only_after_production_is_confirmed() {
     let service = service_with(&f, NeverOpened);
     f.prompter.answer(SendAnswer::Cancel);
 
-    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("production"));
+    let draft = request("GET", "{{baseUrl}}/echo");
+    let result = service.prepare(
+        &f.project,
+        &f.tree,
+        Path::new(LIST),
+        &draft,
+        Some("production"),
+    );
 
     assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
 }
@@ -917,13 +956,13 @@ async fn a_send_without_secrets_leaves_the_vault_closed() {
     let mut f = Fixture::new().await;
     let mut file = request("GET", "{{baseUrl}}/echo");
     file.auth = Auth::NoAuth;
-    let path = f.add("plain", file);
+    let path = f.add("plain", file.clone());
     let service = service_with(&f, NeverOpened);
 
-    let staging = service.prepare(&f.project, &f.tree, &path, Some("staging"));
+    let staging = service.prepare(&f.project, &f.tree, &path, &file, Some("staging"));
     assert!(staging.is_ok(), "{staging:?}");
     f.prompter.answer(SendAnswer::Send);
-    let production = service.prepare(&f.project, &f.tree, &path, Some("production"));
+    let production = service.prepare(&f.project, &f.tree, &path, &file, Some("production"));
     assert!(production.is_ok(), "{production:?}");
 
     let response = f.send_prepared(staging.unwrap()).await;
@@ -944,7 +983,14 @@ async fn a_vault_that_cannot_be_opened_stops_the_send() {
     let f = Fixture::new().await;
     let service = service_with(&f, Unavailable);
 
-    let result = service.prepare(&f.project, &f.tree, Path::new(LIST), Some("staging"));
+    let draft = request("GET", "{{baseUrl}}/echo");
+    let result = service.prepare(
+        &f.project,
+        &f.tree,
+        Path::new(LIST),
+        &draft,
+        Some("staging"),
+    );
 
     assert!(
         matches!(result, Err(SendError::Secret(UseError::Vault(_)))),
@@ -1208,4 +1254,315 @@ async fn a_folder_header_replaces_the_automatic_user_agent() {
     };
     assert!(replaced("User-Agent"));
     assert!(!replaced("Accept"));
+}
+
+#[tokio::test]
+async fn prepare_sends_the_draft_not_the_file() {
+    let f = Fixture::new().await;
+    // The file at LIST says `{{baseUrl}}/echo`.
+    let draft = request("GET", "{{baseUrl}}/other");
+
+    let prepared = f
+        .service
+        .prepare(
+            &f.project,
+            &f.tree,
+            Path::new(LIST),
+            &draft,
+            Some("staging"),
+        )
+        .unwrap();
+
+    assert!(prepared.url_redacted.ends_with("/other"), "{prepared:?}");
+}
+
+#[tokio::test]
+async fn confirmation_says_whether_secrets_are_used() {
+    let f = Fixture::new().await;
+    let mut with_secret = request("GET", "{{baseUrl}}/echo");
+    with_secret.auth = Auth::NoAuth;
+    with_secret.headers = vec![row("X-Token", "{{vault:access_token}}")];
+    let mut without = request("GET", "{{baseUrl}}/echo");
+    without.auth = Auth::NoAuth;
+
+    for draft in [&with_secret, &without] {
+        f.prompter.answer(SendAnswer::Cancel);
+        let result = f.service.prepare(
+            &f.project,
+            &f.tree,
+            Path::new(LIST),
+            draft,
+            Some("production"),
+        );
+        assert!(matches!(result, Err(SendError::NotConfirmed)), "{result:?}");
+    }
+
+    let asked = f.prompter.asked();
+    assert_eq!(asked.len(), 2);
+    assert!(asked[0].secrets);
+    assert!(!asked[1].secrets);
+}
+
+#[tokio::test]
+async fn inspection_of_a_blank_json_body_lists_no_content_type() {
+    let f = Fixture::new().await;
+    let mut draft = request("POST", "{{baseUrl}}/x");
+    draft.body = Some(Body::Json { text: " \n".into() });
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert!(
+        inspection
+            .automatic_headers
+            .iter()
+            .all(|h| h.name != "Content-Type" && h.name != "Content-Length"),
+        "{:?}",
+        inspection.automatic_headers
+    );
+}
+
+#[tokio::test]
+async fn secret_values_are_hidden_in_errors_and_redirects() {
+    let mut f = Fixture::new().await;
+    f.set_secret("HOST", "secret-host.invalid");
+    f.set_secret("TOKEN", "tok-123");
+    f.set_secret("KEY", "Ab+c=");
+    f.set_secret("UPPER_HOST", "Upper-Host.invalid");
+
+    // A secret host fails DNS, and the failure does not name it.
+    let path = f.add("hidden-host", request("GET", "https://{{vault:HOST}}/x"));
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let error = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    let shown = format!("{error} {error:?}");
+    assert!(!shown.contains("secret-host"), "{shown}");
+    let outcome = outcome_of_error(&error);
+    let SendOutcome::Failed { failure } = outcome else {
+        panic!("not a failure: {outcome:?}")
+    };
+    assert_eq!(failure.kind, FailureKind::Dns);
+    assert!(!format!("{failure:?}").contains("secret-host"));
+    assert_eq!(
+        failure.message,
+        "•••••••• could not be resolved. Check the host name."
+    );
+    // The URL parser writes a host in lower case.
+    let path = f.add(
+        "upper-host",
+        request("GET", "http://{{vault:UPPER_HOST}}/x"),
+    );
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let error = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    let shown = format!("{error:?}").to_ascii_lowercase();
+    assert!(!shown.contains("upper-host"), "{shown}");
+
+    // A redirect to a URL that carries the secret token in its query.
+    let mut file = request("GET", "{{baseUrl}}/redirect-to");
+    file.params = vec![
+        row("url", "/echo?token={{vault:TOKEN}}"),
+        // Encoded as `Ab%2Bc%3D` in the query.
+        row("key", "{{vault:KEY}}"),
+    ];
+    let path = f.add("hidden-token", file);
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let sent = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(f.last_request().path_and_query, "/echo?token=tok-123");
+    assert_eq!(sent.response.redirects.len(), 1);
+    assert!(
+        sent.response
+            .redirects
+            .iter()
+            .all(|r| !r.url.contains("tok-123"))
+    );
+    assert!(sent.response.redirects[0].url.contains("••••••••"));
+    assert!(
+        !sent.response.redirects[0].url.contains("Ab%2Bc%3D"),
+        "{}",
+        sent.response.redirects[0].url
+    );
+    assert_eq!(sent.url, f.server.url("/echo?token=••••••••"));
+}
+
+#[tokio::test]
+async fn response_info_lists_received_cookies() {
+    let mut f = Fixture::new().await;
+    let path = f.add(
+        "set",
+        request("GET", "{{baseUrl}}/cookies/set?session=abc;Path=/"),
+    );
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let sent = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap();
+
+    let info = response_info(&sent);
+
+    assert!(
+        matches!(&info.cookies[..], [CookieInfo { name, domain, path, .. }]
+            if name == "session" && domain == "127.0.0.1" && path == "/"),
+        "{:?}",
+        info.cookies
+    );
+    assert_eq!(info.cookies[0].value, "abc");
+    assert!(info.cookies[0].host_only);
+    assert_eq!(info.cookies[0].expires, None);
+    assert_eq!(
+        (info.status, info.reason.as_str(), info.version.as_str()),
+        (200, "OK", "HTTP/1.1")
+    );
+    assert!(info.headers.iter().any(|h| h.name == "set-cookie"));
+    assert_eq!((info.size, info.kind), (0, BodyKind::Empty));
+    assert!(!info.large && !info.truncated);
+    assert!(info.redirects.is_empty());
+    assert!(info.cookies_not_saved.is_none());
+    assert!(info.timing.total_ms > 0.0);
+}
+
+#[tokio::test]
+async fn response_info_reads_the_kind_of_a_large_body_from_its_file() {
+    let mut f = Fixture::new().await;
+    let size = 11 * 1024 * 1024;
+    let response = f.send("staging", &format!("/bytes/{size}")).await;
+    assert!(matches!(response.body, dea_http::ResponseBody::File { .. }));
+    let sent = Sent {
+        response,
+        cookies_not_saved: None,
+        url: f.server.url("/bytes"),
+    };
+
+    let info = response_info(&sent);
+
+    assert!(info.large);
+    assert_eq!(info.size, size);
+    assert_eq!(info.kind, BodyKind::Text);
+}
+
+#[tokio::test]
+async fn a_secret_ip_host_is_hidden_when_the_connection_is_refused() {
+    let mut f = Fixture::new().await;
+    f.set_secret("HOST", "127.0.0.1");
+    // A port nothing listens on any more.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let url = format!("http://{{{{vault:HOST}}}}:{port}/x");
+    let path = f.add("ip-host", request("GET", &url));
+
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let error = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap_err();
+
+    let shown = format!("{error} {error:?}");
+    assert!(!shown.contains("127.0.0.1"), "{shown}");
+    let outcome = outcome_of_error(&error);
+    let SendOutcome::Failed { failure } = outcome else {
+        panic!("not a failure: {outcome:?}")
+    };
+    assert_eq!(failure.kind, FailureKind::Refused);
+    assert_eq!(
+        failure.message,
+        format!("Nothing is listening on ••••••••:{port}.")
+    );
+}
+
+#[tokio::test]
+async fn a_secret_password_in_the_url_is_hidden_in_its_urls() {
+    let mut f = Fixture::new().await;
+    // The URL parser writes it as `p%40ss%3Aword` in the userinfo.
+    f.set_secret("PW", "p@ss:word");
+    let url = format!(
+        "http://u:{{{{vault:PW}}}}@127.0.0.1:{}/redirect/1",
+        f.server.port()
+    );
+    let path = f.add("userinfo", request("GET", &url));
+
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let sent = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(sent.response.status, 200);
+    assert_eq!(sent.response.redirects.len(), 1);
+    for shown in [&sent.url, &sent.response.redirects[0].url] {
+        assert!(!shown.contains("p%40ss%3Aword"), "{shown}");
+        assert!(!shown.contains("p@ss"), "{shown}");
+        assert!(shown.contains("u:••••••••@127.0.0.1"), "{shown}");
+    }
+}
+
+#[tokio::test]
+async fn clearing_while_a_send_is_in_flight_leaves_no_cookie_file() {
+    let mut f = Fixture::new().await;
+    let path = f.add(
+        "later",
+        request("GET", "{{baseUrl}}/cookies/set-later/300?session=abc"),
+    );
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let scope = f.project.vault_scope();
+    let file = f.app_data.path().join("cookies");
+    let cancel = CancellationToken::new();
+    // The clear starts while the send waits for its response, and takes
+    // until after the response came, as a slow disk would.
+    let clearing = {
+        let (service, store, scope) = (Arc::clone(&f.service), Arc::clone(&f.store), scope);
+        tokio::task::spawn_blocking(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            service
+                .clear_project(&scope, || {
+                    store.clear_project(&scope)?;
+                    std::thread::sleep(Duration::from_millis(400));
+                    Ok(())
+                })
+                .unwrap();
+        })
+    };
+    let sent = f.try_send(prepared, &cancel).await;
+    clearing.await.unwrap();
+    sent.unwrap();
+    assert!(
+        f.service
+            .list_cookies(&f.project, Some("staging"))
+            .is_empty()
+    );
+    assert!(
+        !file.exists() || fs::read_dir(&file).unwrap().next().is_none(),
+        "a cookie file was written after the clear"
+    );
+    assert!(f.saved_cookies().is_empty());
+}
+
+#[tokio::test]
+async fn cookie_changes_are_saved_at_once() {
+    let mut f = Fixture::new().await;
+    f.send("staging", "/cookies/set?session=s1").await;
+    let host = "127.0.0.1";
+    assert_eq!(f.service.list_cookies(&f.project, Some("staging")).len(), 1);
+    let removed = f
+        .service
+        .change_cookies(&f.project, Some("staging"), |jar| {
+            jar.remove(host, "/", "session")
+        })
+        .unwrap();
+    assert!(removed);
+    f.restart();
+    assert!(
+        f.service
+            .list_cookies(&f.project, Some("staging"))
+            .is_empty()
+    );
+    assert!(f.saved_cookies().is_empty());
 }

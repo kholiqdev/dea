@@ -2,10 +2,12 @@
 //! production environment, opens the Vault when a secret is needed, and
 //! keeps a cookie jar per project and environment (decisions 12 and 14).
 //!
-//! [`RequestService::prepare`] does everything up to the network and may
+//! [`RequestService::prepare`] takes the draft to send, saved or not, like
+//! [`RequestService::inspect`], does everything up to the network and may
 //! show dialogs, so it blocks. [`RequestService::send`] is the network
 //! part.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -15,14 +17,16 @@ use std::time::Duration;
 
 use dea_http::{Body, ClientIdentity, Options, Part, PartValue, Request, SendContext, TlsConfig};
 use dea_project::{
-    FieldValue, LocalFiles, Project, RequestContext, RequestError, RequestFile, RequestTree,
-    Resolved, ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup, SecretLookupError,
-    SystemDynamicSource, VaultManifest, is_local_ref, resolve_draft, resolve_request,
+    FieldValue, HIDDEN, LocalFiles, Project, RequestContext, RequestError, RequestFile,
+    RequestTree, Resolved, ResolvedBody, ResolvedRequest, ResolvedTls, SecretLookup,
+    SecretLookupError, SystemDynamicSource, VaultManifest, encode_query_value, is_local_ref,
+    resolve_draft,
 };
 use url::Url;
 use zeroize::Zeroizing;
 
 use crate::error::UseError;
+use crate::exchange::CookieInfo;
 use crate::inspection::Inspection;
 use crate::prompt::Prompter;
 use crate::store::{Store, StoreError};
@@ -30,7 +34,7 @@ use crate::vault::{VaultService, is_production, production_reason};
 
 pub use crate::prompt::{SendAnswer, SendConfirmation};
 pub use dea_http::{
-    CancellationToken, Client, ClientConfig, CookieJar, Event, HttpError, Response,
+    CancellationToken, Client, ClientConfig, CookieJar, Event, HttpError, Response, TlsError,
 };
 
 /// The methods whose confirmation may be skipped for the rest of the
@@ -66,10 +70,14 @@ pub enum SendError {
     Http(#[from] HttpError),
 }
 
-/// What a send that reached the server gives back.
+/// What a send that reached the server gives back. Every secret value the
+/// request used is shown as `••••••••` in `url`, in `response.url` and in
+/// the URLs of `response.redirects`.
 #[derive(Debug)]
 pub struct Sent {
     pub response: Response,
+    /// The URL of the final hop.
+    pub url: String,
     /// Cookies from this exchange that could not be saved; they stay in
     /// memory and are saved again with the next send.
     pub cookies_not_saved: Option<StoreError>,
@@ -87,6 +95,8 @@ pub struct PreparedRequest {
     request: Request,
     /// The jar to use, `None` when the request has cookies off.
     jar: Option<Key>,
+    /// What `send` hides in what it reports.
+    secrets: SecretValues,
 }
 
 /// Shows the redacted URL only: the request itself holds secrets.
@@ -131,7 +141,7 @@ pub struct RequestService {
     /// go out without asking, until Dea quits.
     skip: Mutex<HashSet<Key>>,
     /// The jars loaded so far.
-    jars: Mutex<HashMap<Key, Arc<CookieJar>>>,
+    jars: Arc<Mutex<HashMap<Key, Arc<CookieJar>>>>,
     /// Jars whose last save failed, saved again after the next send.
     unsaved: Mutex<HashSet<Key>>,
     /// Held while a jar is written, so the newest save is the last one.
@@ -154,33 +164,37 @@ impl RequestService {
             vault: Box::new(vault),
             prompter,
             skip: Mutex::default(),
-            jars: Mutex::default(),
+            jars: Arc::default(),
             unsaved: Mutex::default(),
             saving: Arc::default(),
         }
     }
 
-    /// Resolves the request at `path` for `environment` (`None` is "No
-    /// environment"), in this order:
+    /// Resolves `draft`, as if it were saved at `path`, for `environment`
+    /// (`None` is "No environment"), in this order:
     ///
-    /// 1. a preview that never touches the Vault, for the method, the URL
-    ///    and the secrets it needs;
+    /// 1. a preview of the draft, resolved the way `inspect` does, that
+    ///    never touches the Vault, for the method, the URL and the secrets
+    ///    it needs;
     /// 2. for a production environment, the confirmation, unless the
     ///    person stopped the asking for this `GET`, `HEAD` or `OPTIONS`;
+    ///    [`SendConfirmation::secrets`] tells whether the request uses any
+    ///    Vault secret;
     /// 3. when secrets are used, production authentication, or for another
     ///    environment an unlock of a locked Vault;
     /// 4. when secrets are used, the real resolution with the Vault's
     ///    values; otherwise the preview is the request.
     ///
-    /// The Vault is opened only at step 3, so a request without secrets
-    /// never reaches the keychain. Blocks: steps 2 and 3 may show dialogs.
-    /// Nothing is sent.
+    /// `path` places the draft among the folders it inherits from; the
+    /// file there, if any, is not read. The Vault is opened only at step 3,
+    /// so a request without secrets never reaches the keychain. Blocks:
+    /// steps 2 and 3 may show dialogs. Nothing is sent.
     ///
     /// # Errors
     ///
     /// [`SendError::NotConfirmed`] when the person cancels; nothing was
     /// read from the Vault then. [`SendError::Secret`] when the Vault
-    /// cannot be opened, [`SendError::Request`] when the request cannot be
+    /// cannot be opened, [`SendError::Request`] when the draft cannot be
     /// resolved, [`SendError::Unresolved`] or [`SendError::InvalidUrl`]
     /// for a URL that cannot be sent to, [`SendError::File`] for a
     /// certificate that cannot be read.
@@ -189,17 +203,27 @@ impl RequestService {
         project: &Project,
         tree: &RequestTree,
         path: &Path,
+        draft: &RequestFile,
         environment: Option<&str>,
     ) -> Result<PreparedRequest, SendError> {
         let scope = project.vault_scope();
-        let preview = resolve(&self.store, project, tree, path, environment, &Placeholders)?;
+        let preview = resolve(
+            &self.store,
+            project,
+            tree,
+            path,
+            draft,
+            environment,
+            &Placeholders,
+        )?;
         let url = with_scheme(&preview.url).redacted;
         let production = environment.filter(|env| is_production(project, env));
+        let names = preview.secret_names();
         if let Some(env) = production {
-            self.confirm(&scope, env, &preview.method, &url)?;
+            self.confirm(&scope, env, &preview.method, &url, !names.is_empty())?;
         }
 
-        let names = preview.secret_names();
+        let mut secrets = SecretValues::default();
         let resolved = if names.is_empty() {
             // Placeholders only stand in for secrets, so without any the
             // preview is the request, and the Vault stays closed.
@@ -219,8 +243,22 @@ impl RequestService {
             } else if vault.status().locked {
                 vault.unlock(&production_reason(&action, &names))?;
             }
-            let lookup = vault.lookup(project);
-            resolve(&self.store, project, tree, path, environment, &lookup)?
+            let vault_lookup = vault.lookup(project);
+            let lookup = Remembering {
+                inner: &vault_lookup,
+                values: RefCell::default(),
+            };
+            let resolved = resolve(
+                &self.store,
+                project,
+                tree,
+                path,
+                draft,
+                environment,
+                &lookup,
+            )?;
+            secrets = SecretValues::new(lookup.values.into_inner());
+            resolved
         };
         let jar = resolved
             .options
@@ -239,6 +277,7 @@ impl RequestService {
             unresolved,
             request,
             jar,
+            secrets,
         })
     }
 
@@ -280,6 +319,9 @@ impl RequestService {
     /// A response is never lost to a failed save: it comes back with
     /// [`Sent::cookies_not_saved`] set, and the cookies stay in use.
     ///
+    /// Every secret value the request used is shown as `••••••••` in the
+    /// URLs of the response and in the text of an error.
+    ///
     /// # Errors
     ///
     /// [`SendError::Http`] when the exchange fails. A save that fails then
@@ -291,7 +333,10 @@ impl RequestService {
         events: Option<&mut (dyn FnMut(Event) + Send)>,
     ) -> Result<Sent, SendError> {
         let PreparedRequest {
-            request, jar: key, ..
+            request,
+            jar: key,
+            secrets,
+            ..
         } = prepared;
         let jar = key.as_ref().map(|(scope, env)| self.jar(scope, env));
         // The client takes a shared callback; the lock is only held while
@@ -315,26 +360,92 @@ impl RequestService {
             (Some(key), Some(jar)) => self.save_pending(key, jar).await,
             _ => None,
         };
+        let mut response = result.map_err(|e| SendError::Http(secrets.hide_error(e)))?;
+        for redirect in &mut response.redirects {
+            redirect.url = secrets.hide(&redirect.url);
+        }
+        response.url = secrets.hide(&response.url);
         Ok(Sent {
-            response: result?,
+            url: response.url.clone(),
+            response,
             cookies_not_saved,
         })
     }
 
-    /// The cookie jar of `environment` of `project`, for the cookie
-    /// manager. Changes to it are saved by the next send that uses it.
+    /// The cookie jar of `environment` of `project`. Changes made to it
+    /// directly are saved by the next send that uses it; to change cookies
+    /// and save them at once, use [`RequestService::change_cookies`].
     pub fn cookies(&self, project: &Project, environment: Option<&str>) -> Arc<CookieJar> {
         self.jar(&project.vault_scope(), environment.unwrap_or_default())
     }
 
-    /// Forgets the loaded jars, the unsaved ones included, and the
-    /// production choices of project `scope`, after its local data was
-    /// cleared with [`Store::clear_project`]. A send still running then
-    /// does not save its jar again.
-    pub fn forget_project(&self, scope: &str) {
+    /// The unexpired cookies of `environment` of `project`, sorted by
+    /// domain, path and name.
+    pub fn list_cookies(&self, project: &Project, environment: Option<&str>) -> Vec<CookieInfo> {
+        self.cookies(project, environment)
+            .list()
+            .iter()
+            .map(CookieInfo::from)
+            .collect()
+    }
+
+    /// Runs `change` on the jar of `environment` of `project`, and saves
+    /// the jar at once when `change` altered it. Held under the same lock
+    /// as every other save and as [`RequestService::clear_project`].
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when the jar could not be saved. The change stays in
+    /// memory and is saved again by the next send.
+    pub fn change_cookies<R>(
+        &self,
+        project: &Project,
+        environment: Option<&str>,
+        change: impl FnOnce(&CookieJar) -> R,
+    ) -> Result<R, StoreError> {
+        let key = (
+            project.vault_scope(),
+            environment.unwrap_or_default().to_string(),
+        );
+        let _saving = guard(&self.saving);
+        let jar = self.cached_jar(&key);
+        let result = change(&jar);
+        if jar.take_changed() || guard(&self.unsaved).contains(&key) {
+            match self.store.save_cookies(&key.0, &key.1, &jar) {
+                Ok(()) => {
+                    guard(&self.unsaved).remove(&key);
+                }
+                Err(e) => {
+                    guard(&self.unsaved).insert(key);
+                    return Err(e);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Clears the local data of project `scope` with `clear`, normally
+    /// [`Store::clear_project`], and forgets what was loaded from it: the
+    /// jars, the unsaved ones included, and the production choices.
+    ///
+    /// Everything runs under the lock that every jar save and load takes,
+    /// so a send that finishes meanwhile either saved before the clear
+    /// (and the clear removed the file) or finds its jar forgotten and
+    /// writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// What `clear` returns.
+    pub fn clear_project(
+        &self,
+        scope: &str,
+        clear: impl FnOnce() -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let _saving = guard(&self.saving);
         guard(&self.jars).retain(|(s, _), _| s != scope);
         guard(&self.unsaved).retain(|(s, _)| s != scope);
         guard(&self.skip).retain(|(s, _)| s != scope);
+        clear()
     }
 
     /// Asks before a request goes to production `environment`.
@@ -344,6 +455,7 @@ impl RequestService {
         environment: &str,
         method: &str,
         url: &str,
+        secrets: bool,
     ) -> Result<(), SendError> {
         let can_skip = SKIPPABLE.contains(&method);
         let key = (scope.to_string(), environment.to_string());
@@ -355,6 +467,7 @@ impl RequestService {
             url: url.to_string(),
             environment: environment.to_string(),
             can_skip,
+            secrets,
         };
         match self.prompter.confirm_send(&confirmation) {
             SendAnswer::Cancel => Err(SendError::NotConfirmed),
@@ -369,16 +482,25 @@ impl RequestService {
     }
 
     /// The jar of `scope` and `environment`, read from the store the first
-    /// time.
+    /// time. The read waits for [`RequestService::clear_project`], so it
+    /// never caches a jar older than a clear.
     fn jar(&self, scope: &str, environment: &str) -> Arc<CookieJar> {
         let key = (scope.to_string(), environment.to_string());
         if let Some(jar) = guard(&self.jars).get(&key) {
             return Arc::clone(jar);
         }
-        // Read without the lock; if another thread got there first, its
-        // jar is the one kept.
-        let loaded = Arc::new(self.store.load_cookies(scope, environment));
-        Arc::clone(guard(&self.jars).entry(key).or_insert(loaded))
+        let _saving = guard(&self.saving);
+        self.cached_jar(&key)
+    }
+
+    /// Like `jar`, for a caller that holds `saving`.
+    fn cached_jar(&self, key: &Key) -> Arc<CookieJar> {
+        if let Some(jar) = guard(&self.jars).get(key) {
+            return Arc::clone(jar);
+        }
+        let loaded = Arc::new(self.store.load_cookies(&key.0, &key.1));
+        guard(&self.jars).insert(key.clone(), Arc::clone(&loaded));
+        loaded
     }
 
     /// Saves `jar` when the exchange changed it or its last save failed,
@@ -402,18 +524,20 @@ impl RequestService {
 
     /// Writes `jar`, unless its project's local data was cleared since it
     /// was loaded. The write waits for the disk, so it runs on a blocking
-    /// thread.
+    /// thread, and checks that the jar is still the loaded one only once it
+    /// holds `saving`, so a clear cannot slip in between.
     async fn save(&self, key: Key, jar: Arc<CookieJar>) -> Result<(), StoreError> {
-        let current = guard(&self.jars)
-            .get(&key)
-            .is_some_and(|cached| Arc::ptr_eq(cached, &jar));
-        if !current {
-            return Ok(());
-        }
         let store = Arc::clone(&self.store);
         let saving = Arc::clone(&self.saving);
+        let jars = Arc::clone(&self.jars);
         let task = tokio::task::spawn_blocking(move || {
             let _one_at_a_time = guard(&saving);
+            let current = guard(&jars)
+                .get(&key)
+                .is_some_and(|cached| Arc::ptr_eq(cached, &jar));
+            if !current {
+                return Ok(());
+            }
             store.save_cookies(&key.0, &key.1, &jar)
         });
         match task.await {
@@ -435,6 +559,138 @@ impl SecretLookup for Placeholders {
     fn lookup(&self, _environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
         Ok(Some(format!("[secret:{name}]")))
     }
+}
+
+/// Reads secrets from `inner` and keeps each value it gives, so `send` can
+/// hide them.
+struct Remembering<'a> {
+    inner: &'a dyn SecretLookup,
+    values: RefCell<Vec<Zeroizing<String>>>,
+}
+
+impl SecretLookup for Remembering<'_> {
+    fn lookup(&self, environment: &str, name: &str) -> Result<Option<String>, SecretLookupError> {
+        let value = self.inner.lookup(environment, name)?;
+        if let Some(value) = &value {
+            self.values.borrow_mut().push(Zeroizing::new(value.clone()));
+        }
+        Ok(value)
+    }
+}
+
+/// The secret values a request uses, as written, as a query parameter
+/// writes them, and as the URL parser writes them in each part of a URL.
+/// Longest first, so a value inside a longer one does not leave the rest
+/// of that one showing.
+#[derive(Default)]
+struct SecretValues(Vec<Zeroizing<String>>);
+
+impl SecretValues {
+    fn new(values: Vec<Zeroizing<String>>) -> Self {
+        let mut forms: Vec<Zeroizing<String>> = Vec::new();
+        for value in &values {
+            let mut candidates = vec![value.to_string(), encode_query_value(value)];
+            candidates.extend(url_forms(value));
+            for form in candidates.into_iter().map(Zeroizing::new) {
+                if !form.is_empty() && !forms.contains(&form) {
+                    forms.push(form);
+                }
+            }
+        }
+        forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+        SecretValues(forms)
+    }
+
+    /// `text` with every secret shown as `••••••••`.
+    fn hide(&self, text: &str) -> String {
+        let mut text = text.to_string();
+        for secret in &self.0 {
+            if text.contains(secret.as_str()) {
+                text = text.replace(secret.as_str(), HIDDEN);
+            }
+        }
+        text
+    }
+
+    /// `error` with every secret in its text shown as `••••••••`.
+    fn hide_error(&self, error: HttpError) -> HttpError {
+        match error {
+            HttpError::InvalidRequest(message) => HttpError::InvalidRequest(self.hide(&message)),
+            HttpError::Dns { host, message } => HttpError::Dns {
+                host: self.hide(&host),
+                message: self.hide(&message),
+            },
+            HttpError::ConnectionRefused { addr } => HttpError::ConnectionRefused {
+                addr: self.hide(&addr),
+            },
+            HttpError::Connect { addr, message } => HttpError::Connect {
+                addr: self.hide(&addr),
+                message: self.hide(&message),
+            },
+            HttpError::Tls(TlsError { kind, message }) => HttpError::Tls(TlsError {
+                kind,
+                message: self.hide(&message),
+            }),
+            HttpError::Proxy(message) => HttpError::Proxy(self.hide(&message)),
+            HttpError::File { path, message } => {
+                let shown = path.to_string_lossy();
+                let hidden = self.hide(&shown);
+                let path = if hidden == shown {
+                    path
+                } else {
+                    PathBuf::from(hidden)
+                };
+                HttpError::File {
+                    path,
+                    message: self.hide(&message),
+                }
+            }
+            HttpError::Protocol(message) => HttpError::Protocol(self.hide(&message)),
+            // No text: a duration or a count.
+            error @ (HttpError::Timeout(_)
+            | HttpError::Cancelled
+            | HttpError::TooManyRedirects(_)) => error,
+        }
+    }
+}
+
+/// `value` as the URL parser writes it in the userinfo, the path, the
+/// query and the fragment, and as a host when it is one: lower case,
+/// punycode, IP addresses in their usual form.
+fn url_forms(value: &str) -> Vec<String> {
+    let mut forms = Vec::new();
+    let Ok(mut scratch) = Url::parse("http://h/") else {
+        return forms;
+    };
+    if scratch.set_password(Some(value)).is_ok() {
+        forms.extend(scratch.password().map(str::to_string));
+    }
+    scratch.set_path(value);
+    let path = scratch.path();
+    // `set_path` adds the leading `/` when `value` has none.
+    let path = if value.starts_with('/') {
+        path
+    } else {
+        path.strip_prefix('/').unwrap_or(path)
+    };
+    forms.push(path.to_string());
+    scratch.set_query(Some(value));
+    forms.extend(scratch.query().map(str::to_string));
+    scratch.set_fragment(Some(value));
+    forms.extend(scratch.fragment().map(str::to_string));
+    // Only when `value` is a host and nothing else, so `ab/cd` does not
+    // add `ab`.
+    if let Ok(url) = Url::parse(&format!("http://{value}/"))
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+    {
+        forms.extend(url.host_str().map(str::to_string));
+    }
+    forms
 }
 
 /// Stands in for the Vault when inspecting: a secret `vault.yaml` declares
@@ -468,6 +724,7 @@ fn resolve(
     project: &Project,
     tree: &RequestTree,
     path: &Path,
+    draft: &RequestFile,
     environment: Option<&str>,
     secrets: &dyn SecretLookup,
 ) -> Result<ResolvedRequest, RequestError> {
@@ -477,7 +734,7 @@ fn resolve(
         environment,
         secrets,
         &local_files,
-        |ctx| resolve_request(path, ctx),
+        |ctx| resolve_draft(path, draft, ctx),
         tree,
     )
 }

@@ -119,13 +119,10 @@ pub fn reopen_last(app: &AppHandle, window: &str) {
     }
 }
 
-/// Forgets the project of a closed window and cancels its Vault password
-/// prompts.
+/// Forgets the project of a closed window and ends what it waits on: its
+/// prompts, its sends and its responses.
 pub fn window_closed(app: &AppHandle, window: &str) {
-    app.state::<AppState>()
-        .vault
-        .prompter()
-        .cancel_window(window);
+    app.state::<AppState>().window_closed(window);
     unbind(app, window);
 }
 
@@ -506,11 +503,16 @@ pub async fn clear_local_data(app: AppHandle, window: WebviewWindow) -> Result<(
     let store = app.state::<AppState>().store.clone();
     let cleared = {
         let scope = scope.clone();
-        spawn_blocking(move || store.clear_project(&scope)).await?
+        let app = app.clone();
+        // Under the cookie save lock, so no running send writes its jar
+        // again afterwards.
+        spawn_blocking(move || {
+            let requests = &app.state::<AppState>().requests;
+            requests.clear_project(&scope, || store.clear_project(&scope))
+        })
+        .await?
     };
     let state = app.state::<AppState>();
-    // Cookie jars already read go too, so no send saves them again.
-    state.requests.forget_project(&scope);
     state.forget_tree(window.label());
     Ok(cleared?)
 }

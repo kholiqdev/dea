@@ -23,6 +23,50 @@ export function lastMeasure(name: string): Promise<number> {
   );
 }
 
+type Frames = { longest: number; last: number; stopped: boolean };
+
+/**
+ * The longest time between two frames of the page while `run` runs, in ms.
+ * A frame still awaited at the end counts up to then, so a page that drew
+ * no frame at all reports the whole run.
+ */
+export async function longestFrameDuring(
+  run: () => Promise<void>,
+): Promise<number> {
+  await browser.execute(() => {
+    const frames: Frames = {
+      longest: 0,
+      last: performance.now(),
+      stopped: false,
+    };
+    (window as unknown as { __deaFrames: Frames }).__deaFrames = frames;
+    const tick = (now: number) => {
+      if (frames.stopped) return;
+      frames.longest = Math.max(frames.longest, now - frames.last);
+      frames.last = now;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const stop = () =>
+    browser.execute(() => {
+      const frames = (window as unknown as { __deaFrames?: Frames })
+        .__deaFrames;
+      if (!frames) return null;
+      frames.stopped = true;
+      return Math.max(frames.longest, performance.now() - frames.last);
+    });
+  try {
+    await run();
+  } catch (e) {
+    await stop();
+    throw e;
+  }
+  const longest = await stop();
+  if (longest === null) throw new Error("the page reloaded while timed");
+  return longest;
+}
+
 /** Shell controls and status items that are not fully inside the window. */
 export function controlsOutsideTheWindow(): Promise<string[]> {
   return browser.execute(() => {
@@ -93,6 +137,13 @@ export function pickNextFolder(path: string): void {
  */
 export function pickNextFile(path: string): void {
   pickNextFolder(path);
+}
+
+/** The path the next "save to a file" writes to, instead of the dialog. */
+export function saveNextTo(path: string): void {
+  const file = process.env.DEA_E2E_SAVE_FILE;
+  if (!file) throw new Error("DEA_E2E_SAVE_FILE is not set");
+  writeFileSync(file, path);
 }
 
 /** Writes a project with local, staging and production into a new folder. */

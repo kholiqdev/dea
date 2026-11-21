@@ -8,6 +8,7 @@ import { FakeProject } from "./fake-project.svelte";
 import FolderTab from "./FolderTab.svelte";
 import RequestTab from "./RequestTab.svelte";
 import { resetDrafts } from "./state/drafts.svelte";
+import { resetExchanges } from "./state/exchange.svelte";
 import { resetFolderStates } from "./state/folders.svelte";
 
 export interface FakeTab {
@@ -22,10 +23,14 @@ export class FakeShell implements ShellApi {
   tabs = $state<FakeTab[]>([]);
   saveHandlers: Record<string, (tabId: string) => Promise<void>> = {};
   toasts: string[] = [];
+  /** The action of each toast, by the same index as `toasts`. */
+  toastActions: ({ label: string; run: () => void } | undefined)[] = [];
   /** Every tab closeTab was asked to close. */
   closing: string[] = [];
   /** Every tab activateTab was asked to show. */
-  activated: string[] = [];
+  activated: string[] = $state([]);
+  /** Every command runCommand was asked to run. */
+  commands: string[] = [];
   #opened = 0;
 
   tab(id: string): FakeTab {
@@ -89,6 +94,15 @@ export class FakeShell implements ShellApi {
     if (tab) tab.dirty = dirty;
   }
 
+  activeTab(): { id: string; tabType: string; params: unknown } | null {
+    const tab = this.activated.length
+      ? this.tabs.find((t) => t.id === this.activated.at(-1))
+      : undefined;
+    return tab
+      ? { id: tab.id, tabType: tab.tabType, params: tab.params }
+      : null;
+  }
+
   isTabDirty(id: string): boolean {
     return this.tabs.some((t) => t.id === id && t.dirty);
   }
@@ -101,12 +115,17 @@ export class FakeShell implements ShellApi {
     return Promise.resolve();
   }
 
-  runCommand(): Promise<void> {
+  runCommand(id: string): Promise<void> {
+    this.commands.push(id);
     return Promise.resolve();
   }
 
-  toast(text: string): number {
+  toast(
+    text: string,
+    opts?: { action?: { label: string; run: () => void } },
+  ): number {
     this.toasts.push(text);
+    this.toastActions.push(opts?.action);
     return this.toasts.length;
   }
 
@@ -121,6 +140,7 @@ let shell: FakeShell | null = null;
  */
 export function setUpRequestTabs(): { shell: FakeShell; project: FakeProject } {
   resetDrafts();
+  resetExchanges();
   resetFolderStates();
   shell = new FakeShell();
   const project = new FakeProject([

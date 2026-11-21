@@ -1,13 +1,20 @@
 <!-- Settings > Requests: how the request editor saves. -->
 <script lang="ts">
+  import type { ResponseLayout } from "$lib/ipc/bindings/ResponseLayout";
   import { errorMessage } from "$lib/ipc/errors";
   import { settings } from "$lib/settings/settings.svelte";
+  import { setResponseLayout } from "../state/layout";
+
+  const POSITIONS: { value: ResponseLayout; label: string }[] = [
+    { value: "right", label: "Right" },
+    { value: "below", label: "Below" },
+  ];
 
   let error = $state<string | null>(null);
 
-  async function toggle(autosave: boolean): Promise<void> {
+  async function change(save: () => Promise<void>): Promise<void> {
     try {
-      await settings.update({ requests: { autosave } });
+      await save();
       error = null;
     } catch (e) {
       error = errorMessage(e);
@@ -32,12 +39,50 @@
               role="switch"
               aria-describedby="autosave-hint"
               checked={settings.requests.autosave}
-              onchange={(e) => void toggle(e.currentTarget.checked)}
+              onchange={(e) =>
+                void change(() =>
+                  settings.update({
+                    requests: { autosave: e.currentTarget.checked },
+                  }),
+                )}
             />
             Save requests automatically
           </label>
           <span id="autosave-hint" class="meta"
             >Edits are saved a second after you stop typing.</span
+          >
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="group" aria-labelledby="layout-head">
+    <h2 id="layout-head" class="group-title">Layout</h2>
+    <div class="card">
+      <div class="frow">
+        <span class="lbl" id="position-label">Response position</span>
+        <div class="field">
+          <div
+            class="segmented"
+            role="radiogroup"
+            aria-labelledby="position-label"
+          >
+            {#each POSITIONS as position (position.value)}
+              <label class="segment">
+                <input
+                  type="radio"
+                  name="response-position"
+                  value={position.value}
+                  checked={settings.requests.responseLayout === position.value}
+                  onchange={() =>
+                    void change(() => setResponseLayout(position.value))}
+                />
+                {position.label}
+              </label>
+            {/each}
+          </div>
+          <span class="meta"
+            >A narrow window always puts the response below.</span
           >
         </div>
       </div>
@@ -109,6 +154,36 @@
     align-items: center;
     gap: var(--s-2);
     color: var(--text-1);
+  }
+
+  .segmented {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: var(--r-ctl);
+    background: var(--bg-3);
+  }
+
+  .segment {
+    position: relative;
+    padding: 4px 12px;
+    border-radius: var(--r-small);
+    color: var(--text-2);
+  }
+
+  .segment input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    margin: 0;
+  }
+
+  .segment:has(input:checked) {
+    background: var(--bg-1);
+    color: var(--text-1);
+  }
+
+  .segment:has(input:focus-visible) {
+    outline: 2px solid var(--focus);
   }
 
   .meta {

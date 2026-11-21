@@ -443,7 +443,9 @@ fn append_query(url: &str, name: &str, value: &str) -> String {
     format!("{base}{separator}{name}={value}{fragment}")
 }
 
-fn encode(value: &str) -> String {
+/// `value` as a query parameter or an API key goes into the URL.
+#[must_use]
+pub fn encode_query_value(value: &str) -> String {
     utf8_percent_encode(value, QUERY).to_string()
 }
 
@@ -546,8 +548,8 @@ pub fn resolve_draft(
     let mut url = fill_path_variables(&url, &mut r, &request.path_variables)?;
     for param in used_rows(&request.params) {
         let (name, value) = r.pair(param)?;
-        let name = name.map(encode);
-        let value = value.map(encode);
+        let name = name.map(encode_query_value);
+        let value = value.map(encode_query_value);
         url = Resolved {
             text: append_query(&url.text, &name.text, &value.text),
             redacted: append_query(&url.redacted, &name.redacted, &value.redacted),
@@ -617,7 +619,7 @@ pub fn resolve_draft(
             match location {
                 ApiKeyLocation::Header => auth_header = Some((key, value)),
                 ApiKeyLocation::Query => {
-                    let (key, value) = (key.map(encode), value.map(encode));
+                    let (key, value) = (key.map(encode_query_value), value.map(encode_query_value));
                     url = Resolved {
                         text: append_query(&url.text, &key.text, &value.text),
                         redacted: append_query(&url.redacted, &key.redacted, &value.redacted),
@@ -638,6 +640,11 @@ pub fn resolve_draft(
 
     let body = match &request.body {
         None => ResolvedBody::None,
+        // A body with nothing in it is no body: it would only add a
+        // `Content-Type` and a `Content-Length: 0` nobody asked for.
+        Some(Body::Json { text } | Body::Raw { text, .. }) if text.trim().is_empty() => {
+            ResolvedBody::None
+        }
         Some(Body::Json { text }) => ResolvedBody::Text {
             text: r.part(text)?,
             content_type: "application/json",
