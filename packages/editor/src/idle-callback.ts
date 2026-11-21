@@ -53,4 +53,33 @@ export function installIdleCallback(host: IdleHost): void {
   });
 }
 
+/** Where navigator.scheduling lives: `navigator`, or a stand-in in tests. */
+export interface SchedulingHost {
+  scheduling?: { isInputPending?: unknown };
+}
+
+/**
+ * Chromium, the WebView2 on Windows, has navigator.scheduling.isInputPending,
+ * and CodeMirror reads it as it loads. With it, a parse slice ignores the
+ * idle deadline and runs up to 100 ms, stopping only for input; a scroll that
+ * a script or a smooth animation drives is not input, so frames drop. Without
+ * it CodeMirror takes the deadline, which the shim above keeps short. So
+ * hide it, as WebKit has no such function either.
+ */
+export function hideInputPending(host: SchedulingHost): void {
+  try {
+    const scheduling = host.scheduling;
+    if (!scheduling || scheduling.isInputPending === undefined) return;
+    Object.defineProperty(scheduling, "isInputPending", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    // A frozen scheduling object: leave it as it is.
+  }
+}
+
 if (typeof window !== "undefined") installIdleCallback(window);
+if (typeof navigator !== "undefined")
+  hideInputPending(navigator as SchedulingHost);
