@@ -77,6 +77,12 @@ function hostOf(url: string): string | null {
   }
 }
 
+/**
+ * How many times a send looks at a draft that keeps changing under it
+ * before it goes by the latest look.
+ */
+const MAX_LOOKS = 3;
+
 let sendsEnded = $state(0);
 
 /**
@@ -114,9 +120,14 @@ export class Exchange {
     if (this.#busy || this.#disposed) return;
     this.#busy = true;
     try {
-      // The warning goes by what this very draft uses.
-      if (!draft.inspectionCurrent) await draft.inspect();
-      if (this.#disposed) return;
+      // The warning goes by what this very draft uses. The tab's own look,
+      // still waiting, would only replace this one with an answer that
+      // comes later, so it is called off.
+      for (let look = 0; look < MAX_LOOKS && !draft.inspectionCurrent; look++) {
+        draft.cancelInspection();
+        await draft.inspect();
+        if (this.#disposed) return;
+      }
       const names = draft.inspection?.undefined ?? [];
       if (!opts.anyway && names.length > 0) {
         this.warning = [...names];

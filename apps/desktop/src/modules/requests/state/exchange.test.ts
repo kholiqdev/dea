@@ -10,9 +10,15 @@ import {
 import {
   fakeRequestsIpc,
   responseInfo,
+  type FakeInspection,
   type RequestsIpc,
 } from "../test-support";
-import { draftFor, pruneDrafts, type RequestDraft } from "./drafts.svelte";
+import {
+  draftFor,
+  INSPECT_DELAY,
+  pruneDrafts,
+  type RequestDraft,
+} from "./drafts.svelte";
 import { cookiesVersion, exchangeFor, exchanges } from "./exchange.svelte";
 
 const PATH = "requests/shipments/list.yaml";
@@ -133,6 +139,68 @@ test("a_draft_changed_since_its_inspection_is_inspected_again", async () => {
   expect(calls(ipc, "inspect_request")).toHaveLength(2);
   expect(exchangeFor("t1").warning).toEqual(["carrierCode"]);
   expect(ipc.sends).toHaveLength(1);
+});
+
+/** Warns of `{{carrierCode}}` in the URL, after `delay` ms. */
+const carrierCheck =
+  (delay: number): FakeInspection =>
+  async (_path, request) => {
+    await new Promise((done) => setTimeout(done, delay));
+    return {
+      undefined: request.url.includes("{{carrierCode}}") ? ["carrierCode"] : [],
+    };
+  };
+
+test("a_send_right_after_typing_checks_the_typed_url", async () => {
+  const ipc = fakeRequestsIpc({ files, inspection: carrierCheck(0) });
+  const draft = await openDraft("t1", PATH);
+  await draft.inspect();
+  // Slower than what is left of the tab's own look, which comes mid-check.
+  ipc.inspection = carrierCheck(INSPECT_DELAY + 100);
+  draft.typeUrl("{{baseUrl}}/v1/{{carrierCode}}");
+  draft.scheduleInspection(); // as the tab does after each edit
+  await exchangeFor("t1").send(draft);
+  expect(exchangeFor("t1").warning).toEqual(["carrierCode"]);
+  expect(ipc.sends).toEqual([]);
+});
+
+test("typing_during_the_check_is_checked_too", async () => {
+  const ipc = fakeRequestsIpc({ files, inspection: carrierCheck(0) });
+  const draft = await openDraft("t1", PATH);
+  await draft.inspect();
+  ipc.inspection = carrierCheck(50);
+  draft.typeUrl("{{baseUrl}}/v1/other");
+  const sent = exchangeFor("t1").send(draft);
+  expect(calls(ipc, "inspect_request")).toHaveLength(2);
+  draft.typeUrl("{{baseUrl}}/v1/{{carrierCode}}");
+  await sent;
+  expect(exchangeFor("t1").warning).toEqual(["carrierCode"]);
+  expect(ipc.sends).toEqual([]);
+});
+
+test("a_draft_that_keeps_changing_is_checked_a_few_times_at_most", async () => {
+  const ipc = fakeRequestsIpc({ files });
+  const draft = await openDraft("t1", PATH);
+  let typed = 0;
+  // Each look sees a draft that has moved on again.
+  ipc.inspection = () => {
+    draft.typeUrl(`{{baseUrl}}/v1/${++typed}`);
+    return {};
+  };
+  await exchangeFor("t1").send(draft);
+  expect(calls(ipc, "inspect_request")).toHaveLength(3);
+  expect(ipc.sends).toHaveLength(1);
+});
+
+test("closing_the_tab_while_checking_sends_nothing", async () => {
+  const ipc = fakeRequestsIpc({ files, inspection: carrierCheck(50) });
+  const draft = await openDraft("t1", PATH);
+  const sent = exchangeFor("t1").send(draft);
+  shell.tabs = [];
+  pruneDrafts();
+  await sent;
+  expect(ipc.sends).toEqual([]);
+  expect(calls(ipc, "cancel_send")).toEqual([]);
 });
 
 test("not_confirmed_brings_back_the_previous_response", async () => {
