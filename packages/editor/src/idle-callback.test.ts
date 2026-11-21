@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import editorSource from "./CodeEditor.svelte?raw";
 import {
   IDLE_SLICE_MS,
+  hideInputPending,
   installIdleCallback,
   type IdleHost,
 } from "./idle-callback";
@@ -126,4 +127,18 @@ test("the_editor_installs_it_before_codemirror_looks_for_it", () => {
   expect(shim).toBeGreaterThan(-1);
   expect(editorSource.indexOf("import ")).toBe(shim);
   expect(shim).toBeLessThan(language);
+});
+
+test("hides isInputPending from CodeMirror, once, and copes without scheduling", () => {
+  const navigator = {
+    scheduling: { isInputPending: () => false } as {
+      isInputPending?: () => boolean;
+    },
+  };
+  hideInputPending(navigator);
+  expect(navigator.scheduling?.isInputPending).toBeFalsy();
+  hideInputPending(navigator);
+  expect(navigator.scheduling?.isInputPending).toBeFalsy();
+  expect(() => hideInputPending({})).not.toThrow();
+  expect(() => hideInputPending({ scheduling: undefined })).not.toThrow();
 });
