@@ -237,9 +237,12 @@
     color: var(--primary-key-text);
   }
 
+  /* No fill: the text keeps the contrast of the solid red, an outline the
+     keycap's shape. */
   .kc.danger {
-    background: color-mix(in srgb, var(--negative-solid-text) 16%, transparent);
-    box-shadow: none;
+    background: none;
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--negative-solid-text) 45%, transparent);
     color: var(--negative-solid-text);
   }
 

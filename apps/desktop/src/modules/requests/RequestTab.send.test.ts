@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
+import requestLineSource from "./components/RequestLine.svelte?raw";
 import UndefinedWarning from "./components/UndefinedWarning.svelte";
 import type { FakeProject } from "./fake-project.svelte";
 import { manifest } from "./index";
@@ -160,6 +161,27 @@ test("send_follows_the_window_environment", async () => {
   );
   expect(screen.getByRole("button", { name: /^Send/ })).not.toHaveClass(
     "danger-solid",
+  );
+});
+
+test("the_red_buttons_keycaps_are_outlined_not_filled", async () => {
+  fakeRequestsIpc({ files });
+  await useProduction(project);
+  openRequestTab(PATH);
+  const send = await screen.findByRole("button", {
+    name: "Send to production",
+  });
+  const shown = [...send.querySelectorAll("kbd")];
+  expect(shown.length).toBeGreaterThan(0);
+  for (const key of shown) expect(key).toHaveClass("danger");
+  // White on the solid red itself: a fill would take it under 4.5:1.
+  const rule = (
+    /\.kc\.danger \{([^}]*)\}/.exec(requestLineSource)?.[1] ?? ""
+  ).replace(/\s+/g, " ");
+  expect(rule).toContain("background: none;");
+  expect(rule).toContain("color: var(--negative-solid-text);");
+  expect(rule).toContain(
+    "box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--negative-solid-text) 45%, transparent);",
   );
 });
 
