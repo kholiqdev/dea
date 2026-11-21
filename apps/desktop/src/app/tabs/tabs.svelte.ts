@@ -72,6 +72,14 @@ export class Tabs {
     return this.#active;
   }
 
+  /** The shown tab as modules see it, or null when none is open. */
+  activeTab(): { id: string; tabType: string; params: unknown } | null {
+    const tab = this.#active;
+    return tab
+      ? { id: tab.id, tabType: tab.tabType, params: tab.params }
+      : null;
+  }
+
   open(
     tabType: string,
     title: string,

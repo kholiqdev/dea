@@ -27,6 +27,8 @@ export interface ShellApi {
   ): string | undefined;
   /** Changes a tab's title or params without remounting its view. */
   updateTab(id: string, patch: { title?: string; params?: unknown }): void;
+  /** The tab being shown, or null when none is open. */
+  activeTab(): { id: string; tabType: string; params: unknown } | null;
   /** Shows an open tab; false when no tab has that id. */
   activateTab(id: string): boolean;
   /** Closes a tab, asking first when it has unsaved changes. */

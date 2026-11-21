@@ -1,4 +1,4 @@
-<!-- The design's buttons: primary, secondary, ghost and danger. -->
+<!-- The design's buttons: primary, secondary, ghost, danger and danger-solid. -->
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { HTMLButtonAttributes } from "svelte/elements";
@@ -10,7 +10,7 @@
     children,
     ...rest
   }: HTMLButtonAttributes & {
-    variant?: "primary" | "secondary" | "ghost" | "danger";
+    variant?: "primary" | "secondary" | "ghost" | "danger" | "danger-solid";
     size?: "default" | "small";
     children?: Snippet;
   } = $props();
@@ -79,6 +79,17 @@
 
   .danger:hover {
     background: var(--bg-hover);
+  }
+
+  .danger-solid {
+    padding: 0 var(--s-4);
+    background: var(--negative-solid);
+    color: var(--primary-text);
+    font-weight: 500;
+  }
+
+  .danger-solid:hover {
+    filter: brightness(0.96);
   }
 
   .btn:disabled {
