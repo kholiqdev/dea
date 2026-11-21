@@ -854,3 +854,51 @@ fn used_variables_show_their_final_value_and_hide_secrets() {
     assert_eq!(shown("$guid"), ("g-1".to_string(), false));
     assert!(!format!("{:?}", resolved.used).contains("s3cret"));
 }
+
+#[test]
+fn a_blank_json_or_raw_body_is_no_body() {
+    use dea_project::{Body, RawLanguage};
+    let f = fixture(&[(
+        "requests/shipping/_folder.yaml",
+        "variables:\n  - name: x\n    value: y\n",
+    )]);
+    let bodies = [
+        Body::Json { text: " \n".into() },
+        Body::Raw {
+            text: "".into(),
+            language: RawLanguage::Text,
+        },
+    ];
+    for body in bodies {
+        let draft = dea_project::RequestFile {
+            name: "New".into(),
+            method: "POST".into(),
+            url: "{{baseUrl}}/a".into(),
+            path_variables: Vec::new(),
+            params: Vec::new(),
+            headers: Vec::new(),
+            body: Some(body),
+            auth: dea_project::Auth::NoAuth,
+            options: dea_project::SendOptions::default(),
+        };
+        let mut dynamic = Fixed;
+        let mut ctx = RequestContext {
+            project: &f.project,
+            tree: &f.tree,
+            environment: Some("staging"),
+            secrets: &Vault::new(&[]),
+            local_files: &NoLocalFiles,
+            dynamic: &mut dynamic,
+        };
+
+        let resolved =
+            resolve_draft(Path::new("requests/shipping/new.yaml"), &draft, &mut ctx).unwrap();
+
+        assert!(
+            matches!(resolved.body, ResolvedBody::None),
+            "{:?}",
+            resolved.body
+        );
+        assert!(header(&resolved, "content-type").is_empty());
+    }
+}

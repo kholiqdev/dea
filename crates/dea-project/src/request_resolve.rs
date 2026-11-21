@@ -638,6 +638,11 @@ pub fn resolve_draft(
 
     let body = match &request.body {
         None => ResolvedBody::None,
+        // A body with nothing in it is no body: it would only add a
+        // `Content-Type` and a `Content-Length: 0` nobody asked for.
+        Some(Body::Json { text } | Body::Raw { text, .. }) if text.trim().is_empty() => {
+            ResolvedBody::None
+        }
         Some(Body::Json { text }) => ResolvedBody::Text {
             text: r.part(text)?,
             content_type: "application/json",
