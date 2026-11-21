@@ -410,14 +410,17 @@ pub fn response_info(sent: &Sent) -> ResponseInfo {
 /// bytes (up to 512). An empty body is [`BodyKind::Empty`] whatever its
 /// type. Otherwise the type decides when it names one, then the bytes:
 /// `%PDF-`, the PNG, JPEG, GIF and WebP signatures, valid UTF-8, or
-/// [`BodyKind::Binary`].
+/// [`BodyKind::Binary`]. A plain `text/*` body whose first bytes are not
+/// UTF-8 is [`BodyKind::Binary`], so it is not shown as garbled text.
 #[must_use]
 pub fn body_kind(content_type: Option<&str>, head: &[u8]) -> BodyKind {
     if head.is_empty() {
         return BodyKind::Empty;
     }
-    if let Some(kind) = content_type.and_then(kind_of_type) {
-        return kind;
+    match content_type.and_then(kind_of_type) {
+        Some(BodyKind::Text) if !is_text(head) => return BodyKind::Binary,
+        Some(kind) => return kind,
+        None => {}
     }
     const IMAGES: [&[u8]; 4] = [b"\x89PNG\r\n\x1a\n", b"\xFF\xD8\xFF", b"GIF87a", b"GIF89a"];
     let webp = head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"WEBP";
