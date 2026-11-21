@@ -118,3 +118,32 @@ test("a_pdf_that_fails_says_so", async () => {
     ),
   ).toBeInTheDocument();
 });
+
+test("a_pdf_that_finishes_loading_after_unmount_is_destroyed", async () => {
+  const fake = fakeDocument(1);
+  let finish: (doc: typeof fake.doc) => void = () => {};
+  pdf.loadPdf.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  fakeRequestsIpc({ response: fakeResponse({ bytes: new Uint8Array([1]) }) });
+  const { unmount } = render(Preview, {
+    id: "t1",
+    kind: "pdf",
+    contentType: "application/pdf",
+  });
+  await waitFor(() => expect(pdf.loadPdf).toHaveBeenCalled());
+  unmount();
+  finish(fake.doc);
+  await waitFor(() => expect(fake.destroy).toHaveBeenCalledTimes(1));
+  expect(fake.render).not.toHaveBeenCalled();
+});
+
+test("a_page_without_a_canvas_context_fails_instead_of_staying_blank", async () => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  pdf.loadPdf.mockResolvedValue(fakeDocument(1).doc);
+  fakeRequestsIpc({ response: fakeResponse({ bytes: new Uint8Array([1]) }) });
+  render(Preview, { id: "t1", kind: "pdf", contentType: "application/pdf" });
+  expect(
+    await screen.findByText(
+      "This PDF could not be shown. Save it to a file to open it.",
+    ),
+  ).toBeInTheDocument();
+});
