@@ -102,17 +102,29 @@
     data-tone={response ? statusTone(response.status) : "muted"}
   >
     {#if response}
-      <span class="dot" aria-hidden="true"></span>
-      <span class="code">{response.status}</span>
-      <span class="reason">{response.reason}</span>
-      <span class="fact">{formatMs(response.timing.totalMs)}</span>
-      <TimingBar timing={response.timing} controls="{uid}-legend" />
-      <span class="fact size">{formatBytes(response.size)}</span>
-      <span class="fact version">{response.version}</span>
-      {#if environment}
-        <SentInPill {...environment} />
-      {/if}
-      {#if stale}<span class="stale">Previous response</span>{/if}
+      <span class="status">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="code">{response.status}</span>
+        <span class="reason">{response.reason}</span>
+        <span class="fact">{formatMs(response.timing.totalMs)}</span>
+        <TimingBar timing={response.timing} controls="{uid}-legend" />
+        <span class="fact size">{formatBytes(response.size)}</span>
+        <span class="fact version">{response.version}</span>
+        {#if environment || stale}
+          <!-- Drawn reversed: the environment shows before the label. -->
+          <span class="tail">
+            {#if stale}
+              <span class="stale" title="Previous response">
+                <span class="long">Previous response</span>
+                <span class="short">Previous</span>
+              </span>
+            {/if}
+            {#if environment}
+              <SentInPill {...environment} />
+            {/if}
+          </span>
+        {/if}
+      </span>
       <span class="actions">
         <button
           type="button"
@@ -200,8 +212,8 @@
   }
 
   /* One row whatever its width. A narrow row leaves out the version, then
-     the size; short of room, the reason gives way first, then the
-     environment. */
+     the size; short of room, the status gives way and the actions stay
+     whole. */
   .toolbar {
     height: 40px;
     display: flex;
@@ -233,6 +245,44 @@
   .toolbar[data-tone="negative"] {
     --tone: var(--negative);
     --tone-text: var(--negative-text);
+  }
+
+  /* Everything but the actions. Short of room, the reason gives way first,
+     then the environment, then "Previous response"; past that the end of
+     the group is cut, never the actions. As tall as the row, so a focus
+     ring inside it shows whole. */
+  .status {
+    flex: 0 1 auto;
+    min-width: 0;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    overflow: hidden;
+  }
+
+  /* The environment, then "Previous response". The label comes first in
+     the markup and the line is drawn reversed: the environment takes only
+     the room the label leaves it, and without room for a few letters it
+     wraps onto a second line that is cut away rather than show an empty
+     pill. */
+  .tail {
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 18px;
+    display: flex;
+    flex-flow: row-reverse wrap;
+    justify-content: flex-end;
+    align-content: flex-start;
+    align-items: center;
+    gap: 0 var(--s-3);
+    overflow: hidden;
+  }
+
+  .tail > :global(.env) {
+    flex: 1 1 0;
+    min-width: 4ch;
+    max-width: max-content;
   }
 
   .dot {
@@ -276,9 +326,28 @@
   }
 
   .stale {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: 13px;
+    line-height: 18px;
     color: var(--text-2);
+  }
+
+  .stale .short {
+    display: none;
+  }
+
+  /* Too narrow for the whole label next to the facts: a shorter one. */
+  @container (width < 680px) {
+    .stale .long {
+      display: none;
+    }
+
+    .stale .short {
+      display: inline;
+    }
   }
 
   @container (width < 560px) {

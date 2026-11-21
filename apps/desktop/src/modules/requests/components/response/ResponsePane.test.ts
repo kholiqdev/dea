@@ -725,3 +725,58 @@ test("the_previous_response_is_labelled_while_a_warning_shows", async () => {
     expect(within(bar).queryByText("Previous response")).toBeNull(),
   );
 });
+
+/** The declarations of the toolbar's top-level rule for `selector`. */
+function toolbarRule(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (
+    new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`).exec(toolbarSource)?.[1] ?? ""
+  );
+}
+
+test("previous_response_gives_way_before_the_actions", async () => {
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: (_path, request) => ({
+      undefined: request.url.includes("{{traceId}}") ? ["traceId"] : [],
+    }),
+  });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "URL" }),
+    "/{{{{traceId}}",
+  );
+  await send();
+  const stale = await within(bar).findByText("Previous response");
+  // The facts share a group that gives way; the actions sit outside it.
+  const status = bar.querySelector(":scope > .status");
+  const actions = bar.querySelector(":scope > .actions");
+  expect(status).not.toBeNull();
+  expect(actions).not.toBeNull();
+  for (const fact of [
+    bar.querySelector(".code"),
+    bar.querySelector(".reason"),
+    within(bar).getByText("staging"),
+    stale,
+  ])
+    expect(status).toContainElement(fact as HTMLElement);
+  expect(status).not.toContainElement(
+    within(bar).getByRole("button", { name: "Copy response" }),
+  );
+  const group = toolbarRule(".status");
+  expect(group).toContain("min-width: 0;");
+  expect(group).toContain("overflow: hidden;");
+  expect(toolbarRule(".actions")).toContain("flex: none;");
+  expect(toolbarRule(".code")).toContain("flex: none;");
+  // The label shrinks, cut with an ellipsis, rather than pushing on; the
+  // environment before it gives way first.
+  const label = toolbarRule(".stale");
+  expect(label).not.toContain("flex: none;");
+  expect(label).toContain("min-width: 0;");
+  expect(label).toContain("text-overflow: ellipsis;");
+  expect(toolbarRule(".tail > :global(.env)")).toContain("flex: 1 1 0;");
+});
