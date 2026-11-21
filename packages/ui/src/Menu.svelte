@@ -16,6 +16,10 @@
     badge?: string;
     /** A shortcut shown at the end, such as "⌘E". */
     shortcut?: string;
+    /** Draws a line before this item. */
+    separatorBefore?: boolean;
+    /** "danger" colours the label red. */
+    tone?: "danger";
     onselect: () => void;
   }
 </script>
@@ -117,9 +121,14 @@
       {@attach focusStart}
     >
       {#each items as item (item.id)}
+        {#if item.separatorBefore}<div
+            class="separator"
+            role="separator"
+          ></div>{/if}
         <button
           type="button"
           class="item"
+          data-tone={item.tone}
           role={item.checked === undefined ? "menuitem" : "menuitemradio"}
           aria-checked={item.checked}
           disabled={item.disabled}
@@ -203,6 +212,16 @@
 
   .item[aria-checked="true"] {
     background: var(--bg-3);
+  }
+
+  .item[data-tone="danger"] {
+    color: var(--negative-text);
+  }
+
+  .separator {
+    height: 1px;
+    margin: var(--s-1) var(--s-2);
+    background: var(--line-strong);
   }
 
   .item:disabled {
