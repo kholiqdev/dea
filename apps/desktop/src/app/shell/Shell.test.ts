@@ -319,9 +319,12 @@ test("window environment tabs follow the active environment", async () => {
   await project.setEnvironment("staging");
   render(ShellView, { registry, shell, tabs, project });
   tabs.open("notes.note", "Note", null);
-  const pill = await screen.findByText("staging", { selector: ".tab-env" });
-  expect(pill).not.toHaveClass("env-prod");
+  const tab = await screen.findByRole("tab", { name: /Note/ });
+  expect(tab.querySelector(".tab-env")).toBeNull();
+  expect(tab.closest("[data-tab]")).not.toHaveAttribute("data-production");
   await project.setEnvironment("production");
-  const prod = await screen.findByText("production", { selector: ".tab-env" });
-  expect(prod).toHaveClass("env-prod");
+  await waitFor(() =>
+    expect(tab.closest("[data-tab]")).toHaveAttribute("data-production"),
+  );
+  expect(tab.querySelector(".tab-env")).toBeNull();
 });

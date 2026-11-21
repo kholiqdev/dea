@@ -396,3 +396,36 @@ test("a_tab_without_a_badge_keeps_its_icon", async () => {
   expect(tab.querySelector(".badge")).toBeNull();
   expect(tab.querySelector("svg")).not.toBeNull();
 });
+
+test("window_environment_tabs_have_no_pill", async () => {
+  const { tabs } = await windowSetup("staging");
+  tabs.open("notes.note", "Note", { method: "GET" });
+  const tab = await screen.findByRole("tab", { name: /Note/ });
+  expect(tab.querySelector(".tab-env")).toBeNull();
+  expect(tab.closest("[data-tab]")).not.toHaveAttribute("data-production");
+});
+
+test("production_marks_every_window_environment_tab", async () => {
+  const { tabs } = await windowSetup("production");
+  tabs.open("notes.note", "List shipments", { method: "GET" });
+  tabs.open("notes.note", "Create shipment", { method: "POST" });
+  for (const title of ["List shipments", "Create shipment"]) {
+    const tab = await screen.findByRole("tab", {
+      name: new RegExp(`${title}, production`),
+    });
+    expect(tab.closest("[data-tab]")).toHaveAttribute("data-production");
+    expect(tab.querySelector(".tab-env")).toBeNull();
+  }
+});
+
+test("a_fixed_environment_tab_keeps_its_pill", async () => {
+  const { tabs } = await windowSetup("staging");
+  tabs.open("notes.fixed", "Harbor", null, {
+    environment: { name: "production", production: true },
+  });
+  const tab = await screen.findByRole("tab", { name: /Harbor/ });
+  expect(tab.querySelector(".tab-env.env-prod")).toHaveTextContent(
+    "production",
+  );
+  expect(tab.closest("[data-tab]")).not.toHaveAttribute("data-production");
+});

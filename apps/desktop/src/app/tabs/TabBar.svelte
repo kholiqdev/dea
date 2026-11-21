@@ -126,11 +126,15 @@
       {@const active = tab.id === activeId}
       {@const badge = badgeOf(tab)}
       {@const env = ctx.tabs.environmentOf(tab, ctx.project.environment)}
+      {@const follows =
+        ctx.registry.tabType(tab.tabType)?.environment === "window"}
+      {@const production = follows && !tab.environment && !!env?.production}
       <div
         class="tab"
         data-tab={tab.id}
         data-active={active}
         data-dragging={dragging === tab.id}
+        data-production={production ? "" : undefined}
         role="presentation"
         {@attach active && keepInView}
         onpointerdown={(e) => onpointerdown(e, tab)}
@@ -149,8 +153,10 @@
           {#if badge}
             <span class="badge" style:color={badge.color}>{badge.text}</span>
           {:else if Icon}<Icon size={16} strokeWidth={1.5} />{/if}
-          <span class="title">{tab.title}</span>
-          {#if env}
+          <span class="title">{tab.title}</span>{#if production}<span
+              class="visually-hidden">, production</span
+            >{/if}
+          {#if env && !follows}
             <span
               class={["tab-env", { "env-prod": env.production }]}
               data-env={env.name}>{env.name}</span
@@ -200,6 +206,10 @@
     flex: none;
     max-width: 240px;
     touch-action: none;
+  }
+
+  .tab[data-production] {
+    box-shadow: inset 0 2px 0 var(--negative);
   }
 
   .tab[data-active="true"] {
