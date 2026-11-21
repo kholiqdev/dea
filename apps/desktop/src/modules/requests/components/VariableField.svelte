@@ -234,10 +234,6 @@
     caret-color: var(--text-1);
   }
 
-  .input::placeholder {
-    color: var(--text-3);
-  }
-
   .layer {
     position: absolute;
     inset: 0;

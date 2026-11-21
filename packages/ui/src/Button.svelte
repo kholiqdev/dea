@@ -84,7 +84,7 @@
   .danger-solid {
     padding: 0 var(--s-4);
     background: var(--negative-solid);
-    color: var(--primary-text);
+    color: var(--negative-solid-text);
     font-weight: 500;
   }
 
