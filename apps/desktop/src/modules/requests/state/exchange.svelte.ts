@@ -52,12 +52,14 @@ export type ExchangeState =
       phase: "done";
       response: ResponseInfo;
       environment: string | null;
+      startedAt: number;
       events: SseRow[];
     }
   | { phase: "failed"; failure: SendFailure; environment: string | null }
   | {
       phase: "cancelled";
       afterMs: number;
+      startedAt: number;
       head: HeadInfo | null;
       events: SseRow[];
     };
@@ -176,6 +178,7 @@ export class Exchange {
           phase: "done",
           response,
           environment,
+          startedAt: sent.startedAt,
           events: sent.events,
         };
         if (response.cookiesNotSaved !== null)
@@ -191,6 +194,7 @@ export class Exchange {
         this.state = {
           phase: "cancelled",
           afterMs: performance.now() - sent.startedAt,
+          startedAt: sent.startedAt,
           head: sent.head,
           events: sent.events,
         };

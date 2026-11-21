@@ -11,18 +11,28 @@
   import { responseText } from "$lib/ipc/responses";
   import { formatBytes } from "../../lib/format";
   import type { BodyView } from "./body-view";
+  import type { SseRow } from "../../state/exchange.svelte";
+  import EventList from "./EventList.svelte";
   import JsonFilter from "./JsonFilter.svelte";
+  import LargeBody from "./LargeBody.svelte";
   import Preview from "./Preview.svelte";
-  import ViewerPlaceholder from "./ViewerPlaceholder.svelte";
 
   let {
     tabId,
+    name,
     response,
+    events,
+    startedAt,
     view,
     onview,
   }: {
     tabId: string;
+    /** The request's name, which a saved body is named after. */
+    name: string;
     response: ResponseInfo;
+    /** The events of a stream, timed from `startedAt`. */
+    events: SseRow[];
+    startedAt: number;
     /** The view chosen for this response; `null` for the first of its kind. */
     view: BodyView | null;
     onview: (view: BodyView) => void;
@@ -126,9 +136,15 @@
       Binary body, {formatBytes(response.size)}. Save it to a file to open it.
     </p>
   {:else if kind === "events"}
-    <ViewerPlaceholder slot="event-list" />
+    <EventList {events} {startedAt} />
   {:else if large}
-    <ViewerPlaceholder slot="large-body" />
+    <LargeBody
+      id={tabId}
+      size={response.size}
+      {name}
+      {kind}
+      contentType={response.contentType}
+    />
   {:else}
     <div
       class="views"

@@ -16,6 +16,7 @@
   import ResponseBody from "./ResponseBody.svelte";
   import ResponseToolbar from "./ResponseToolbar.svelte";
   import SentInPill from "./SentInPill.svelte";
+  import EventList from "./EventList.svelte";
   import SendingView from "./SendingView.svelte";
   import TimingBar from "./TimingBar.svelte";
 
@@ -172,7 +173,10 @@
         {#key response}
           <ResponseBody
             {tabId}
+            {name}
             {response}
+            events={current.events}
+            startedAt={current.startedAt}
             view={chosen?.response === response ? chosen.view : null}
             onview={(view: BodyView) => (chosen = { response, view })}
           />
@@ -190,6 +194,9 @@
           {current.head.status}
           {current.head.reason}. The body was not received in full.
         </p>
+      {/if}
+      {#if current.events.length > 0}
+        <EventList events={current.events} startedAt={current.startedAt} />
       {/if}
     </div>
   {/if}
@@ -288,6 +295,11 @@
   }
 
   .cancelled {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
     padding: var(--s-4);
     color: var(--text-2);
   }

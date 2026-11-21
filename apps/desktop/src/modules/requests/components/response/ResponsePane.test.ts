@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
 import type { FakeProject } from "../../fake-project.svelte";
@@ -378,4 +379,82 @@ test("production_environment_pill_keeps_its_mark", async () => {
   await screen.findByRole("toolbar", { name: "Response" });
   await project.setEnvironment("staging");
   expect(await screen.findByText("Sent in live")).toHaveClass("env-prod");
+});
+
+const started: SendEvent = {
+  type: "started",
+  method: "GET",
+  url: "https://api.test/v1/shipments",
+};
+const sse: SendEvent = {
+  type: "head",
+  status: 200,
+  reason: "OK",
+  headers: [{ name: "Content-Type", value: "text/event-stream" }],
+};
+
+test("chunked_text_shows_in_the_pane_while_sending", async () => {
+  fakeRequestsIpc({
+    files,
+    send: {
+      hold: true,
+      events: [
+        started,
+        { type: "head", status: 200, reason: "OK", headers: [] },
+        { type: "body", received: 6, text: "part 1" },
+        { type: "body", received: 12, text: ", part2" },
+      ],
+    },
+  });
+  openRequestTab(PATH);
+  await send();
+  const pane = await screen.findByRole("region", { name: "Response" });
+  expect(await within(pane).findByText("part 1, part2")).toBeInTheDocument();
+  expect(within(pane).getByText("Receiving… 12 B")).toBeInTheDocument();
+});
+
+test("events_list_live_while_sending_and_survive_a_cancel", async () => {
+  fakeRequestsIpc({
+    files,
+    send: {
+      hold: true,
+      events: [
+        started,
+        sse,
+        { type: "event", atMs: 5, event: "tick", data: "one", id: null },
+        { type: "event", atMs: 9, event: null, data: "two", id: null },
+      ],
+    },
+  });
+  openRequestTab(PATH);
+  await send();
+  const pane = await screen.findByRole("region", { name: "Response" });
+  const list = () =>
+    within(pane).getByRole("list", { name: "Server-sent events" });
+  await waitFor(() =>
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(2),
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  await within(pane).findByText(/^Cancelled after/);
+  expect(within(list()).getAllByRole("listitem")).toHaveLength(2);
+  expect(within(pane).getByText("2 events")).toBeInTheDocument();
+});
+
+test("a_finished_stream_keeps_its_event_list", async () => {
+  fakeRequestsIpc({
+    files,
+    send: {
+      ...doneExchange("events"),
+      events: [
+        started,
+        sse,
+        { type: "event", atMs: 5, event: "tick", data: "one", id: null },
+      ],
+    },
+  });
+  openRequestTab(PATH);
+  await send();
+  const list = await screen.findByRole("list", { name: "Server-sent events" });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  expect(screen.getByText("tick")).toBeInTheDocument();
 });
