@@ -45,7 +45,10 @@ afterEach(() => {
 });
 
 function setAutosave(autosave: boolean): void {
-  settings.apply({ ...DEFAULT_SETTINGS, requests: { autosave } });
+  settings.apply({
+    ...DEFAULT_SETTINGS,
+    requests: { ...DEFAULT_SETTINGS.requests, autosave },
+  });
 }
 
 async function setUpIpc(file: Partial<RequestFile> = {}): Promise<RequestsIpc> {

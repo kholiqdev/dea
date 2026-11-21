@@ -148,3 +148,7 @@ async function waitForSave(count = 1): Promise<void> {
     await new Promise((r) => setTimeout(r, 0));
   expect(saved).toHaveLength(count);
 }
+
+test("the response panel sits to the right by default", () => {
+  expect(DEFAULT_SETTINGS.requests.responseLayout).toBe("right");
+});

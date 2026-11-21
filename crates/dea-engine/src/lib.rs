@@ -23,8 +23,8 @@ pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
 pub use clock::{Clock, SystemClock};
 pub use error::UseError;
 pub use exchange::{
-    BodyKind, CookieInfo, EventForwarder, FailureKind, HeaderRow, RedirectInfo, ResponseInfo,
-    SendEvent, SendFailure, SendOutcome, TEXT_PREVIEW_LIMIT, TimingInfo, body_kind,
+    BodyKind, CookieInfo, CookieKey, EventForwarder, FailureKind, HeaderRow, RedirectInfo,
+    ResponseInfo, SendEvent, SendFailure, SendOutcome, TEXT_PREVIEW_LIMIT, TimingInfo, body_kind,
     outcome_of_error, response_info,
 };
 pub use file_ref::FileRef;

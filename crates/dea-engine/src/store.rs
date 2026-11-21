@@ -90,6 +90,24 @@ impl Default for Settings {
 pub struct RequestSettings {
     /// Save an edited request a second after the last change.
     pub autosave: bool,
+    /// Where the response panel sits next to the request.
+    pub response_layout: ResponseLayout,
+}
+
+/// Where the response panel sits.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "../../../apps/desktop/src/lib/ipc/bindings/")
+)]
+pub enum ResponseLayout {
+    /// Beside the request.
+    #[default]
+    Right,
+    /// Under the request.
+    Below,
 }
 
 /// When the Vault locks and how long production secrets stay usable.
