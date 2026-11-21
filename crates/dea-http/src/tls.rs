@@ -2,15 +2,17 @@
 //! against the operating system's trust store plus the request's extra CAs.
 
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::client::verify_server_cert_signed_by_trust_anchor;
+use rustls::client::{ResolvesClientCert, verify_server_cert_signed_by_trust_anchor};
 use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::pem::PemObject as _;
 use rustls::pki_types::{CertificateDer, ServerName, SignatureVerificationAlgorithm};
 use rustls::pki_types::{PrivateKeyDer, UnixTime};
 use rustls::server::ParsedCertificate;
+use rustls::sign::CertifiedKey;
 use rustls::{
     AlertDescription, CertificateError, ClientConfig, DigitallySignedStruct, RootCertStore,
     SignatureScheme,
@@ -120,13 +122,29 @@ impl TlsConfigs {
     }
 }
 
-/// Runs the TLS handshake over `stream` and reports whether the server
-/// chose HTTP/2.
+/// A connection after its TLS handshake.
+pub(crate) struct Secured {
+    pub(crate) stream: TlsStream<TcpStream>,
+    /// Whether the server chose HTTP/2.
+    pub(crate) h2: bool,
+    /// Whether the server asked for a client certificate.
+    pub(crate) asked_for_certificate: bool,
+}
+
+tokio::task_local! {
+    /// Set by [`NoteAsked`] when the server of the handshake under way asks
+    /// for a client certificate. The resolver is shared by every
+    /// connection of a config (TLS sessions resume only with the same
+    /// one), so the flag of each handshake comes from here.
+    static ASKED: Arc<AtomicBool>;
+}
+
+/// Runs the TLS handshake over `stream`.
 pub(crate) async fn handshake(
     stream: TcpStream,
     host: &Host<String>,
     config: Arc<ClientConfig>,
-) -> Result<(TlsStream<TcpStream>, bool), HttpError> {
+) -> Result<Secured, HttpError> {
     let connector = TlsConnector::from(config);
     let server_name = match host {
         Host::Domain(name) => ServerName::try_from(name.clone()).map_err(|_| {
@@ -137,11 +155,21 @@ pub(crate) async fn handshake(
         Host::Ipv4(ip) => ServerName::from(*ip),
         Host::Ipv6(ip) => ServerName::from(*ip),
     };
-    let stream = connector.connect(server_name, stream).await.map_err(|e| {
-        HttpError::Tls(tls_error(&e).unwrap_or_else(|| TlsError::other(describe(&e))))
+    let asked = Arc::new(AtomicBool::new(false));
+    let connected = ASKED
+        .scope(Arc::clone(&asked), connector.connect(server_name, stream))
+        .await;
+    let asked_for_certificate = asked.load(Ordering::SeqCst);
+    let stream = connected.map_err(|e| {
+        let tls = tls_error(&e).or_else(|| closed_after_asking(&e, asked_for_certificate, 0));
+        HttpError::Tls(tls.unwrap_or_else(|| TlsError::other(describe(&e))))
     })?;
     let h2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
-    Ok((stream, h2))
+    Ok(Secured {
+        stream,
+        h2,
+        asked_for_certificate,
+    })
 }
 
 /// The TLS error behind `error`, an error of a TLS stream. `None` unless
@@ -151,6 +179,29 @@ pub(crate) fn tls_error(error: &io::Error) -> Option<TlsError> {
     Some(TlsError {
         kind: kind_of(cause),
         message: describe(error),
+    })
+}
+
+/// `error`, which ended a connection whose server asked for a client
+/// certificate (`asked`) after `received` bytes of the response, as the
+/// server turning the certificate down. Such a server sends an alert and
+/// closes, but on Windows the close may come as a reset, which throws the
+/// alert away. `None` once some of the response came, or for any other
+/// failure.
+pub(crate) fn closed_after_asking(
+    error: &io::Error,
+    asked: bool,
+    received: u64,
+) -> Option<TlsError> {
+    let closed = matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::UnexpectedEof
+    );
+    (asked && received == 0 && closed).then(|| TlsError {
+        kind: TlsErrorKind::ClientCertificateRejected,
+        message: "the server closed the connection after asking for a client certificate".into(),
     })
 }
 
@@ -219,7 +270,35 @@ fn client_config(config: &TlsConfig, verify: bool) -> Result<ClientConfig, HttpE
         None => builder.with_no_client_auth(),
     };
     client.alpn_protocols = ALPN.iter().map(|p| p.to_vec()).collect();
+    client.client_auth_cert_resolver =
+        Arc::new(NoteAsked(Arc::clone(&client.client_auth_cert_resolver)));
     Ok(client)
+}
+
+/// A config's client certificate resolver, which rustls asks only when the
+/// server asks for a certificate: it notes that in [`ASKED`], also when
+/// there is no certificate to give.
+#[derive(Debug)]
+struct NoteAsked(Arc<dyn ResolvesClientCert>);
+
+impl ResolvesClientCert for NoteAsked {
+    fn resolve(
+        &self,
+        root_hint_subjects: &[&[u8]],
+        sigschemes: &[SignatureScheme],
+    ) -> Option<Arc<CertifiedKey>> {
+        // Outside a handshake of ours there is nothing to note.
+        let _ = ASKED.try_with(|asked| asked.store(true, Ordering::SeqCst));
+        self.0.resolve(root_hint_subjects, sigschemes)
+    }
+
+    fn only_raw_public_keys(&self) -> bool {
+        self.0.only_raw_public_keys()
+    }
+
+    fn has_certs(&self) -> bool {
+        self.0.has_certs()
+    }
 }
 
 /// Trusts the operating system's roots plus the request's extra CAs.
@@ -357,11 +436,52 @@ impl ServerCertVerifier for AcceptAny {
 
 #[cfg(test)]
 mod tests {
-    use dea_testkit::http::client_identity_pem;
+    use dea_testkit::http::{TestServer, Tls, client_identity_pem};
     use zeroize::Zeroizing;
 
     use super::*;
     use crate::request::ClientIdentity;
+
+    #[test]
+    fn a_connection_closed_after_asking_for_a_certificate_turned_it_down() {
+        let rejected = Some(TlsError {
+            kind: TlsErrorKind::ClientCertificateRejected,
+            message: "the server closed the connection after asking for a client certificate"
+                .into(),
+        });
+        for kind in [
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::UnexpectedEof,
+        ] {
+            let error = io::Error::from(kind);
+            assert_eq!(closed_after_asking(&error, true, 0), rejected, "{kind:?}");
+            // Not asked, or once some of the response came: left as it is.
+            assert_eq!(closed_after_asking(&error, false, 0), None, "{kind:?}");
+            assert_eq!(closed_after_asking(&error, true, 1), None, "{kind:?}");
+        }
+        let timed_out = io::Error::from(io::ErrorKind::TimedOut);
+        assert_eq!(closed_after_asking(&timed_out, true, 0), None);
+    }
+
+    #[tokio::test]
+    async fn each_handshake_tells_whether_its_server_asked_for_a_certificate() {
+        // One config for both, as the pool shares it.
+        let config = Arc::new(client_config(&TlsConfig::default(), false).unwrap());
+        let alpn = || vec![b"http/1.1".to_vec()];
+        for (tls, asked) in [
+            (Tls::Mutual { alpn: alpn() }, true),
+            (Tls::SelfSigned { alpn: alpn() }, false),
+        ] {
+            let server = TestServer::start(tls).await;
+            let stream = TcpStream::connect(("127.0.0.1", server.port()))
+                .await
+                .unwrap();
+            let host = Host::Domain("localhost".to_owned());
+            let secured = handshake(stream, &host, Arc::clone(&config)).await.unwrap();
+            assert_eq!(secured.asked_for_certificate, asked);
+        }
+    }
 
     #[test]
     fn same_settings_share_one_config_and_others_do_not() {
