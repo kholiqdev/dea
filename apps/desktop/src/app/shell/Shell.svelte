@@ -6,6 +6,8 @@
   import Palette from "../palette/Palette.svelte";
   import ConfirmClose from "../prompts/ConfirmClose.svelte";
   import { closeQuestion } from "../prompts/confirm-close.svelte";
+  import { sendConfirmations } from "../prompts/send-confirm.svelte";
+  import SendToProduction from "../prompts/SendToProduction.svelte";
   import VaultPrompt from "../prompts/VaultPrompt.svelte";
   import { vaultPrompts } from "../prompts/vault-prompt.svelte";
   import ToastStack from "../prompts/ToastStack.svelte";
@@ -72,6 +74,7 @@
 <ConfirmClose question={closeQuestion} />
 {#if menus.palette}<Palette />{/if}
 <VaultPrompt prompts={vaultPrompts} />
+<SendToProduction confirmations={sendConfirmations} />
 <ToastStack />
 
 <style>

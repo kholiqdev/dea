@@ -125,6 +125,7 @@ beforeEach(() => {
       const tab = tabs.find((t) => t.id === id);
       if (tab) tab.dirty = dirty;
     },
+    activeTab: () => null,
     isTabDirty: (id) => tabs.some((t) => t.id === id && t.dirty),
     setSaveHandler: () => {},
     openModule: (id) => {

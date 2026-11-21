@@ -268,3 +268,20 @@ test("find matches on params", () => {
   expect(tabs.find("requests.request", match("c"))).toBeUndefined();
   expect(tabs.find("database.query")).toBeUndefined();
 });
+
+test("active_tab_reports_the_selected_tab", async () => {
+  const { tabs } = setup();
+  expect(tabs.activeTab()).toBeNull();
+  const a = tabs.open("requests.request", "A", { n: 1 });
+  const b = tabs.open("requests.request", "B", { n: 2 });
+  expect(tabs.activeTab()).toEqual({
+    id: b,
+    tabType: "requests.request",
+    params: { n: 2 },
+  });
+  tabs.activate(a);
+  expect(tabs.activeTab()?.id).toBe(a);
+  await tabs.close(a);
+  await tabs.close(b);
+  expect(tabs.activeTab()).toBeNull();
+});

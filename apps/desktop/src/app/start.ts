@@ -13,6 +13,7 @@ import { setVaultApi } from "./contributions/vault-api";
 import { exposeE2eApi, isE2e } from "./e2e";
 import { registerBuiltInModules } from "./modules";
 import { thisProject } from "./project/project.svelte";
+import { sendConfirmations } from "./prompts/send-confirm.svelte";
 import { vaultPrompts } from "./prompts/vault-prompt.svelte";
 import { applyAppearance } from "./shell/appearance";
 import { NO_PROJECT, shell } from "./shell/shell-state.svelte";
@@ -46,6 +47,7 @@ export async function start(
       .then(() => thisVault.load()),
   ]);
   vaultPrompts.listen().catch(() => {});
+  sendConfirmations.listen().catch(() => {});
   registry.setProjectOpen(info !== null);
   // Each window of a project keeps its own layout, tabs and environment.
   const scope = info?.scope ?? NO_PROJECT;

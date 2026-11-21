@@ -26,6 +26,7 @@
     },
     closeTab: (id) => tabs.close(id),
     setTabDirty: (id, dirty) => tabs.setDirty(id, dirty),
+    activeTab: () => tabs.activeTab(),
     isTabDirty: (id) => tabs.tabs.some((t) => t.id === id && t.dirty),
     setSaveHandler: (tabType, save) => tabs.setSaveHandler(tabType, save),
     openModule: (id) => shell.openModule(id),

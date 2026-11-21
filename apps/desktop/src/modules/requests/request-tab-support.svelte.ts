@@ -89,6 +89,15 @@ export class FakeShell implements ShellApi {
     if (tab) tab.dirty = dirty;
   }
 
+  activeTab(): { id: string; tabType: string; params: unknown } | null {
+    const tab = this.activated.length
+      ? this.tabs.find((t) => t.id === this.activated.at(-1))
+      : undefined;
+    return tab
+      ? { id: tab.id, tabType: tab.tabType, params: tab.params }
+      : null;
+  }
+
   isTabDirty(id: string): boolean {
     return this.tabs.some((t) => t.id === id && t.dirty);
   }
