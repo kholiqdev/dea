@@ -19,7 +19,7 @@ mod tls;
 
 pub use client::{Client, ClientConfig, Event, SendContext};
 pub use cookies::{CookieJar, CookieJarError, StoredCookie};
-pub use error::HttpError;
+pub use error::{HttpError, TlsError, TlsErrorKind};
 pub use proxy::{NoProxy, ProxyConfig, ProxySettings, proxy_from_env, system_proxy};
 pub use request::{
     Body, ClientIdentity, Options, Part, PartValue, Request, TlsConfig, automatic_headers,

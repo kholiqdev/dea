@@ -8,7 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Instant;
 
@@ -122,7 +122,7 @@ impl Plan {
         Ok(WireBody {
             queue,
             remaining: self.len,
-            progress: Progress::default(),
+            progress: Progress::new(self.len == 0),
         })
     }
 }
@@ -215,15 +215,15 @@ pub(crate) struct WireBody {
 }
 
 impl WireBody {
-    /// When the connection last took a piece of this body.
+    /// How far the connection got in taking this body.
     pub(crate) fn progress(&self) -> Progress {
         self.progress.clone()
     }
 }
 
-/// When the connection last took a piece of a body. The connection takes
-/// the next piece only once it has room for it, so while the body is sent
-/// this moves as fast as the upload does.
+/// When the connection last took a piece of a body, and whether it took
+/// them all. The connection takes the next piece only once it has room for
+/// it, so while the body is sent this moves as fast as the upload does.
 #[derive(Clone)]
 pub(crate) struct Progress(Arc<Moments>);
 
@@ -231,21 +231,31 @@ struct Moments {
     since: Instant,
     /// Nanoseconds after `since`, plus one; 0 before the first piece.
     last: AtomicU64,
-}
-
-impl Default for Progress {
-    fn default() -> Self {
-        Progress(Arc::new(Moments {
-            since: Instant::now(),
-            last: AtomicU64::new(0),
-        }))
-    }
+    /// Every piece was taken; from the start for an empty body.
+    all_taken: AtomicBool,
 }
 
 impl Progress {
-    fn mark(&self) {
+    fn new(empty: bool) -> Self {
+        Progress(Arc::new(Moments {
+            since: Instant::now(),
+            last: AtomicU64::new(0),
+            all_taken: AtomicBool::new(empty),
+        }))
+    }
+
+    /// Notes that a piece was taken, the last one when `last`.
+    fn mark(&self, last: bool) {
         let nanos = u64::try_from(self.0.since.elapsed().as_nanos()).unwrap_or(u64::MAX - 1);
         self.0.last.store(nanos + 1, Ordering::Release);
+        if last {
+            self.0.all_taken.store(true, Ordering::Release);
+        }
+    }
+
+    /// Whether the connection took the whole body.
+    pub(crate) fn all_taken(&self) -> bool {
+        self.0.all_taken.load(Ordering::Acquire)
     }
 
     /// `None` until the first piece is taken.
@@ -276,7 +286,7 @@ impl hyper::body::Body for WireBody {
                     }
                     let frame = data.split_to(data.len().min(CHUNK));
                     this.remaining -= frame.len() as u64;
-                    this.progress.mark();
+                    this.progress.mark(this.remaining == 0);
                     return Poll::Ready(Some(Ok(Frame::data(frame))));
                 }
                 Some(Source::File { file, left }) => {
@@ -301,7 +311,7 @@ impl hyper::body::Body for WireBody {
                     buf.truncate(usize::try_from(read).unwrap_or(0));
                     *left -= read;
                     this.remaining -= read;
-                    this.progress.mark();
+                    this.progress.mark(this.remaining == 0);
                     return Poll::Ready(Some(Ok(Frame::data(buf.freeze()))));
                 }
             }

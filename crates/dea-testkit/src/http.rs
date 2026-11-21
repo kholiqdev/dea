@@ -8,6 +8,7 @@
 //! - `/delay/{ms}` sleeps, then answers 200 with `x-slept-us` set to how long
 //!   it really slept, in microseconds.
 //! - `/close` answers 200 without `Connection: close`, then closes the socket.
+//! - `/hang-up` reads the request, then closes the socket without answering.
 //! - `/redirect/{n}` answers 302 to `/redirect/{n-1}`, and 200 at 0.
 //! - `/redirect-to?url=&status=` answers `status` (default 302) with
 //!   `Location: url`.
@@ -80,6 +81,12 @@ pub enum Tls {
     /// Like `SelfSigned`, and the client must present a certificate signed
     /// by the test CA.
     Mutual { alpn: Vec<Vec<u8>> },
+    /// HTTP/1.1 over TLS with a certificate from the test CA for the same
+    /// names as `SelfSigned`, whose end date has passed.
+    Expired,
+    /// HTTP/1.1 over TLS with a certificate from the test CA for
+    /// `other.test` only.
+    OtherHost,
 }
 
 /// A request as the server received it.
@@ -128,10 +135,13 @@ impl TestServer {
     /// Starts a server on a free loopback port. Must run inside a Tokio
     /// runtime.
     pub async fn start(tls: Tls) -> TestServer {
+        let http1 = || vec![b"http/1.1".to_vec()];
         let acceptor = match tls {
             Tls::None => None,
-            Tls::SelfSigned { alpn } => Some(acceptor(alpn, false)),
-            Tls::Mutual { alpn } => Some(acceptor(alpn, true)),
+            Tls::SelfSigned { alpn } => Some(acceptor(alpn, false, server_identity())),
+            Tls::Mutual { alpn } => Some(acceptor(alpn, true, server_identity())),
+            Tls::Expired => Some(acceptor(http1(), false, expired_identity())),
+            Tls::OtherHost => Some(acceptor(http1(), false, other_host_identity())),
         };
         let (listeners, port) = bind_loopback().await;
         let shared = Arc::new(Shared::default());
@@ -242,25 +252,53 @@ struct ServerIdentity {
 /// The server certificate, signed by the test CA and made once per process.
 fn server_identity() -> &'static ServerIdentity {
     static IDENTITY: OnceLock<ServerIdentity> = OnceLock::new();
+    IDENTITY.get_or_init(|| server_certificate(&SERVER_NAMES, set_validity))
+}
+
+/// Like the server certificate, but it ended yesterday.
+fn expired_identity() -> &'static ServerIdentity {
+    static IDENTITY: OnceLock<ServerIdentity> = OnceLock::new();
     IDENTITY.get_or_init(|| {
-        let names = SERVER_NAMES.map(String::from).to_vec();
-        let mut params = CertificateParams::new(names).expect("valid server names");
-        params
-            .distinguished_name
-            .push(DnType::CommonName, "localhost");
-        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        params.use_authority_key_identifier_extension = true;
-        set_validity(&mut params);
-        let key = KeyPair::generate().expect("generate the server key");
-        let cert = params
-            .signed_by(&key, &ca().issuer)
-            .expect("sign the server certificate");
-        ServerIdentity {
-            cert: cert.der().clone(),
-            key: key.serialize_der(),
-        }
+        server_certificate(&SERVER_NAMES, |params| {
+            let now = time::OffsetDateTime::now_utc();
+            params.not_before = now - time::Duration::days(30);
+            params.not_after = now - time::Duration::days(1);
+        })
     })
+}
+
+/// A server certificate for `other.test` only.
+fn other_host_identity() -> &'static ServerIdentity {
+    static IDENTITY: OnceLock<ServerIdentity> = OnceLock::new();
+    IDENTITY.get_or_init(|| server_certificate(&["other.test"], set_validity))
+}
+
+/// A server certificate for `names`, signed by the test CA. `dates` sets
+/// its validity.
+fn server_certificate(
+    names: &[&str],
+    dates: impl FnOnce(&mut CertificateParams),
+) -> ServerIdentity {
+    let names = names
+        .iter()
+        .map(|&name| name.to_owned())
+        .collect::<Vec<_>>();
+    let mut params = CertificateParams::new(names.clone()).expect("valid server names");
+    params
+        .distinguished_name
+        .push(DnType::CommonName, names[0].as_str());
+    params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    params.use_authority_key_identifier_extension = true;
+    dates(&mut params);
+    let key = KeyPair::generate().expect("generate the server key");
+    let cert = params
+        .signed_by(&key, &ca().issuer)
+        .expect("sign the server certificate");
+    ServerIdentity {
+        cert: cert.der().clone(),
+        key: key.serialize_der(),
+    }
 }
 
 /// Valid from yesterday for a year. macOS rejects server certificates valid
@@ -275,8 +313,7 @@ fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-fn acceptor(alpn: Vec<Vec<u8>>, mutual: bool) -> TlsAcceptor {
-    let identity = server_identity();
+fn acceptor(alpn: Vec<Vec<u8>>, mutual: bool, identity: &ServerIdentity) -> TlsAcceptor {
     let builder = ServerConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()
         .expect("ring supports the default TLS versions");
@@ -349,45 +386,56 @@ async fn serve_tcp(stream: TcpStream, tls: Option<TlsAcceptor>, shared: Arc<Shar
     }
 }
 
+/// How a handler asks for its connection to end.
+#[derive(Default)]
+struct Ending {
+    /// Close once the response in flight is written.
+    close: Notify,
+    /// Close at once, without answering.
+    hang_up: Notify,
+}
+
 async fn serve<S>(io: S, h2: bool, subject: Option<String>, shared: Arc<Shared>)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let close = Arc::new(Notify::new());
+    let ending = Arc::new(Ending::default());
     let service = {
-        let close = Arc::clone(&close);
+        let ending = Arc::clone(&ending);
         service_fn(move |request| {
             handle(
                 request,
                 subject.clone(),
                 Arc::clone(&shared),
-                Arc::clone(&close),
+                Arc::clone(&ending),
             )
         })
     };
     let io = TokioIo::new(io);
     if h2 {
         let conn = http2::Builder::new(TokioExecutor::new()).serve_connection(io, service);
-        drive(conn, &close, http2::Connection::graceful_shutdown).await;
+        drive(conn, &ending, http2::Connection::graceful_shutdown).await;
     } else {
         let conn = http1::Builder::new().serve_connection(io, service);
-        drive(conn, &close, http1::Connection::graceful_shutdown).await;
+        drive(conn, &ending, http1::Connection::graceful_shutdown).await;
     }
 }
 
-/// Runs a connection until it ends, or shuts it down once a handler asks
-/// for the socket to close. The response in flight is still written.
-async fn drive<C, E>(conn: C, close: &Notify, shut_down: impl FnOnce(Pin<&mut C>))
+/// Runs a connection until it ends, or ends it as a handler asks: after
+/// the response in flight is written, or at once.
+async fn drive<C, E>(conn: C, ending: &Ending, shut_down: impl FnOnce(Pin<&mut C>))
 where
     C: Future<Output = Result<(), E>>,
 {
     let mut conn = pin!(conn);
     tokio::select! {
         _ = conn.as_mut() => {}
-        () = close.notified() => {
+        () = ending.close.notified() => {
             shut_down(conn.as_mut());
             let _ = conn.await;
         }
+        // Dropping the connection closes the socket.
+        () = ending.hang_up.notified() => {}
     }
 }
 
@@ -408,7 +456,7 @@ async fn handle(
     request: Request<Incoming>,
     client_subject: Option<String>,
     shared: Arc<Shared>,
-    close: Arc<Notify>,
+    ending: Arc<Ending>,
 ) -> Result<Reply, Infallible> {
     let at = Instant::now();
     let (parts, body) = request.into_parts();
@@ -463,7 +511,7 @@ async fn handle(
     if let Some(answer) = answer {
         return Ok(reply(StatusCode::OK, answer));
     }
-    Ok(route(parts.uri.path(), parts.uri.query(), echo, &close).await)
+    Ok(route(parts.uri.path(), parts.uri.query(), echo, &ending).await)
 }
 
 /// Reads `body` no faster than `rate` bytes a second and returns how many
@@ -484,7 +532,7 @@ async fn read_slowly(mut body: Incoming, rate: u64) -> Option<u64> {
     Some(read)
 }
 
-async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> Reply {
+async fn route(path: &str, query: Option<&str>, echo: Bytes, ending: &Ending) -> Reply {
     if let Some(n) = path.strip_prefix("/redirect/") {
         let Ok(n) = n.parse::<u32>() else {
             return reply(StatusCode::BAD_REQUEST, Bytes::new());
@@ -622,8 +670,12 @@ async fn route(path: &str, query: Option<&str>, echo: Bytes, close: &Notify) -> 
     match path {
         "/echo" => reply(StatusCode::OK, echo),
         "/close" => {
-            close.notify_one();
+            ending.close.notify_one();
             reply(StatusCode::OK, Bytes::new())
+        }
+        "/hang-up" => {
+            ending.hang_up.notify_one();
+            std::future::pending().await
         }
         _ => reply(StatusCode::NOT_FOUND, Bytes::new()),
     }

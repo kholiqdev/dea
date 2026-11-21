@@ -1,21 +1,27 @@
 //! TLS for HTTPS connections: rustls with the ring provider, verified
 //! against the operating system's trust store plus the request's extra CAs.
 
+use std::io;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::verify_server_cert_signed_by_trust_anchor;
 use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::pem::PemObject as _;
-use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::pki_types::{CertificateDer, ServerName, SignatureVerificationAlgorithm};
 use rustls::pki_types::{PrivateKeyDer, UnixTime};
-use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
+use rustls::server::ParsedCertificate;
+use rustls::{
+    AlertDescription, CertificateError, ClientConfig, DigitallySignedStruct, RootCertStore,
+    SignatureScheme,
+};
 use sha2::{Digest as _, Sha256};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 use url::Host;
 
-use crate::error::{HttpError, describe};
+use crate::error::{HttpError, TlsError, TlsErrorKind, describe};
 use crate::request::TlsConfig;
 
 /// ALPN protocols offered, preferred first. HTTP/2 is only used over TLS
@@ -123,29 +129,72 @@ pub(crate) async fn handshake(
 ) -> Result<(TlsStream<TcpStream>, bool), HttpError> {
     let connector = TlsConnector::from(config);
     let server_name = match host {
-        Host::Domain(name) => ServerName::try_from(name.clone())
-            .map_err(|_| HttpError::Tls(format!("{name} is not a valid TLS server name")))?,
+        Host::Domain(name) => ServerName::try_from(name.clone()).map_err(|_| {
+            HttpError::Tls(TlsError::other(format!(
+                "{name} is not a valid TLS server name"
+            )))
+        })?,
         Host::Ipv4(ip) => ServerName::from(*ip),
         Host::Ipv6(ip) => ServerName::from(*ip),
     };
-    let stream = connector
-        .connect(server_name, stream)
-        .await
-        .map_err(|e| HttpError::Tls(describe(&e)))?;
+    let stream = connector.connect(server_name, stream).await.map_err(|e| {
+        HttpError::Tls(tls_error(&e).unwrap_or_else(|| TlsError::other(describe(&e))))
+    })?;
     let h2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
     Ok((stream, h2))
+}
+
+/// The TLS error behind `error`, an error of a TLS stream. `None` unless
+/// rustls caused it.
+pub(crate) fn tls_error(error: &io::Error) -> Option<TlsError> {
+    let cause = error.get_ref()?.downcast_ref::<rustls::Error>()?;
+    Some(TlsError {
+        kind: kind_of(cause),
+        message: describe(error),
+    })
+}
+
+/// What `error` is about, told from its type alone.
+fn kind_of(error: &rustls::Error) -> TlsErrorKind {
+    match error {
+        rustls::Error::InvalidCertificate(certificate) => match certificate {
+            CertificateError::Expired | CertificateError::ExpiredContext { .. } => {
+                TlsErrorKind::Expired
+            }
+            CertificateError::NotValidYet | CertificateError::NotValidYetContext { .. } => {
+                TlsErrorKind::NotYetValid
+            }
+            CertificateError::UnknownIssuer => TlsErrorKind::UnknownIssuer,
+            CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. } => {
+                TlsErrorKind::WrongHost
+            }
+            _ => TlsErrorKind::Other,
+        },
+        // Sent by a server about the client's certificate, or its lack.
+        rustls::Error::AlertReceived(
+            AlertDescription::CertificateRequired
+            | AlertDescription::BadCertificate
+            | AlertDescription::UnknownCA
+            | AlertDescription::CertificateUnknown
+            | AlertDescription::AccessDenied,
+        ) => TlsErrorKind::ClientCertificateRejected,
+        _ => TlsErrorKind::Other,
+    }
 }
 
 fn client_config(config: &TlsConfig, verify: bool) -> Result<ClientConfig, HttpError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier: Arc<dyn ServerCertVerifier> = if verify {
-        Arc::new(platform_verifier(config, &provider)?)
+        Arc::new(Platform {
+            verifier: platform_verifier(config, &provider)?,
+            algorithms: provider.signature_verification_algorithms,
+        })
     } else {
         Arc::new(AcceptAny(provider.signature_verification_algorithms))
     };
     let builder = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| HttpError::Tls(describe(&e)))?
+        .map_err(|e| HttpError::Tls(TlsError::other(describe(&e))))?
         .dangerous()
         .with_custom_certificate_verifier(verifier);
     let mut client = match &config.client_identity {
@@ -153,14 +202,19 @@ fn client_config(config: &TlsConfig, verify: bool) -> Result<ClientConfig, HttpE
             let certs = CertificateDer::pem_slice_iter(&identity.certificate_pem)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
-                    HttpError::Tls(format!("could not read the client certificate: {e}"))
+                    HttpError::Tls(TlsError::other(format!(
+                        "could not read the client certificate: {e}"
+                    )))
                 })?;
             // The key's own error text stays out of the message.
-            let key = PrivateKeyDer::from_pem_slice(&identity.key_pem)
-                .map_err(|_| HttpError::Tls("could not read the client private key".into()))?;
-            builder
-                .with_client_auth_cert(certs, key)
-                .map_err(|e| HttpError::Tls(format!("the client certificate is not usable: {e}")))?
+            let key = PrivateKeyDer::from_pem_slice(&identity.key_pem).map_err(|_| {
+                HttpError::Tls(TlsError::other("could not read the client private key"))
+            })?;
+            builder.with_client_auth_cert(certs, key).map_err(|e| {
+                HttpError::Tls(TlsError::other(format!(
+                    "the client certificate is not usable: {e}"
+                )))
+            })?
         }
         None => builder.with_no_client_auth(),
     };
@@ -177,12 +231,87 @@ fn platform_verifier(
     for pem in &config.extra_roots_pem {
         for cert in CertificateDer::pem_slice_iter(pem) {
             roots.push(cert.map_err(|e| {
-                HttpError::Tls(format!("could not read an extra CA certificate: {e}"))
+                HttpError::Tls(TlsError::other(format!(
+                    "could not read an extra CA certificate: {e}"
+                )))
             })?);
         }
     }
     rustls_platform_verifier::Verifier::new_with_extra_roots(roots, Arc::clone(provider))
-        .map_err(|e| HttpError::Tls(describe(&e)))
+        .map_err(|e| HttpError::Tls(TlsError::other(describe(&e))))
+}
+
+/// The operating system's verifier, which also names a certificate out of
+/// its dates. On macOS rustls-platform-verifier reports one only as a
+/// platform error code.
+#[derive(Debug)]
+struct Platform {
+    verifier: rustls_platform_verifier::Verifier,
+    algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for Platform {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        self.verifier
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            .map_err(|error| match error {
+                rustls::Error::InvalidCertificate(CertificateError::Other(_)) => {
+                    out_of_date(end_entity, now, self.algorithms.all).unwrap_or(error)
+                }
+                error => error,
+            })
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.verifier.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.verifier.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.verifier.supported_verify_schemes()
+    }
+}
+
+/// The error for `end_entity` when `now` is outside its dates. Without
+/// trust anchors webpki checks the dates before it looks for an issuer.
+fn out_of_date(
+    end_entity: &CertificateDer<'_>,
+    now: UnixTime,
+    algorithms: &[&dyn SignatureVerificationAlgorithm],
+) -> Option<rustls::Error> {
+    let parsed = ParsedCertificate::try_from(end_entity).ok()?;
+    let roots = RootCertStore::empty();
+    match verify_server_cert_signed_by_trust_anchor(&parsed, &roots, &[], now, algorithms) {
+        Err(error)
+            if matches!(
+                kind_of(&error),
+                TlsErrorKind::Expired | TlsErrorKind::NotYetValid
+            ) =>
+        {
+            Some(error)
+        }
+        _ => None,
+    }
 }
 
 /// The verifier for `verify_tls: false`: any certificate and any host name
