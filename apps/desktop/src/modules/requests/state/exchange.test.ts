@@ -1,3 +1,4 @@
+import type { Channel } from "@tauri-apps/api/core";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
@@ -19,7 +20,12 @@ import {
   pruneDrafts,
   type RequestDraft,
 } from "./drafts.svelte";
-import { cookiesVersion, exchangeFor, exchanges } from "./exchange.svelte";
+import {
+  cookiesVersion,
+  exchangeFor,
+  exchanges,
+  MAX_EVENTS,
+} from "./exchange.svelte";
 
 const PATH = "requests/shipments/list.yaml";
 const file: RequestFile = {
@@ -485,6 +491,78 @@ test("an_endless_stream_keeps_only_the_last_events", async () => {
   ipc.finishSends();
   await vi.waitFor(() => expect(exchangeFor("t1").state.phase).toBe("done"));
   expect(exchangeFor("t1").state).toMatchObject({ droppedEvents: 5 });
+});
+
+/** The channel the `n`th send (from 0) hears its progress on. */
+function channelOf(ipc: RequestsIpc, n: number): Channel<SendEvent> {
+  return calls(ipc, "send_request")[n]?.events as Channel<SendEvent>;
+}
+
+const late = (data: string): SendEvent => ({
+  type: "event",
+  atMs: 9,
+  event: null,
+  data,
+  id: null,
+});
+
+test("events_after_the_outcome_join_the_finished_send", async () => {
+  // Large messages come another way than small ones, and can land after
+  // the outcome.
+  const events: SendEvent[] = Array.from({ length: MAX_EVENTS }, (_, n) => ({
+    type: "event",
+    atMs: n,
+    event: null,
+    data: `d${n}`,
+    id: null,
+  }));
+  const ipc = fakeRequestsIpc({ files, send: { hold: true, events } });
+  const draft = await openDraft("t1", PATH);
+  const { sent } = await startSend(draft);
+  ipc.finishSends(ok200);
+  await sent;
+  channelOf(ipc, 0).onmessage(late("after done"));
+  let state = exchangeFor("t1").state;
+  if (state.phase !== "done") throw new Error("not done");
+  // The cap still holds.
+  expect(state.events).toHaveLength(MAX_EVENTS);
+  expect(state.events.at(-1)?.data).toBe("after done");
+  expect(state.droppedEvents).toBe(1);
+
+  ipc.send.events = [];
+  const again = exchangeFor("t1").send(draft);
+  await vi.waitFor(() => expect(ipc.sends).toHaveLength(2));
+  exchangeFor("t1").cancel();
+  await again;
+  channelOf(ipc, 1).onmessage(late("after cancel"));
+  state = exchangeFor("t1").state;
+  expect(state).toMatchObject({
+    phase: "cancelled",
+    events: [{ data: "after cancel" }],
+  });
+});
+
+test("events_of_an_older_send_never_reach_a_newer_one", async () => {
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const draft = await openDraft("t1", PATH);
+  const first = await startSend(draft);
+  ipc.finishSends(ok200);
+  await first.sent;
+
+  const second = exchangeFor("t1").send(draft);
+  await vi.waitFor(() => expect(ipc.sends).toHaveLength(2));
+  channelOf(ipc, 0).onmessage(late("old while sending"));
+  channelOf(ipc, 0).onmessage({ type: "body", received: 3, text: "old" });
+  expect(exchangeFor("t1").state).toMatchObject({
+    phase: "sending",
+    events: [],
+    text: "",
+    received: 0,
+  });
+  ipc.finishSends(ok200);
+  await second;
+  channelOf(ipc, 0).onmessage(late("old after done"));
+  expect(exchangeFor("t1").state).toMatchObject({ phase: "done", events: [] });
 });
 
 test("text_bytes_count_utf8_not_characters", async () => {

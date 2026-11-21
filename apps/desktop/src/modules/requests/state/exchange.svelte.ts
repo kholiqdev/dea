@@ -114,6 +114,10 @@ export class Exchange {
   // From the look at the draft until the outcome: a second send is ignored.
   #busy = false;
   #disposed = false;
+  // The sends so far, and which one the state shows: progress of another
+  // send is dropped.
+  #sends = 0;
+  #shown = 0;
 
   constructor(tabId: string) {
     this.#id = tabId;
@@ -153,6 +157,8 @@ export class Exchange {
 
   async #send(draft: RequestDraft): Promise<void> {
     const before = this.state;
+    const shownBefore = this.#shown;
+    const call = ++this.#sends;
     const environment = projectApi().environment?.name ?? null;
     this.state = {
       phase: "sending",
@@ -166,22 +172,25 @@ export class Exchange {
       events: [],
       droppedEvents: 0,
     };
+    this.#shown = call;
     // What #hear fills in; only this send changes the state while it runs.
     const sent = this.state;
     let outcome: SendOutcome;
     try {
       outcome = await sendRequest(this.#id, draft.path, draft.request(), (e) =>
-        this.#hear(e),
+        this.#hear(e, call),
       );
     } catch (e) {
       // The window has no project to send from: nothing left.
       this.state = before;
+      this.#shown = shownBefore;
       shellApi().toast(errorMessage(e));
       return;
     }
     switch (outcome.type) {
       case "notConfirmed":
         this.state = before;
+        this.#shown = shownBefore;
         return;
       case "response": {
         const { response } = outcome;
@@ -219,9 +228,19 @@ export class Exchange {
     sendsEnded++;
   }
 
-  /** Takes in the progress of the send under way. */
-  #hear(e: SendEvent): void {
+  /**
+   * Takes in the progress of send `call`. A large message comes another way
+   * than a small one and can land after the outcome: a stream event then
+   * joins the finished send. Its body is read from Dea once it is done, so
+   * late text has nothing to add.
+   */
+  #hear(e: SendEvent, call: number): void {
+    if (call !== this.#shown) return;
     const s = this.state;
+    if (s.phase === "done" || s.phase === "cancelled") {
+      if (e.type === "event") keepEvent(s, e);
+      return;
+    }
     if (s.phase !== "sending") return;
     switch (e.type) {
       case "started":
@@ -245,12 +264,7 @@ export class Exchange {
         }
         break;
       case "event":
-        s.events.push({ atMs: e.atMs, event: e.event, data: e.data, id: e.id });
-        // An endless stream keeps its last events only.
-        if (s.events.length > MAX_EVENTS) {
-          s.events.shift();
-          s.droppedEvents++;
-        }
+        keepEvent(s, e);
         break;
     }
   }
@@ -265,6 +279,18 @@ export class Exchange {
     this.#disposed = true;
     if (this.state.phase === "sending") void cancelSend(this.#id);
     void releaseResponse(this.#id);
+  }
+}
+
+/** Adds a server-sent event; an endless stream keeps its last ones only. */
+function keepEvent(
+  s: { events: SseRow[]; droppedEvents: number },
+  e: Extract<SendEvent, { type: "event" }>,
+): void {
+  s.events.push({ atMs: e.atMs, event: e.event, data: e.data, id: e.id });
+  if (s.events.length > MAX_EVENTS) {
+    s.events.shift();
+    s.droppedEvents++;
   }
 }
 
