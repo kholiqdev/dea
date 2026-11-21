@@ -62,13 +62,26 @@ enum Sender {
 struct Seen {
     /// Bytes read from the server so far, after TLS.
     received: AtomicU64,
-    /// The TLS failure a read ended with. Under TLS 1.3 a server turns
-    /// down the client certificate only after the handshake, so this is
-    /// where that shows.
+    /// The TLS failure a read or write ended with. Under TLS 1.3 a server
+    /// turns down the client certificate only after the handshake, so this
+    /// is where that shows.
     tls_error: OnceLock<TlsError>,
+    /// Whether the server asked for a client certificate in the handshake.
+    asked_for_certificate: bool,
 }
 
 impl Seen {
+    /// Keeps the TLS failure behind `error`, which a read or write of the
+    /// connection ended with, if there is one.
+    fn note(&self, error: &io::Error) {
+        let received = self.received.load(Ordering::SeqCst);
+        let tls = tls::tls_error(error)
+            .or_else(|| tls::closed_after_asking(error, self.asked_for_certificate, received));
+        if let Some(tls) = tls {
+            let _ = self.tls_error.set(tls);
+        }
+    }
+
     /// `error` from hyper as a TLS error when a read failed on one, and as
     /// a protocol error otherwise.
     fn error(&self, error: &hyper::Error) -> HttpError {
@@ -210,11 +223,15 @@ pub(crate) async fn open(
     let connected = Instant::now();
     let (connection, secured) = if url.scheme() == "https" {
         let config = configs.get(tls, verify)?;
-        let (stream, h2) = tls::handshake(stream, &host, config).await?;
+        let tls = tls::handshake(stream, &host, config).await?;
         let secured = Instant::now();
-        (handshake(stream, h2).await?, secured)
+        let seen = Seen {
+            asked_for_certificate: tls.asked_for_certificate,
+            ..Seen::default()
+        };
+        (handshake(tls.stream, tls.h2, seen).await?, secured)
     } else {
-        (handshake(stream, false).await?, connected)
+        (handshake(stream, false, Seen::default()).await?, connected)
     };
     let marks = Marks {
         start,
@@ -415,12 +432,12 @@ fn interleave(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
 }
 
 /// Starts HTTP/1.1 or HTTP/2 over `stream` and spawns the task that drives
-/// the connection.
-async fn handshake<S>(stream: S, h2: bool) -> Result<Connection, HttpError>
+/// the connection, which notes what it sees in `seen`.
+async fn handshake<S>(stream: S, h2: bool, seen: Seen) -> Result<Connection, HttpError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let seen = Arc::new(Seen::default());
+    let seen = Arc::new(seen);
     let io = TokioIo::new(Counted {
         inner: stream,
         seen: Arc::clone(&seen),
@@ -447,8 +464,8 @@ where
 
 /// Counts the bytes read, so a failed request on a pooled connection can
 /// tell whether any of the response arrived before it is retried, and
-/// keeps the TLS failure a read ended with. hyper keeps only the text of
-/// an HTTP/2 connection's I/O error.
+/// keeps the TLS failure a read or write ended with. hyper keeps only the
+/// text of an HTTP/2 connection's I/O error.
 struct Counted<S> {
     inner: S,
     seen: Arc<Seen>,
@@ -467,10 +484,15 @@ impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
         if read > 0 {
             this.seen.received.fetch_add(read as u64, Ordering::SeqCst);
         }
-        if let Poll::Ready(Err(e)) = &poll
-            && let Some(tls) = tls::tls_error(e)
-        {
-            let _ = this.seen.tls_error.set(tls);
+        this.noted(poll)
+    }
+}
+
+impl<S> Counted<S> {
+    /// `poll`, after noting the TLS failure it ended with.
+    fn noted<T>(&self, poll: Poll<io::Result<T>>) -> Poll<io::Result<T>> {
+        if let Poll::Ready(Err(e)) = &poll {
+            self.seen.note(e);
         }
         poll
     }
@@ -482,7 +504,9 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Counted<S> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.inner).poll_write(cx, buf);
+        this.noted(poll)
     }
 
     fn poll_write_vectored(
@@ -490,7 +514,9 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Counted<S> {
         cx: &mut Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().inner).poll_write_vectored(cx, bufs)
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.inner).poll_write_vectored(cx, bufs);
+        this.noted(poll)
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -498,7 +524,9 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Counted<S> {
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+        let this = self.get_mut();
+        let poll = Pin::new(&mut this.inner).poll_flush(cx);
+        this.noted(poll)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -512,6 +540,7 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::*;
+    use crate::error::TlsErrorKind;
 
     /// An address nothing listens on.
     fn refused() -> SocketAddr {
@@ -628,6 +657,60 @@ mod tests {
                 matches!(&result, Err(HttpError::Connect { addr, .. }) if *addr == timed_out.to_string()),
                 "{result:?}"
             );
+        }
+    }
+
+    /// Fails every read and write with `kind`.
+    struct Failing(io::ErrorKind);
+
+    impl AsyncRead for Failing {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::Error::from(self.0)))
+        }
+    }
+
+    impl AsyncWrite for Failing {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Err(io::Error::from(self.0)))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::Error::from(self.0)))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_connection_cut_after_the_server_asked_for_a_certificate_is_a_rejection() {
+        for (asked, write) in [(true, false), (true, true), (false, false), (false, true)] {
+            let seen = Arc::new(Seen {
+                asked_for_certificate: asked,
+                ..Seen::default()
+            });
+            let mut counted = Counted {
+                inner: Failing(io::ErrorKind::ConnectionAborted),
+                seen: Arc::clone(&seen),
+            };
+            let failed = if write {
+                counted.write_all(b"GET / HTTP/1.1\r\n").await
+            } else {
+                counted.read(&mut [0; 8]).await.map(drop)
+            };
+            assert!(failed.is_err());
+            let kind = seen.tls_error.get().map(|tls| tls.kind);
+            let expected = asked.then_some(TlsErrorKind::ClientCertificateRejected);
+            assert_eq!(kind, expected, "asked {asked}, write {write}");
         }
     }
 
