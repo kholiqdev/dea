@@ -1,8 +1,12 @@
-// WebKit, the WebView on macOS and Linux, has no requestIdleCallback.
-// Without one, CodeMirror parses in the background in 100 ms slices, which
-// drops frames while a large body scrolls. This one hands the parser a
-// deadline that runs out after a few milliseconds, so it yields often.
-// CodeMirror looks for it once, as it loads: import this module first.
+// CodeMirror parses in the background for as long as an idle deadline
+// allows, at least 25 ms and at most 100. WebKit, the WebView on macOS and
+// Linux, has no requestIdleCallback, so it would take 100 ms slices; the
+// deadlines of Chromium, the WebView2 on Windows, reach 50 ms. Either drops
+// frames while a large body scrolls. So the parser gets deadlines that run
+// out after a few milliseconds: a stand-in where there is no
+// requestIdleCallback, and the browser's own with its deadlines cut short
+// where there is. CodeMirror looks for it once, as it loads: import this
+// module first.
 
 /** How long an idle callback may run, in milliseconds. */
 export const IDLE_SLICE_MS = 10;
@@ -16,19 +20,37 @@ export interface IdleHost {
   cancelIdleCallback?: (handle: number) => void;
 }
 
-/** Gives `host` a requestIdleCallback when it has none. */
+/** Marks a requestIdleCallback installed here, even by another copy. */
+const INSTALLED = Symbol.for("dea.editor.idle-callback");
+
+/** A deadline that runs out a slice after now, or with `own` if sooner. */
+function slice(own?: IdleDeadline): IdleDeadline {
+  const start = performance.now();
+  const left = () => Math.max(0, IDLE_SLICE_MS - (performance.now() - start));
+  return {
+    didTimeout: own?.didTimeout ?? false,
+    timeRemaining: () => (own ? Math.min(own.timeRemaining(), left()) : left()),
+  };
+}
+
+/**
+ * Gives `host` a requestIdleCallback whose deadlines last a slice at most:
+ * its own one wrapped, or a stand-in when it has none. Only once per host.
+ */
 export function installIdleCallback(host: IdleHost): void {
-  if (host.requestIdleCallback !== undefined) return;
-  host.requestIdleCallback = (callback) =>
-    window.setTimeout(() => {
-      const start = performance.now();
-      callback({
-        didTimeout: false,
-        timeRemaining: () =>
-          Math.max(0, IDLE_SLICE_MS - (performance.now() - start)),
-      });
-    }, 1);
-  host.cancelIdleCallback = (handle) => window.clearTimeout(handle);
+  const current = host.requestIdleCallback;
+  if (current && INSTALLED in current) return;
+  let request: NonNullable<IdleHost["requestIdleCallback"]>;
+  if (current) {
+    request = (callback, options) =>
+      current.call(host, (deadline) => callback(slice(deadline)), options);
+  } else {
+    request = (callback) => window.setTimeout(() => callback(slice()), 1);
+    host.cancelIdleCallback = (handle) => window.clearTimeout(handle);
+  }
+  host.requestIdleCallback = Object.assign(request, {
+    [INSTALLED]: true as const,
+  });
 }
 
 if (typeof window !== "undefined") installIdleCallback(window);
