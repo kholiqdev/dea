@@ -68,6 +68,15 @@ test("light theme overrides accent and positive", () => {
   expect(t["--positive"]).toBe("#15803d");
 });
 
+test.each(["dark", "light"] as const)(
+  "the preview canvas is white in %s, as browsers draw plain HTML",
+  (theme) => {
+    expect(token(readTokens(tokensCss, theme), "--preview-canvas")).toBe(
+      "#ffffff",
+    );
+  },
+);
+
 test("the light theme inherits what it does not set from the root", () => {
   const css = `:root, [data-theme='dark'] { --a: #000000; --b: #111111 }
 [data-theme='light'] { --a: #ffffff }`;

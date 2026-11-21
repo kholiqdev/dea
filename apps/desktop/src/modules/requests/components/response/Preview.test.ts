@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeRequestsIpc, fakeResponse } from "../../test-support";
 import Preview from "./Preview.svelte";
+import previewSource from "./Preview.svelte?raw";
 
 const pdf = vi.hoisted(() => ({
   loadPdf: vi.fn(),
@@ -27,6 +28,19 @@ test("html_preview_is_sandboxed_without_scripts", async () => {
   const frame = await screen.findByTitle("Preview of the response");
   expect(frame.getAttribute("sandbox")).toBe("");
   expect(frame.getAttribute("srcdoc")).toContain("<p>hi</p>");
+});
+
+test("html_preview_is_drawn_on_white_in_both_themes", async () => {
+  fakeRequestsIpc({
+    response: fakeResponse({ text: { raw: "<p>plain</p>" } }),
+  });
+  render(Preview, { id: "t1", kind: "html", contentType: "text/html" });
+  const frame = await screen.findByTitle("Preview of the response");
+  expect(frame.tagName).toBe("IFRAME");
+  // Unstyled HTML has black text: the page shows it as a browser would.
+  const rule = /\biframe\s*\{([^}]*)\}/.exec(previewSource)?.[1] ?? "";
+  expect(rule).toContain("background: var(--preview-canvas)");
+  expect(rule).toContain("color-scheme: light");
 });
 
 test("image_preview_uses_a_blob_url_and_releases_it", async () => {
