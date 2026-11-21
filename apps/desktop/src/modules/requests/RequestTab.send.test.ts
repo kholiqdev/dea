@@ -361,6 +361,148 @@ test("a_second_send_sends_past_the_banner", async () => {
   await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 });
 
+const traced: RequestFile = {
+  ...file,
+  headers: [
+    { name: "Accept", value: "application/json" },
+    { name: "X-Trace", value: "{{traceId}}" },
+  ],
+};
+
+test("send_anyway_shows_the_shortcut", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["carrierCode"] } });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  const anyway = within(await screen.findByRole("status")).getByRole("button", {
+    name: "Send anyway",
+  });
+  expect(keycaps(anyway)).toEqual([
+    ["Ctrl", true],
+    ["Enter", true],
+  ]);
+});
+
+test("show_in_headers_opens_the_row", async () => {
+  fakeRequestsIpc({
+    files: { [PATH]: traced },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  const banner = await screen.findByRole("status");
+  await userEvent.click(
+    within(banner).getByRole("button", { name: "Show in Headers" }),
+  );
+  expect(screen.getByRole("tab", { name: /^Headers/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const value = await screen.findByRole("textbox", {
+    name: "Value of X-Trace",
+  });
+  await waitFor(() => expect(value).toHaveFocus());
+  const rows = screen
+    .getByRole("table", { name: "Headers" })
+    .querySelectorAll("tbody tr");
+  expect(rows[0]).not.toHaveAttribute("data-highlight");
+  expect(rows[1]).toHaveAttribute("data-highlight");
+});
+
+test("show_in_url_focuses_the_url", async () => {
+  fakeRequestsIpc({
+    files: { [PATH]: { ...file, url: "{{baseUrl}}/{{traceId}}" } },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await userEvent.click(
+    within(await screen.findByRole("status")).getByRole("button", {
+      name: "Show in URL",
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "URL" })).toHaveFocus(),
+  );
+});
+
+test("show_in_body_opens_the_editor", async () => {
+  fakeRequestsIpc({
+    files: {
+      [PATH]: { ...file, body: { mode: "json", text: '{"t": "{{traceId}}"}' } },
+    },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await userEvent.click(
+    within(await screen.findByRole("status")).getByRole("button", {
+      name: "Show in Body",
+    }),
+  );
+  expect(screen.getByRole("tab", { name: /^Body/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const editor = await screen.findByRole("textbox", { name: "Body" });
+  await waitFor(() => expect(editor).toHaveFocus());
+});
+
+test("the_highlight_goes_with_the_warning", async () => {
+  fakeRequestsIpc({
+    files: { [PATH]: traced },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await userEvent.click(
+    within(await screen.findByRole("status")).getByRole("button", {
+      name: "Show in Headers",
+    }),
+  );
+  await screen.findByRole("textbox", { name: "Value of X-Trace" });
+  expect(document.querySelectorAll("[data-highlight]")).toHaveLength(1);
+  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
+  await waitFor(() =>
+    expect(document.querySelectorAll("[data-highlight]")).toHaveLength(0),
+  );
+});
+
+test("no_show_action_when_the_place_is_unknown", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["elsewhere"] } });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  const banner = await screen.findByRole("status");
+  expect(within(banner).queryByRole("button", { name: /^Show in/ })).toBeNull();
+  expect(
+    within(banner).getByRole("button", { name: "Send anyway" }),
+  ).toBeInTheDocument();
+});
+
+test.each([
+  [{ section: "url" }, "Show in URL"],
+  [{ section: "params", row: 0 }, "Show in Params"],
+  [{ section: "headers", row: 0 }, "Show in Headers"],
+  [{ section: "body" }, "Show in Body"],
+] as const)("show_action_label: %j", async (usage, label) => {
+  const onshow = vi.fn();
+  render(UndefinedWarning, {
+    names: ["a"],
+    environment: null,
+    usage,
+    ondefine: () => {},
+    onshow,
+    onsendanyway: () => {},
+  });
+  const buttons = screen.getAllByRole("button").map((b) => b.textContent);
+  expect(buttons.map((t) => t?.trim().replace(/\s+/g, " "))).toEqual([
+    "Define it",
+    label,
+    "Send anyway CtrlEnter",
+  ]);
+  await userEvent.click(screen.getByRole("button", { name: label }));
+  expect(onshow).toHaveBeenCalledOnce();
+});
+
 test("the_warning_names_the_environment_in_use", async () => {
   fakeRequestsIpc({
     files,
@@ -398,7 +540,14 @@ test.each([
 ])("warning_text: $text", ({ names, environment, text }) => {
   const ondefine = vi.fn();
   const onsendanyway = vi.fn();
-  render(UndefinedWarning, { names, environment, ondefine, onsendanyway });
+  render(UndefinedWarning, {
+    names,
+    environment,
+    usage: null,
+    ondefine,
+    onshow: () => {},
+    onsendanyway,
+  });
   const banner = screen.getByRole("status");
   expect(banner).toHaveTextContent(text);
   expect(

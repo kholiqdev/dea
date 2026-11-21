@@ -13,8 +13,14 @@
     draft,
     variables,
     readonly,
-  }: { draft: RequestDraft; variables: VariableLookup; readonly: boolean } =
-    $props();
+    highlight = null,
+  }: {
+    draft: RequestDraft;
+    variables: VariableLookup;
+    readonly: boolean;
+    /** The row of the table a warning points at. */
+    highlight?: number | null;
+  } = $props();
 
   const pathVariables = $derived(
     syncPathVariables(
@@ -46,6 +52,7 @@
     addLabel="Add parameter"
     checkboxLabel={sendLabel}
     {variables}
+    {highlight}
     disabled={readonly}
     onchange={(rows: KeyValue[]) => draft.setParams(rows)}
   />

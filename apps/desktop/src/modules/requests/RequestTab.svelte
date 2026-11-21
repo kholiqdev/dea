@@ -33,6 +33,7 @@
   import TlsWarning from "./components/TlsWarning.svelte";
   import UndefinedWarning from "./components/UndefinedWarning.svelte";
   import { sendKeepingFocus } from "./lib/send-focus";
+  import { whereUsed, type Usage } from "./lib/usage";
   import { exchangeFor } from "./state/exchange.svelte";
   import { DEFAULT_OPTIONS } from "./state/folders.svelte";
   import { setResponseSplit, toggleResponseLayout } from "./state/layout";
@@ -71,6 +72,11 @@
         ([, v]) => v !== undefined,
       ),
     ),
+  });
+  // Where the first undefined variable of the warning is used.
+  const usage = $derived.by(() => {
+    const name = exchange.warning?.[0];
+    return name === undefined ? null : whereUsed(draft.draft, name);
   });
   // The split puts the response below when the work area is too narrow.
   let stacked = $state(false);
@@ -146,6 +152,41 @@
   /** Sends; not confirmed, the focus goes back to where it was. */
   function send(opts: { anyway?: boolean } = {}): void {
     void sendKeepingFocus(exchange, draft, opts);
+  }
+
+  /** Calls `find` until it gives an element, which the editor's lazy load may delay. */
+  async function focusWhenFound(find: () => HTMLElement | null | undefined) {
+    for (let tries = 0; tries < 40; tries++) {
+      const found = find();
+      if (found) {
+        found.focus();
+        return;
+      }
+      await new Promise((done) => setTimeout(done, 50));
+    }
+  }
+
+  /** Opens where the warning's first variable is used and focuses it. */
+  async function showUsage(place: Usage): Promise<void> {
+    if (place.section !== "url") draft.section = place.section;
+    await tick();
+    if (place.section === "url")
+      await focusWhenFound(() =>
+        view?.querySelector<HTMLElement>('input[aria-label="URL"]'),
+      );
+    else if (place.section === "body")
+      await focusWhenFound(() =>
+        view?.querySelector<HTMLElement>('.cm-content[aria-label="Body"]'),
+      );
+    else {
+      const table = place.section === "params" ? "Query parameters" : "Headers";
+      await focusWhenFound(() => {
+        const rows = view
+          ?.querySelector(`table[aria-label="${table}"]`)
+          ?.querySelectorAll("tbody tr");
+        return rows?.[place.row]?.querySelector<HTMLElement>("td.value input");
+      });
+    }
   }
 
   /** Saves the request panel's share; a refused save is a toast. */
@@ -233,7 +274,9 @@
       <UndefinedWarning
         names={exchange.warning}
         environment={project.environment?.name ?? null}
+        {usage}
         ondefine={() => void shell.runCommand("project.editEnvironments")}
+        onshow={() => usage && void showUsage(usage)}
         onsendanyway={() => send({ anyway: true })}
       />
     {/if}
@@ -278,9 +321,19 @@
           aria-labelledby="{uid}-{draft.section}"
         >
           {#if draft.section === "params"}
-            <ParamsSection {draft} {variables} {readonly} />
+            <ParamsSection
+              {draft}
+              {variables}
+              {readonly}
+              highlight={usage?.section === "params" ? usage.row : null}
+            />
           {:else if draft.section === "headers"}
-            <HeadersSection {draft} {variables} {readonly} />
+            <HeadersSection
+              {draft}
+              {variables}
+              {readonly}
+              highlight={usage?.section === "headers" ? usage.row : null}
+            />
           {:else if draft.section === "body"}
             <BodySection
               {draft}

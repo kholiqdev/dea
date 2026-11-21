@@ -2,7 +2,8 @@
   Rows of name, value and description, as params, headers and form fields
   are kept. Values show {{variables}}. With `checkboxLabel` each row has a
   checkbox that says whether it is sent; with `lockedNames` the names are
-  given, so rows are neither typed nor added nor removed.
+  given, so rows are neither typed nor added nor removed. The `highlight`
+  row is the one a warning points at.
 -->
 <script module lang="ts">
   import type { KeyValue } from "$lib/ipc/bindings/KeyValue";
@@ -33,6 +34,7 @@
     onchange,
     lockedNames = false,
     disabled = false,
+    highlight = null,
   }: {
     rows: KeyValue[];
     /** The table's accessible name. */
@@ -44,6 +46,7 @@
     onchange: (rows: KeyValue[]) => void;
     lockedNames?: boolean;
     disabled?: boolean;
+    highlight?: number | null;
   } = $props();
 
   let body = $state<HTMLElement>();
@@ -96,7 +99,10 @@
     </thead>
     <tbody bind:this={body}>
       {#each rows as row, i (i)}
-        <tr class:off={row.enabled === false}>
+        <tr
+          class:off={row.enabled === false}
+          data-highlight={highlight === i ? "" : undefined}
+        >
           {#if checkboxLabel}
             <td class="center">
               <input
@@ -207,6 +213,10 @@
     height: 36px;
     padding: 0 var(--s-1);
     border-top: 1px solid var(--line);
+  }
+
+  tr[data-highlight] {
+    background: var(--bg-3);
   }
 
   .center {

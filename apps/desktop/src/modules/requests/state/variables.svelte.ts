@@ -10,7 +10,7 @@ const DYNAMIC = new Set(["$guid", "$timestamp", "$isoTimestamp", "$randomInt"]);
  * A name as Dea compares it: `{{ vault: token }}` is the secret `token`,
  * which the inspection lists as `vault:token`.
  */
-const key = (name: string) => name.replace(/^vault:\s*/, "vault:");
+export const key = (name: string) => name.replace(/^vault:\s*/, "vault:");
 
 export class VariableLookup {
   readonly #get: () => Inspection | null;

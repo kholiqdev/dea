@@ -50,3 +50,19 @@ test("a ghost action is the quieter choice", () => {
     "secondary",
   );
 });
+
+test("a_banner_action_can_show_keys", () => {
+  render(FileBanner, {
+    tone: "warning",
+    children: message,
+    actions: [
+      { label: "Send anyway", onclick: () => {}, keys: ["Ctrl", "Enter"] },
+    ],
+  });
+  const button = screen.getByRole("button", { name: "Send anyway" });
+  const keys = [...button.querySelectorAll("kbd.kc")];
+  expect(keys.map((k) => k.textContent)).toEqual(["Ctrl", "Enter"]);
+  expect(keys.every((k) => k.closest('[aria-hidden="true"]') !== null)).toBe(
+    true,
+  );
+});
