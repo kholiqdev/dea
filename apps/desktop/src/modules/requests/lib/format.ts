@@ -79,3 +79,14 @@ export function suggestedName(
     .replace(/^-+|-+$/g, "");
   return `${slug || "response"}.${extension(kind, contentType)}`;
 }
+
+const COOKIE_DATE = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+/** `4 Nov 2026`; `Session` for a cookie with no expiry. */
+export function formatCookieDate(expires: string | null): string {
+  return expires === null ? "Session" : COOKIE_DATE.format(new Date(expires));
+}
