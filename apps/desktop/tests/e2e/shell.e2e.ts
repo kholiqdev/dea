@@ -14,6 +14,7 @@ import {
   waitForShell,
   writeProject,
 } from "./helpers.js";
+import { withWindowSize } from "./requests-support.js";
 
 const MAIN = [
   ["requests", "Requests"],
@@ -56,18 +57,23 @@ describe("the shell", () => {
   });
 
   it("keeps every shell control inside the window at 1024 × 640", async () => {
-    await browser.setWindowSize(1024, 640);
-    await browser.waitUntil(
-      async () => (await browser.execute(() => window.innerWidth)) <= 1024,
-    );
-    // The widest shell: Settings with its sidebar, then with the rail open.
-    await browser.keys([MOD, ","]);
-    await expect(mainHeading("Appearance")).toBeDisplayed();
-    expect(await controlsOutsideTheWindow()).toEqual([]);
-    await $('button[aria-label="Show module names"]').click();
-    expect(await controlsOutsideTheWindow()).toEqual([]);
-    await $('button[aria-label="Collapse the rail"]').click();
-    await browser.setWindowSize(1280, 800);
+    await withWindowSize(1024, 640, async () => {
+      // The widest shell: Settings with its sidebar, then with the rail open.
+      await browser.keys([MOD, ","]);
+      await expect(mainHeading("Appearance")).toBeDisplayed();
+      // At 1024 px the sidebar steps aside; the title bar brings it back.
+      const sidebar = $('aside[aria-label="Settings sidebar"]');
+      await expect(sidebar).not.toExist();
+      expect(await controlsOutsideTheWindow()).toEqual([]);
+      await $('button[aria-label="Show sidebar"]').click();
+      await expect(sidebar).toBeDisplayed();
+      expect(await controlsOutsideTheWindow()).toEqual([]);
+      await $('button[aria-label="Show module names"]').click();
+      expect(await controlsOutsideTheWindow()).toEqual([]);
+      await $('button[aria-label="Collapse the rail"]').click();
+    });
+    // Showing it in the narrow window saved nothing: wide again, it was there.
+    await expect($('aside[aria-label="Settings sidebar"]')).toBeDisplayed();
   });
 
   it("keeps theme, sidebar width and shortcuts after a restart", async () => {

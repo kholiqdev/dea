@@ -214,6 +214,16 @@ function route(
     case "/hit":
     case "/hit-img":
       return reply(res, 204);
+    // A status text of 120 characters that still starts with `OK`.
+    case "/long-reason": {
+      const body = "{}";
+      res.writeHead(200, "OK " + "x".repeat(117), {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      });
+      res.end(body);
+      return;
+    }
   }
   const [name, first, second] = parts;
   if (name === "delay" && parts.length === 2) {

@@ -23,6 +23,7 @@ import {
   arrivals,
   chooseEnvironment,
   getRequest,
+  openFilter,
   openRequest,
   sendAndShow,
   sendTo,
@@ -411,7 +412,7 @@ describe("reading responses", () => {
       l.join("").includes("shp_8KQ2M4"),
     );
 
-    await $('input[aria-label="Filter with JSONPath"]').click();
+    await (await openFilter()).click();
     await typeKeys("$.events[*].code");
     await browser.waitUntil(
       async () =>
@@ -654,10 +655,13 @@ describe("reading responses", () => {
 
   it("response_moves_below_and_back", async () => {
     await openRequest(serverProject(), "staging", "Shipment by ID");
-    // Under 960 px the response is always below, with no button to move it.
+    // A work area under 760 px wide always stacks the response below, with
+    // no button to move it. At 1280 × 800 the area is about 950 px.
     expect(
-      await browser.execute(() => window.innerWidth),
-    ).toBeGreaterThanOrEqual(960);
+      await browser.execute(
+        () => document.querySelector(".split")!.getBoundingClientRect().width,
+      ),
+    ).toBeGreaterThanOrEqual(760);
     await sendAndShow();
     // The setting is the app's, so a failure must not leave it below.
     try {
