@@ -6,6 +6,8 @@ use serde::de::IgnoredAny;
 
 const INDENT: &str = "  ";
 /// An element holding only text stays on one line up to this many characters.
+/// Nesting deeper than this is shown at this indent, so output stays linear.
+const MAX_INDENT_LEVELS: usize = 64;
 const INLINE_TEXT_MAX: usize = 80;
 const VOID_ELEMENTS: [&str; 13] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
@@ -17,6 +19,11 @@ const RAW_ELEMENTS: [&str; 4] = ["pre", "textarea", "script", "style"];
 /// Indents JSON with two spaces. `None` when the text is not valid JSON.
 pub fn pretty_json(text: &str) -> Option<String> {
     serde_json::from_str::<IgnoredAny>(text).ok()?;
+    Some(reindent_json(text))
+}
+
+/// Re-indents text already known to be valid JSON.
+pub(crate) fn reindent_json(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 2);
     let mut depth = 0usize;
     let mut chars = text.chars().peekable();
@@ -60,7 +67,7 @@ pub fn pretty_json(text: &str) -> Option<String> {
             c => out.push(c),
         }
     }
-    Some(out)
+    out
 }
 
 fn newline(out: &mut String, depth: usize) {
@@ -93,18 +100,17 @@ pub fn pretty_markup(text: &str, html: bool) -> String {
     let mut depth = 0usize;
     let mut i = 0;
     while i < tokens.len() {
-        let pad = INDENT.repeat(depth);
         match &tokens[i] {
-            Token::Text(t) => lines.push(format!("{pad}{t}")),
-            Token::Verbatim(v) => lines.push(format!("{pad}{v}")),
+            Token::Text(t) => lines.push(format!("{}{t}", pad(depth))),
+            Token::Verbatim(v) => lines.push(format!("{}{v}", pad(depth))),
             Token::Close { tag, .. } => {
                 depth = depth.saturating_sub(1);
-                lines.push(format!("{}{tag}", INDENT.repeat(depth)));
+                lines.push(format!("{}{tag}", pad(depth)));
             }
             Token::Open { name, tag, closed } => {
                 let void = *closed || (html && is_one_of(name, &VOID_ELEMENTS));
                 if void {
-                    lines.push(format!("{pad}{tag}"));
+                    lines.push(format!("{}{tag}", pad(depth)));
                 } else if let (
                     Some(Token::Text(t)),
                     Some(Token::Close {
@@ -116,10 +122,10 @@ pub fn pretty_markup(text: &str, html: bool) -> String {
                     && t.chars().count() <= INLINE_TEXT_MAX
                     && !t.contains('\n')
                 {
-                    lines.push(format!("{pad}{tag}{t}{end_tag}"));
+                    lines.push(format!("{}{tag}{t}{end_tag}", pad(depth)));
                     i += 2;
                 } else {
-                    lines.push(format!("{pad}{tag}"));
+                    lines.push(format!("{}{tag}", pad(depth)));
                     depth += 1;
                 }
             }
@@ -127,6 +133,10 @@ pub fn pretty_markup(text: &str, html: bool) -> String {
         i += 1;
     }
     lines.join("\n")
+}
+
+fn pad(depth: usize) -> String {
+    INDENT.repeat(depth.min(MAX_INDENT_LEVELS))
 }
 
 fn is_one_of(name: &str, list: &[&str]) -> bool {
