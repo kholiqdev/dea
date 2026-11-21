@@ -6,6 +6,7 @@
 mod clipboard;
 mod clock;
 mod error;
+mod exchange;
 mod file_ref;
 mod inspection;
 pub mod projects;
@@ -18,6 +19,11 @@ mod vault_app;
 pub use clipboard::{CLIPBOARD_CLEAR_AFTER, Clipboard, SystemClipboard};
 pub use clock::{Clock, SystemClock};
 pub use error::UseError;
+pub use exchange::{
+    BodyKind, CookieInfo, EventForwarder, FailureKind, HeaderRow, RedirectInfo, ResponseInfo,
+    SendEvent, SendFailure, SendOutcome, TEXT_PREVIEW_LIMIT, TimingInfo, body_kind,
+    outcome_of_error, response_info,
+};
 pub use file_ref::FileRef;
 pub use inspection::{AutomaticHeader, Inspection, OptionsInfo, VariableInfo};
 pub use prompt::{PasswordPrompt, PromptProblem, Prompter, SendAnswer, SendConfirmation};

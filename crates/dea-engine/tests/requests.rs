@@ -12,7 +12,8 @@ use dea_engine::requests::{PreparedRequest, RequestService, SendError, Sent, Vau
 use dea_engine::store::Store;
 use dea_engine::vault::VaultError;
 use dea_engine::{
-    Inspection, PasswordPrompt, Prompter, SendAnswer, SendConfirmation, UseError, VaultService,
+    BodyKind, CookieInfo, FailureKind, Inspection, PasswordPrompt, Prompter, SendAnswer,
+    SendConfirmation, SendOutcome, UseError, VaultService, outcome_of_error, response_info,
 };
 use dea_http::{CancellationToken, Client, ClientConfig, Event, HttpError, ProxyConfig, Response};
 use dea_project::{
@@ -265,6 +266,23 @@ impl Fixture {
         let path = self.add("route", request("GET", &format!("{{{{baseUrl}}}}{route}")));
         let prepared = self.prepare(&path, Some(environment)).unwrap();
         self.send_prepared(prepared).await
+    }
+
+    /// Puts `value` in the Vault as the `staging` secret `name`, and locks
+    /// the Vault again.
+    fn set_secret(&self, name: &str, value: &str) {
+        self.vault.unlock("Set up the test").unwrap();
+        let key = SecretKey {
+            scope: self.project.vault_scope(),
+            environment: "staging".into(),
+            name: name.into(),
+        };
+        let data = SecretData::Text(SecretString::from(value.to_string()));
+        self.vault
+            .set_secret(&key, SecretKind::Token, &data)
+            .unwrap();
+        self.vault.lock();
+        self.log.lock().unwrap().clear();
     }
 
     fn last_request(&self) -> Received {
@@ -1298,4 +1316,129 @@ async fn inspection_of_a_blank_json_body_lists_no_content_type() {
         "{:?}",
         inspection.automatic_headers
     );
+}
+
+#[tokio::test]
+async fn secret_values_are_hidden_in_errors_and_redirects() {
+    let mut f = Fixture::new().await;
+    f.set_secret("HOST", "secret-host.invalid");
+    f.set_secret("TOKEN", "tok-123");
+    f.set_secret("KEY", "Ab+c=");
+    f.set_secret("UPPER_HOST", "Upper-Host.invalid");
+
+    // A secret host fails DNS, and the failure does not name it.
+    let path = f.add("hidden-host", request("GET", "https://{{vault:HOST}}/x"));
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let error = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    let shown = format!("{error} {error:?}");
+    assert!(!shown.contains("secret-host"), "{shown}");
+    let outcome = outcome_of_error(&error);
+    let SendOutcome::Failed { failure } = outcome else {
+        panic!("not a failure: {outcome:?}")
+    };
+    assert_eq!(failure.kind, FailureKind::Dns);
+    assert!(!format!("{failure:?}").contains("secret-host"));
+    assert_eq!(
+        failure.message,
+        "•••••••• could not be resolved. Check the host name."
+    );
+    // The URL parser writes a host in lower case.
+    let path = f.add(
+        "upper-host",
+        request("GET", "http://{{vault:UPPER_HOST}}/x"),
+    );
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let error = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    let shown = format!("{error:?}").to_ascii_lowercase();
+    assert!(!shown.contains("upper-host"), "{shown}");
+
+    // A redirect to a URL that carries the secret token in its query.
+    let mut file = request("GET", "{{baseUrl}}/redirect-to");
+    file.params = vec![
+        row("url", "/echo?token={{vault:TOKEN}}"),
+        // Encoded as `Ab%2Bc%3D` in the query.
+        row("key", "{{vault:KEY}}"),
+    ];
+    let path = f.add("hidden-token", file);
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let sent = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(f.last_request().path_and_query, "/echo?token=tok-123");
+    assert_eq!(sent.response.redirects.len(), 1);
+    assert!(
+        sent.response
+            .redirects
+            .iter()
+            .all(|r| !r.url.contains("tok-123"))
+    );
+    assert!(sent.response.redirects[0].url.contains("••••••••"));
+    assert!(
+        !sent.response.redirects[0].url.contains("Ab%2Bc%3D"),
+        "{}",
+        sent.response.redirects[0].url
+    );
+    assert_eq!(sent.url, f.server.url("/echo?token=••••••••"));
+}
+
+#[tokio::test]
+async fn response_info_lists_received_cookies() {
+    let mut f = Fixture::new().await;
+    let path = f.add(
+        "set",
+        request("GET", "{{baseUrl}}/cookies/set?session=abc;Path=/"),
+    );
+    let prepared = f.prepare(&path, Some("staging")).unwrap();
+    let sent = f
+        .try_send(prepared, &CancellationToken::new())
+        .await
+        .unwrap();
+
+    let info = response_info(&sent);
+
+    assert!(
+        matches!(&info.cookies[..], [CookieInfo { name, domain, path, .. }]
+            if name == "session" && domain == "127.0.0.1" && path == "/"),
+        "{:?}",
+        info.cookies
+    );
+    assert_eq!(info.cookies[0].value, "abc");
+    assert!(info.cookies[0].host_only);
+    assert_eq!(info.cookies[0].expires, None);
+    assert_eq!(
+        (info.status, info.reason.as_str(), info.version.as_str()),
+        (200, "OK", "HTTP/1.1")
+    );
+    assert!(info.headers.iter().any(|h| h.name == "set-cookie"));
+    assert_eq!((info.size, info.kind), (0, BodyKind::Empty));
+    assert!(!info.large && !info.truncated);
+    assert!(info.redirects.is_empty());
+    assert!(info.cookies_not_saved.is_none());
+    assert!(info.timing.total_ms > 0.0);
+}
+
+#[tokio::test]
+async fn response_info_reads_the_kind_of_a_large_body_from_its_file() {
+    let mut f = Fixture::new().await;
+    let size = 11 * 1024 * 1024;
+    let response = f.send("staging", &format!("/bytes/{size}")).await;
+    assert!(matches!(response.body, dea_http::ResponseBody::File { .. }));
+    let sent = Sent {
+        response,
+        cookies_not_saved: None,
+        url: f.server.url("/bytes"),
+    };
+
+    let info = response_info(&sent);
+
+    assert!(info.large);
+    assert_eq!(info.size, size);
+    assert_eq!(info.kind, BodyKind::Text);
 }
