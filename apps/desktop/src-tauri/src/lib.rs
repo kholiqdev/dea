@@ -139,10 +139,7 @@ pub fn run() {
         .on_page_load(move |webview, payload| {
             // Before setup the state is not there yet, and nothing can wait.
             if let Some(state) = webview.try_state::<AppState>() {
-                state
-                    .vault
-                    .prompter()
-                    .page_load(webview.label(), payload.event());
+                state.page_load(webview.label(), payload.event());
             }
             if probe && payload.event() == PageLoadEvent::Finished {
                 probe_print("DEA_MARK page loaded");
