@@ -48,6 +48,20 @@ export function onSendConfirm(
   );
 }
 
+/**
+ * Calls `handler` with the id of each confirmation of this window that ended
+ * without its answer: the send was cancelled, or the page reloaded. Its
+ * dialog closes. An id this window never showed may come too.
+ */
+export function onSendConfirmWithdrawn(
+  handler: (id: number) => void,
+): Promise<UnlistenFn> {
+  return getCurrentWebviewWindow().listen<{ id: number }>(
+    "send-confirm-withdrawn",
+    (e) => handler(e.payload.id),
+  );
+}
+
 /** Answers a confirmation once. */
 export function answerSendConfirmation(
   id: number,

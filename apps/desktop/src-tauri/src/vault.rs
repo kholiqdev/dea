@@ -34,6 +34,9 @@ pub const VAULT_PROMPT: &str = "vault-prompt";
 /// The event that asks one window whether to send a request to
 /// production, with a [`SendConfirmEvent`].
 pub const SEND_CONFIRM: &str = "send-confirm";
+/// The event that tells one window a send confirmation was answered
+/// without it, so its dialog closes, with a [`SendConfirmWithdrawn`].
+pub const SEND_CONFIRM_WITHDRAWN: &str = "send-confirm-withdrawn";
 /// Where a prompt goes when no window asked for it and none has focus.
 const MAIN_WINDOW: &str = "main";
 
@@ -151,6 +154,8 @@ pub trait PromptWindows: Send + Sync {
     /// Shows `prompt` in `window`. False when the window is gone, so no
     /// answer can come.
     fn show(&self, window: &str, prompt: Prompt) -> bool;
+    /// Tells `window` that send confirmation `id` no longer waits for it.
+    fn withdraw(&self, window: &str, id: u64);
 }
 
 impl<R: Runtime> PromptWindows for AppHandle<R> {
@@ -164,6 +169,11 @@ impl<R: Runtime> PromptWindows for AppHandle<R> {
     fn show(&self, window: &str, prompt: Prompt) -> bool {
         self.get_webview_window(window).is_some()
             && self.emit_to(window, prompt.event(), prompt).is_ok()
+    }
+
+    fn withdraw(&self, window: &str, id: u64) {
+        // A window that is gone has no dialog to close.
+        let _ = self.emit_to(window, SEND_CONFIRM_WITHDRAWN, SendConfirmWithdrawn { id });
     }
 }
 
@@ -180,6 +190,8 @@ impl PromptWindows for NoWindows {
     fn show(&self, _window: &str, _prompt: Prompt) -> bool {
         false
     }
+
+    fn withdraw(&self, _window: &str, _id: u64) {}
 }
 
 /// A dialog for one window to show and then answer by its id. Its payload
@@ -234,6 +246,13 @@ pub struct SendConfirmEvent {
     pub id: u64,
     #[serde(flatten)]
     pub confirmation: SendConfirmation,
+}
+
+/// A send confirmation that was cancelled, or answered by Dea, before its
+/// window answered: the window closes its dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SendConfirmWithdrawn {
+    pub id: u64,
 }
 
 /// [`PromptProblem`] as the dialog reads it.
@@ -353,43 +372,72 @@ impl UiPrompter {
     /// Answers Vault password prompt `id`; `None` cancels it. An unknown
     /// id, such as a prompt already cancelled, is ignored.
     pub fn answer(&self, id: u64, password: Option<String>) {
-        // A confirmation is cancelled: a password does not answer it.
-        if let Some(Answer::Password(answer)) = self.take(id) {
-            let _ = answer.send(password.map(SecretString::from));
+        match self.take(id) {
+            Some(Waiting {
+                answer: Answer::Password(answer),
+                ..
+            }) => {
+                let _ = answer.send(password.map(SecretString::from));
+            }
+            // A password does not answer a confirmation: it is cancelled.
+            Some(waiting) => self.dismiss([(id, waiting)]),
+            None => {}
         }
     }
 
     /// Answers send confirmation `id`. An unknown id, such as a
     /// confirmation already cancelled, is ignored.
     pub fn answer_send(&self, id: u64, answer: SendAnswer) {
-        // A Vault password prompt is cancelled: this does not answer it.
-        if let Some(Answer::Send(sender)) = self.take(id) {
-            let _ = sender.send(answer);
+        match self.take(id) {
+            Some(Waiting {
+                answer: Answer::Send(sender),
+                ..
+            }) => {
+                let _ = sender.send(answer);
+            }
+            // This does not answer a Vault password prompt: it is cancelled.
+            Some(waiting) => self.dismiss([(id, waiting)]),
+            None => {}
         }
     }
 
-    /// Stops prompt `id` waiting, and gives where its answer goes.
-    fn take(&self, id: u64) -> Option<Answer> {
-        guard(&self.waiting)
-            .remove(&id)
-            .map(|waiting| waiting.answer)
+    /// Stops prompt `id` waiting.
+    fn take(&self, id: u64) -> Option<Waiting> {
+        guard(&self.waiting).remove(&id)
     }
 
-    /// Cancels every prompt whose send was cancelled. The dialog stays in
-    /// its window until answered, and the answer is ignored.
+    /// Cancels every prompt whose send was cancelled.
     pub fn withdraw_cancelled(&self) {
-        guard(&self.waiting).retain(|_, waiting| {
-            !waiting
-                .send
-                .as_ref()
-                .is_some_and(CancellationToken::is_cancelled)
-        });
+        let gone: Vec<(u64, Waiting)> = guard(&self.waiting)
+            .extract_if(|_, waiting| {
+                waiting
+                    .send
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+            })
+            .collect();
+        self.dismiss(gone);
     }
 
     /// Cancels every prompt of `window`, which has closed.
     pub fn cancel_window(&self, window: &str) {
-        // A dropped sender wakes its prompt with no answer.
-        guard(&self.waiting).retain(|_, waiting| waiting.window != window);
+        let gone: Vec<(u64, Waiting)> = guard(&self.waiting)
+            .extract_if(|_, waiting| waiting.window == window)
+            .collect();
+        self.dismiss(gone);
+    }
+
+    /// Ends prompts that stopped waiting without an answer from their
+    /// window: each asker wakes with no answer, and each confirmation is
+    /// withdrawn from its window, so its dialog closes.
+    fn dismiss(&self, gone: impl IntoIterator<Item = (u64, Waiting)>) {
+        for (id, waiting) in gone {
+            // Dropping the sender wakes the asker.
+            drop(waiting.answer);
+            if let Prompt::Send(_) = waiting.prompt {
+                self.windows.withdraw(&waiting.window, id);
+            }
+        }
     }
 
     /// A page of `window` is loading. A reload drops the dialog and its
@@ -421,10 +469,24 @@ impl UiPrompter {
             .map(|(id, waiting)| (*id, waiting.prompt.clone()))
             .collect();
         for (id, prompt) in prompts {
-            if !self.windows.show(window, prompt) {
-                guard(&self.waiting).remove(&id);
+            if !self.show(window, id, prompt) {
+                self.dismiss(self.take(id).map(|waiting| (id, waiting)));
             }
         }
+    }
+
+    /// Shows prompt `id` in `window`. A confirmation that stopped waiting
+    /// meanwhile is withdrawn once more after it: its withdrawal may have
+    /// reached the window first.
+    fn show(&self, window: &str, id: u64, prompt: Prompt) -> bool {
+        let confirmation = matches!(prompt, Prompt::Send(_));
+        if !self.windows.show(window, prompt) {
+            return false;
+        }
+        if confirmation && !guard(&self.waiting).contains_key(&id) {
+            self.windows.withdraw(window, id);
+        }
+        true
     }
 
     /// Shows the prompt `prompt` makes from its id in the window this
@@ -460,8 +522,9 @@ impl UiPrompter {
         );
         // Checked once it waits: a send cancelled later is withdrawn.
         let cancelled = send.as_ref().is_some_and(CancellationToken::is_cancelled);
-        if cancelled || !self.windows.show(&window, prompt) {
-            guard(&self.waiting).remove(&id);
+        if cancelled || !self.show(&window, id, prompt) {
+            // A resend may have shown it meanwhile.
+            self.dismiss(self.take(id).map(|waiting| (id, waiting)));
             return None;
         }
         answered.recv().ok()
@@ -527,23 +590,29 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::testing::{Confirms, RecordingWindows, Shown, WAIT, confirmation};
+    use crate::testing::{Confirms, RecordingWindows, Shown, WAIT, Withdrawn, confirmation};
 
-    /// A prompter for the `open` windows, `focused` having focus, and the
-    /// Vault prompts and confirmations they are shown.
+    /// A prompter for the `open` windows, `focused` having focus, the
+    /// Vault prompts and confirmations they are shown, and the
+    /// confirmations withdrawn from them.
     fn recorded(
         open: &[&'static str],
         focused: Option<&'static str>,
-    ) -> (Arc<UiPrompter>, Shown, Confirms) {
-        let (windows, shown, confirms) = RecordingWindows::new(open, focused);
-        (Arc::new(UiPrompter::new(windows)), shown, confirms)
+    ) -> (Arc<UiPrompter>, Shown, Confirms, Withdrawn) {
+        let (windows, shown, confirms, withdrawn) = RecordingWindows::new(open, focused);
+        (
+            Arc::new(UiPrompter::new(windows)),
+            shown,
+            confirms,
+            withdrawn,
+        )
     }
 
     fn windows_with(
         open: &[&'static str],
         focused: Option<&'static str>,
     ) -> (Arc<UiPrompter>, Shown) {
-        let (prompter, shown, _) = recorded(open, focused);
+        let (prompter, shown, _, _) = recorded(open, focused);
         (prompter, shown)
     }
 
@@ -746,7 +815,7 @@ mod tests {
 
     #[test]
     fn send_confirmation_goes_to_the_window_that_sent() {
-        let (prompter, shown, confirms) = recorded(&["main", "project-1"], Some("main"));
+        let (prompter, shown, confirms, withdrawn) = recorded(&["main", "project-1"], Some("main"));
         let asked = confirm_from(&prompter, "project-1", &CancellationToken::new());
 
         let (window, event) = confirms.recv_timeout(WAIT).unwrap();
@@ -774,40 +843,96 @@ mod tests {
             "only one confirmation was sent"
         );
         assert!(shown.try_recv().is_err(), "no Vault prompt was sent");
+        assert!(
+            withdrawn.try_recv().is_err(),
+            "an answered confirmation is not withdrawn"
+        );
+    }
+
+    #[test]
+    fn a_withdrawn_confirmation_is_withdrawn_from_the_window_that_asked() {
+        let (prompter, _shown, confirms, withdrawn) =
+            recorded(&["main", "project-1"], Some("main"));
+        let send = CancellationToken::new();
+        let asked = confirm_from(&prompter, "project-1", &send);
+        let (_, event) = confirms.recv_timeout(WAIT).unwrap();
+
+        send.cancel();
+        prompter.withdraw_cancelled();
+        assert_eq!(asked.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        assert_eq!(
+            withdrawn.recv_timeout(WAIT).unwrap(),
+            ("project-1".to_string(), event.id)
+        );
+        assert!(withdrawn.try_recv().is_err(), "no other window is told");
+        assert_eq!(
+            serde_json::to_value(SendConfirmWithdrawn { id: event.id }).unwrap(),
+            json!({ "id": event.id })
+        );
+    }
+
+    #[test]
+    fn a_confirmation_withdrawn_while_shown_is_withdrawn_after_it() {
+        let (prompter, _shown, confirms, withdrawn) = recorded(&["main"], None);
+        // Confirmation 99 no longer waits: its withdrawal may have reached
+        // the window before the confirmation did, so it comes again after.
+        let event = SendConfirmEvent {
+            id: 99,
+            confirmation: confirmation(),
+        };
+        assert!(prompter.show("main", 99, Prompt::Send(event.clone())));
+        assert_eq!(
+            confirms.recv_timeout(WAIT).unwrap(),
+            ("main".to_string(), event)
+        );
+        assert_eq!(
+            withdrawn.recv_timeout(WAIT).unwrap(),
+            ("main".to_string(), 99)
+        );
     }
 
     #[test]
     fn a_confirmation_without_an_answer_is_a_cancel() {
-        let (prompter, _shown, confirms) = recorded(&["main", "project-1"], None);
+        let (prompter, _shown, confirms, withdrawn) = recorded(&["main", "project-1"], None);
         let send = CancellationToken::new();
+        let withdrawn_from = |window: &str, id: u64| {
+            assert_eq!(
+                withdrawn.recv_timeout(WAIT).unwrap(),
+                (window.to_string(), id)
+            );
+        };
 
         let closed = confirm_from(&prompter, "project-1", &send);
-        confirms.recv_timeout(WAIT).unwrap();
+        let (_, event) = confirms.recv_timeout(WAIT).unwrap();
         prompter.cancel_window("project-1");
         assert_eq!(closed.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        withdrawn_from("project-1", event.id);
 
         let reloaded = confirm_from(&prompter, "project-1", &send);
-        confirms.recv_timeout(WAIT).unwrap();
+        let (_, event) = confirms.recv_timeout(WAIT).unwrap();
         prompter.page_load("project-1", PageLoadEvent::Started);
         assert_eq!(reloaded.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        withdrawn_from("project-1", event.id);
 
         // A password does not answer whether to send.
         let mixed_up = confirm_from(&prompter, "main", &send);
         let (_, event) = confirms.recv_timeout(WAIT).unwrap();
         prompter.answer(event.id, Some("correct horse".into()));
         assert_eq!(mixed_up.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        withdrawn_from("main", event.id);
 
         // A window that is already gone cannot answer, so nothing waits.
         let gone = confirm_from(&prompter, "project-9", &send);
         assert_eq!(gone.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
+        assert!(withdrawn.try_recv().is_err(), "a gone window is not told");
     }
 
     #[test]
     fn a_cancelled_send_withdraws_only_its_own_prompts() {
-        let (prompter, shown, confirms) = recorded(&["main"], None);
+        let (prompter, shown, confirms, withdrawn) = recorded(&["main"], None);
         let (first, second) = (CancellationToken::new(), CancellationToken::new());
         let first_asked = confirm_from(&prompter, "main", &first);
-        confirms.recv_timeout(WAIT).unwrap();
+        let (_, first_event) = confirms.recv_timeout(WAIT).unwrap();
         let second_asked = confirm_from(&prompter, "main", &second);
         let (_, second_event) = confirms.recv_timeout(WAIT).unwrap();
         // The Vault password a send asks for (Linux) belongs to it too.
@@ -825,6 +950,11 @@ mod tests {
         prompter.withdraw_cancelled();
         assert_eq!(first_asked.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
         assert!(!password.got_password());
+        assert_eq!(
+            withdrawn.recv_timeout(WAIT).unwrap(),
+            ("main".to_string(), first_event.id)
+        );
+        assert!(withdrawn.try_recv().is_err(), "only its confirmation");
 
         // The other send still waits for its answer.
         prompter.answer_send(second_event.id, SendAnswer::Send);
@@ -834,11 +964,13 @@ mod tests {
         let late = confirm_from(&prompter, "main", &first);
         assert_eq!(late.recv_timeout(WAIT).unwrap(), SendAnswer::Cancel);
         assert!(confirms.try_recv().is_err(), "nothing was shown");
+        // A resend may have shown it meanwhile, so it is withdrawn anyway.
+        assert_eq!(withdrawn.recv_timeout(WAIT).unwrap().0, "main");
     }
 
     #[test]
     fn prompts_and_confirmations_are_sent_again_apart() {
-        let (prompter, shown, confirms) = recorded(&["project-1"], None);
+        let (prompter, shown, confirms, _) = recorded(&["project-1"], None);
         let confirmed = confirm_from(&prompter, "project-1", &CancellationToken::new());
         let (_, confirmation) = confirms.recv_timeout(WAIT).unwrap();
         let asked = ask_from(&prompter, "project-1", None);

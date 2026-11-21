@@ -20,27 +20,36 @@ pub const WAIT: Duration = Duration::from_secs(5);
 pub type Shown = Receiver<(String, VaultPromptEvent)>;
 /// The send confirmations the windows were shown.
 pub type Confirms = Receiver<(String, SendConfirmEvent)>;
+/// The ids of the send confirmations withdrawn from the windows.
+pub type Withdrawn = Receiver<(String, u64)>;
 
 /// Windows that pass each prompt on to the test. Only `open` windows exist.
 pub struct RecordingWindows {
     vault: Sender<(String, VaultPromptEvent)>,
     sends: Sender<(String, SendConfirmEvent)>,
+    withdrawn: Sender<(String, u64)>,
     open: Vec<&'static str>,
     focused: Option<&'static str>,
 }
 
 impl RecordingWindows {
-    /// The `open` windows, `focused` having focus, and what they are shown.
-    pub fn new(open: &[&'static str], focused: Option<&'static str>) -> (Self, Shown, Confirms) {
+    /// The `open` windows, `focused` having focus, what they are shown,
+    /// and the confirmations withdrawn from them.
+    pub fn new(
+        open: &[&'static str],
+        focused: Option<&'static str>,
+    ) -> (Self, Shown, Confirms, Withdrawn) {
         let (vault, shown) = channel();
         let (sends, confirms) = channel();
+        let (withdrawn, withdrawals) = channel();
         let windows = Self {
             vault,
             sends,
+            withdrawn,
             open: open.to_vec(),
             focused,
         };
-        (windows, shown, confirms)
+        (windows, shown, confirms, withdrawals)
     }
 }
 
@@ -56,6 +65,12 @@ impl PromptWindows for RecordingWindows {
                 Prompt::Vault(event) => self.vault.send((label, event)).is_ok(),
                 Prompt::Send(event) => self.sends.send((label, event)).is_ok(),
             }
+    }
+
+    fn withdraw(&self, window: &str, id: u64) {
+        if self.open.contains(&window) {
+            let _ = self.withdrawn.send((window.to_string(), id));
+        }
     }
 }
 
