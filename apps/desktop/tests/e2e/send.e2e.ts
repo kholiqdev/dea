@@ -23,6 +23,7 @@ import {
   RESPONSE,
   TOOLBAR,
   arrivals,
+  focusUrl,
   getRequest,
   openRequest,
   productionDialog,
@@ -81,7 +82,7 @@ describe("sending requests", () => {
     await openRequest(serverProject(), "staging", "Create shipment");
     const sent = arrivals(server, "/echo");
 
-    await $('input[aria-label="URL"]').click();
+    await focusUrl();
     await browser.keys([MOD, Key.Enter]);
     await until(() => sent() === 1, "Mod+Enter in the URL to send");
     await waitForSendToEnd();
@@ -153,7 +154,7 @@ describe("sending requests", () => {
       [
         "Mod+Enter",
         async () => {
-          await $('input[aria-label="URL"]').click();
+          await focusUrl();
           await browser.keys([MOD, Key.Enter]);
         },
       ],
