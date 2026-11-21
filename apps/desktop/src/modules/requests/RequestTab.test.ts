@@ -710,6 +710,37 @@ test("changing_the_method_updates_the_tab", async () => {
   );
 });
 
+test("the_final_url_shows_under_the_bar", async () => {
+  const shown = "https://api.harbor.test/v1/shipments/shp_4821";
+  const ipc = fakeRequestsIpc({
+    tree: shipments(),
+    files: { [BY_ID]: byId() },
+    inspection: { url: shown },
+  });
+  openRequestTab(BY_ID);
+  const url = await screen.findByRole("button", {
+    name: "Copy the final URL",
+  });
+  expect(url).toHaveTextContent(shown);
+  await userEvent.click(url);
+  expect(ipc.copiedTexts).toEqual([shown]);
+  await waitFor(() => expect(shell.toasts).toContain("URL copied"));
+});
+
+test("the_request_bar_spans_the_tab", async () => {
+  shipmentsIpc();
+  openRequestTab(BY_ID);
+  const save = await screen.findByRole("button", { name: "Save request" });
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toHaveAttribute("data-send");
+  expect(document.querySelector(".split")).toBeInTheDocument();
+  expect(save.closest(".split")).toBeNull();
+  expect(send.closest(".split")).toBeNull();
+  // The final URL comes with the first inspection.
+  const url = await screen.findByRole("button", { name: "Copy the final URL" });
+  expect(url.closest(".split")).toBeNull();
+});
+
 test("an_older_tab_learns_its_method_when_the_draft_loads", async () => {
   shipmentsIpc({ method: "PUT" });
   const { id } = openRequestTab(BY_ID);

@@ -22,6 +22,7 @@
   import ResponsePane from "./components/response/ResponsePane.svelte";
   import ParamsSection from "./components/ParamsSection.svelte";
   import RequestLine from "./components/RequestLine.svelte";
+  import ResolvedUrl from "./components/ResolvedUrl.svelte";
   import {
     draftFor,
     drafts,
@@ -76,7 +77,7 @@
     narrow.current ? "below" : settings.requests.responseLayout,
   );
   let tablist = $state<HTMLElement>();
-  let editor = $state<HTMLElement>();
+  let view = $state<HTMLElement>();
 
   shell.setSaveHandler("requests.request", (tabId) => saveTab(drafts, tabId));
 
@@ -150,7 +151,7 @@
     const target = e.target;
     if (
       target !== document.body &&
-      !(target instanceof Node && editor?.contains(target))
+      !(target instanceof Node && view?.contains(target))
     )
       return;
     exchange.cancel();
@@ -190,11 +191,8 @@
 {:else if !draft.saved}
   {#if draft.error}{@render problem(draft.error)}{/if}
 {:else}
-  <div class="split" data-layout={layout}>
-    <div class="editor" bind:this={editor}>
-      <OutsideChange {draft} onclose={close} />
-      {#if draft.error}{@render problem(draft.error)}{/if}
-      {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
+  <div class="view" bind:this={view}>
+    <div class="head">
       <RequestLine
         {draft}
         {variables}
@@ -204,83 +202,109 @@
         onsend={() => void exchange.send(draft)}
         oncancel={() => exchange.cancel()}
       />
-      {#if exchange.warning}
-        <UndefinedWarning
-          names={exchange.warning}
-          environment={project.environment?.name ?? null}
-          ondefine={() => void shell.runCommand("project.editEnvironments")}
-          onsendanyway={() => void exchange.send(draft, { anyway: true })}
-        />
-      {/if}
-      <TlsWarning {effective} />
-      <div
-        class="sections"
-        role="tablist"
-        aria-label="Request sections"
-        tabindex="-1"
-        bind:this={tablist}
-        onkeydown={(e) => void onkeydown(e)}
-      >
-        {#each SECTIONS as section (section.id)}
-          {@const selected = draft.section === section.id}
-          <button
-            type="button"
-            role="tab"
-            id="{uid}-{section.id}"
-            aria-selected={selected}
-            aria-controls="{uid}-panel"
-            tabindex={selected ? 0 : -1}
-            onclick={() => (draft.section = section.id)}
-          >
-            {section.label}
-            {#if counts[section.id]}<span class="count"
-                >{counts[section.id]}</span
-              >{/if}
-          </button>
-        {/each}
-      </div>
-      <div
-        class="panel"
-        role="tabpanel"
-        id="{uid}-panel"
-        aria-labelledby="{uid}-{draft.section}"
-      >
-        {#if draft.section === "params"}
-          <ParamsSection {draft} {variables} {readonly} />
-        {:else if draft.section === "headers"}
-          <HeadersSection {draft} {variables} {readonly} />
-        {:else if draft.section === "body"}
-          <BodySection
-            {draft}
-            {variables}
-            {readonly}
-            onerror={(message: string) => shell.toast(message)}
-          />
-        {:else}
-          <NetworkOptions
-            options={draft.draft.options ?? {}}
-            effective={draft.inspection?.options ?? null}
-            scope="request"
-            disabled={readonly}
-            onchange={(options: SendOptions) => draft.setOptions(options)}
-          />
-        {/if}
-      </div>
-    </div>
-    <div class="response">
-      <ResponsePane
-        tabId={id}
-        name={tab.title}
-        {exchange}
-        layout={settings.requests.responseLayout}
-        stacked={narrow.current}
-        ontogglelayout={() => void toggleResponseLayout()}
+      <ResolvedUrl
+        url={draft.inspection?.url ?? null}
+        undefinedNames={draft.inspection?.undefined ?? []}
       />
+    </div>
+    <OutsideChange {draft} onclose={close} />
+    {#if draft.error}{@render problem(draft.error)}{/if}
+    {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
+    {#if exchange.warning}
+      <UndefinedWarning
+        names={exchange.warning}
+        environment={project.environment?.name ?? null}
+        ondefine={() => void shell.runCommand("project.editEnvironments")}
+        onsendanyway={() => void exchange.send(draft, { anyway: true })}
+      />
+    {/if}
+    <TlsWarning {effective} />
+    <div class="split" data-layout={layout}>
+      <div class="editor">
+        <div
+          class="sections"
+          role="tablist"
+          aria-label="Request sections"
+          tabindex="-1"
+          bind:this={tablist}
+          onkeydown={(e) => void onkeydown(e)}
+        >
+          {#each SECTIONS as section (section.id)}
+            {@const selected = draft.section === section.id}
+            <button
+              type="button"
+              role="tab"
+              id="{uid}-{section.id}"
+              aria-selected={selected}
+              aria-controls="{uid}-panel"
+              tabindex={selected ? 0 : -1}
+              onclick={() => (draft.section = section.id)}
+            >
+              {section.label}
+              {#if counts[section.id]}<span class="count"
+                  >{counts[section.id]}</span
+                >{/if}
+            </button>
+          {/each}
+        </div>
+        <div
+          class="panel"
+          role="tabpanel"
+          id="{uid}-panel"
+          aria-labelledby="{uid}-{draft.section}"
+        >
+          {#if draft.section === "params"}
+            <ParamsSection {draft} {variables} {readonly} />
+          {:else if draft.section === "headers"}
+            <HeadersSection {draft} {variables} {readonly} />
+          {:else if draft.section === "body"}
+            <BodySection
+              {draft}
+              {variables}
+              {readonly}
+              onerror={(message: string) => shell.toast(message)}
+            />
+          {:else}
+            <NetworkOptions
+              options={draft.draft.options ?? {}}
+              effective={draft.inspection?.options ?? null}
+              scope="request"
+              disabled={readonly}
+              onchange={(options: SendOptions) => draft.setOptions(options)}
+            />
+          {/if}
+        </div>
+      </div>
+      <div class="response">
+        <ResponsePane
+          tabId={id}
+          name={tab.title}
+          {exchange}
+          layout={settings.requests.responseLayout}
+          stacked={narrow.current}
+          ontogglelayout={() => void toggleResponseLayout()}
+        />
+      </div>
     </div>
   </div>
 {/if}
 
 <style>
+  .view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* The request bar and the URL under it span the tab. */
+  .head {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    box-shadow: inset 0 -1px 0 var(--line);
+  }
+
   .split {
     flex: 1;
     min-height: 0;
@@ -317,14 +341,12 @@
   }
 
   .sections {
-    height: 40px;
+    height: 36px;
     flex: none;
     display: flex;
     gap: var(--s-5);
     padding: 0 var(--s-4);
-    box-shadow:
-      inset 0 1px 0 var(--line),
-      inset 0 -1px 0 var(--line);
+    box-shadow: inset 0 -1px 0 var(--line);
     overflow-x: auto;
   }
 

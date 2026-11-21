@@ -58,6 +58,22 @@ test("the_send_button_turns_into_cancel_while_sending", async () => {
   expect(await sendButton()).toBeInTheDocument();
 });
 
+test("the_send_button_keeps_room_for_its_other_label", async () => {
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  openRequestTab(PATH);
+  const button = await sendButton();
+  // The label not in use stays laid out, hidden, so the width holds.
+  const hidden = () =>
+    button
+      .querySelector('.face[aria-hidden="true"]')
+      ?.firstChild?.textContent?.trim();
+  expect(hidden()).toBe("Cancel");
+  await userEvent.click(button);
+  await screen.findByRole("button", { name: "Cancel" });
+  expect(hidden()).toBe("Send");
+  ipc.finishSends();
+});
+
 test("escape_cancels_a_running_send", async () => {
   const ipc = fakeRequestsIpc({ files, send: { hold: true } });
   const { id } = openRequestTab(PATH);

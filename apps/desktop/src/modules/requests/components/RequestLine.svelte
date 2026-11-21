@@ -43,6 +43,25 @@
   }
 </script>
 
+<!--
+  Both labels take the same cell, the one not in use hidden, so the button
+  keeps the width of the wider one and the URL field does not move.
+-->
+{#snippet face(label: string, keys: string[], shown: boolean)}
+  <span
+    class={["face", { off: !shown }]}
+    aria-hidden={shown ? undefined : "true"}
+  >
+    {label}
+    <!-- The keys are shown, not read: the name stays Send or Cancel. -->
+    <span class="keys" aria-hidden="true">
+      {#each keys as key, i (i)}{#if shown}<kbd
+            class={["kc", { primary: !sending }]}>{key}</kbd
+          >{:else}<span class="kc">{key}</span>{/if}{/each}
+    </span>
+  </span>
+{/snippet}
+
 <div class="line">
   <div class="request">
     <MethodMenu
@@ -62,15 +81,18 @@
       />
     </div>
   </div>
-  <Button variant={sending ? "secondary" : "primary"} onclick={sendOrCancel}>
-    {sending ? "Cancel" : "Send"}
-    <!-- The keys are shown, not read: the name stays Send or Cancel. -->
-    <span class="keys" aria-hidden="true">
-      {#each sending ? ["Esc"] : sendKeys as key, i (i)}<kbd
-          class={["kc", { primary: !sending }]}>{key}</kbd
-        >{/each}
-    </span>
-  </Button>
+  <div class="send">
+    <Button
+      data-send=""
+      variant={sending ? "secondary" : "primary"}
+      onclick={sendOrCancel}
+    >
+      <span class="faces">
+        {@render face("Send", sendKeys, !sending)}
+        {@render face("Cancel", ["Esc"], sending)}
+      </span>
+    </Button>
+  </div>
   <button
     type="button"
     class="save"
@@ -85,11 +107,12 @@
 
 <style>
   .line {
+    height: 56px;
     flex: none;
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    padding: var(--s-3) var(--s-4);
+    padding: 0 var(--s-4);
   }
 
   .request {
@@ -120,6 +143,36 @@
   .url :global(.field:focus-within) {
     background: none;
     box-shadow: none;
+  }
+
+  .url :global(.field) {
+    font-size: 14px;
+  }
+
+  .send {
+    flex: none;
+    display: flex;
+  }
+
+  /* Send and Cancel have the same padding, so only the label sets the width. */
+  .send :global(.btn) {
+    padding: 0 var(--s-4);
+  }
+
+  .faces {
+    display: grid;
+  }
+
+  .face {
+    grid-area: 1 / 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .face.off {
+    visibility: hidden;
   }
 
   .keys {

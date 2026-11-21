@@ -112,6 +112,11 @@
     display: inline-flex;
   }
 
+  /* The method in the request bar is one of the two places with weight 600. */
+  .shown :global(.method) {
+    font-weight: 600;
+  }
+
   .locked {
     height: 28px;
     display: inline-flex;
@@ -132,7 +137,7 @@
     background: var(--bg-1);
     box-shadow: inset 0 0 0 1px var(--focus);
     outline: none;
-    font: 500 13px var(--font-mono);
+    font: 600 13px var(--font-mono);
     color: var(--text-1);
   }
 
