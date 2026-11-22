@@ -143,6 +143,9 @@ export function chordFromEvent(e: KeyboardEvent, p: Platform): Chord | null {
   if (MODIFIER_KEYS.has(e.key)) return null;
   // The other platform's command key has no meaning in Dea's shortcuts.
   if (p === "mac" ? e.ctrlKey : e.metaKey) return null;
+  // On Windows AltGr arrives as Ctrl+Alt and types a character, such as
+  // "[" on a Czech layout. That is typing, not a shortcut.
+  if (p === "other" && e.getModifierState?.("AltGraph")) return null;
   const key = eventKey(e);
   if (!key) return null;
   return {
