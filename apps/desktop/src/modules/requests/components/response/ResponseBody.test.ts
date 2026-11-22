@@ -20,6 +20,11 @@ import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
 import type { BodyKind } from "$lib/ipc/bindings/BodyKind";
 import sendActiveTab from "../../intents/send";
 import filterSource from "./JsonFilter.svelte?raw";
+import {
+  FILTER_ACTIVE_WIDTH,
+  FILTER_IDLE_WIDTH,
+  FILTER_MIN_WIDTH,
+} from "./filter-layout";
 import paneSource from "./ResponsePane.svelte?raw";
 
 const PATH = "requests/shipments/list.yaml";
@@ -451,9 +456,15 @@ test("the_field_gives_way_before_the_sections", () => {
   // jsdom lays nothing out, so the rules are read from the source. A
   // shrink factor of 1000 takes the room from the field first, down to
   // 120 px; only then do the sections give way, and scroll.
-  expect(rule(filterSource, ".field")).toContain("flex: 0 1000 168px;");
-  expect(rule(filterSource, ".field")).toContain("min-width: 120px;");
-  expect(rule(filterSource, ".field.active")).toContain("flex: 0 1000 280px;");
+  expect(rule(filterSource, ".field")).toContain(
+    `flex: 0 1000 ${FILTER_IDLE_WIDTH}px;`,
+  );
+  expect(rule(filterSource, ".field")).toContain(
+    `min-width: ${FILTER_MIN_WIDTH}px;`,
+  );
+  expect(rule(filterSource, ".field.active")).toContain(
+    `flex: 0 1000 ${FILTER_ACTIVE_WIDTH}px;`,
+  );
   const sections = rule(paneSource, ".sections");
   expect(sections).toContain("flex: 0 1 auto;");
   expect(sections).toContain("min-width: 0;");

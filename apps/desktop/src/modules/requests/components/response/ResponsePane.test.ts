@@ -860,6 +860,10 @@ test("the_previous_response_is_dimmed_and_marked", async () => {
   ).toBeInTheDocument();
   expect(within(bar).queryByText(/Previous/)).toBeNull();
   expect(bar).toHaveAttribute("data-tone", "muted");
+  const segments = [...bar.querySelectorAll<HTMLElement>("[data-segment]")];
+  expect(segments.length).toBeGreaterThan(0);
+  for (const segment of segments)
+    expect(segment.style.background).toBe("var(--text-3)");
   const pane = screen.getByRole("region", { name: "Response" });
   expect(within(pane).getByRole("tabpanel")).toHaveAttribute("data-stale");
   await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
@@ -867,6 +871,22 @@ test("the_previous_response_is_dimmed_and_marked", async () => {
     expect(screen.queryByText(/^Previous response/)).toBeNull(),
   );
   expect(bar).toHaveAttribute("data-tone", "positive");
+  expect(
+    segments.some((segment) => segment.style.background !== "var(--text-3)"),
+  ).toBe(true);
+});
+
+test("the_previous_strip_marks_an_html_response", async () => {
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("html"),
+    inspection: warnsOfTraceId,
+  });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("toolbar", { name: "Response" });
+  await warnInFront();
+  expect(await screen.findByText("Previous response")).toBeInTheDocument();
 });
 
 test("the_previous_strip_shows_on_every_section", async () => {
