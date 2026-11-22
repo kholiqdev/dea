@@ -130,10 +130,18 @@
     filterRow?.querySelector("input")?.focus();
   }
 
-  /** Follows the pane's width; a pane not laid out keeps the last one. */
+  /**
+   * Follows the pane's width; a pane not laid out keeps the last one. A
+   * path typed in the row goes on filtering when the pane narrows: the
+   * filter opens in its own row.
+   */
   function measure(pane: HTMLElement): () => void {
     return watchWidth(pane, (w) => {
-      if (w > 0) width = w;
+      if (w <= 0) return;
+      const was = wide;
+      width = w;
+      if (was && !wide && controls?.filterPath.trim())
+        controls.filterOpen = true;
     });
   }
 

@@ -360,6 +360,35 @@ test("a_hidden_filter_keeps_its_path_but_stops_filtering", async () => {
   await waitFor(() => expect(body()).toHaveTextContent("42"));
 });
 
+test("a_typed_filter_moves_to_its_own_row_when_the_pane_narrows", async () => {
+  const { resize, pane } = await renderDone({
+    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
+    filter: () => ({ text: "[\n  42\n]", count: 1 }),
+  });
+  resize(pane, 800, 600);
+  const body = () => screen.getByRole("textbox", { name: "Response body" });
+  await waitFor(() => expect(body()).toHaveTextContent('"a": 1'));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+    "$.a",
+  );
+  await waitFor(() => expect(body()).toHaveTextContent("42"));
+  // Narrower than the filter needs in the row: it opens a row of its own,
+  // with the path, and goes on filtering.
+  resize(pane, 620, 600);
+  expect(
+    screen.getByRole("button", { name: "Hide the JSONPath filter" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  const row = screen.getByRole("tablist", {
+    name: "Response sections",
+  }).parentElement;
+  const field = screen.getByRole("textbox", { name: "Filter with JSONPath" });
+  expect(row).not.toContainElement(field);
+  expect(field).toHaveValue("$.a");
+  await waitFor(() => expect(body()).toHaveTextContent("42"));
+  expect(screen.getByText("1 match")).toBeInTheDocument();
+});
+
 test("a_declined_send_keeps_the_view_and_the_filter", async () => {
   const ipc = await open("json", {
     text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
