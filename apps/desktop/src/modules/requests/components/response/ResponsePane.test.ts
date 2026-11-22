@@ -634,6 +634,22 @@ test("toggle_layout_is_a_command", () => {
   );
 });
 
+test("focus_filter_is_a_command_with_a_shortcut", () => {
+  expect(manifest.commands).toContainEqual({
+    id: "requests.focusFilter",
+    title: "Filter response with JSONPath",
+    action: { type: "intent", intent: "requests.focusFilter" },
+    scope: "project",
+  });
+  expect(manifest.shortcuts).toContainEqual({
+    command: "requests.focusFilter",
+    chord: "Mod+Alt+F",
+  });
+  expect(manifest.intents?.map((i) => i.intent)).toContain(
+    "requests.focusFilter",
+  );
+});
+
 test("copy_is_off_for_large_bodies", async () => {
   fakeRequestsIpc({ files, send: doneExchange("json", { large: true }) });
   openRequestTab(PATH);

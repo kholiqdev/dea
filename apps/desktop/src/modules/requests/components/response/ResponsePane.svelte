@@ -13,6 +13,7 @@
   import { chordParts, currentPlatform, parseChord } from "$lib/keyboard/chord";
   import { tick, untrack } from "svelte";
   import { watchWidth } from "../../lib/columns";
+  import { provideFilterFocus } from "../../lib/filter-focus";
   import { formatSeconds } from "../../lib/format";
   import type { Exchange } from "../../state/exchange.svelte";
   import { BodyControls } from "./body-controls.svelte";
@@ -61,6 +62,7 @@
   };
   const uid = $props.id();
   let section = $state<Section>("body");
+  let pane = $state<HTMLElement>();
   let tablist = $state<HTMLElement>();
   let radios = $state<HTMLElement>();
   // Not measured yet, as in tests, the pane counts as wide.
@@ -108,6 +110,20 @@
     }
     return found;
   });
+
+  // The shortcut for the filter: the Body section, then the field.
+  $effect(() =>
+    provideFilterFocus(tabId, async () => {
+      if (!controls?.filterable) return false;
+      section = "body";
+      await tick();
+      const field = pane?.querySelector<HTMLInputElement>(
+        'input[aria-label="Filter with JSONPath"]',
+      );
+      field?.focus();
+      return field !== undefined && field !== null;
+    }),
+  );
 
   async function onviewkeys(e: KeyboardEvent): Promise<void> {
     if (!controls) return;
@@ -282,6 +298,7 @@
   class="pane"
   aria-label="Response"
   aria-busy={current.phase === "sending" && !waiting ? "true" : undefined}
+  bind:this={pane}
   {@attach measure}
 >
   {#if current.phase === "idle"}

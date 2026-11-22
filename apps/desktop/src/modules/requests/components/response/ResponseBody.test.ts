@@ -458,3 +458,41 @@ test("the_field_gives_way_before_the_sections", () => {
   expect(sections).toContain("flex: 0 1 auto;");
   expect(sections).toContain("min-width: 0;");
 });
+
+test("the_filter_shortcut_opens_the_body_and_focuses_the_field", async () => {
+  await renderDone({ text: { pretty: "{}", raw: "{}" } });
+  shell.activateTab(shell.findTab("requests.request") ?? "");
+  await userEvent.click(tab(/Headers/));
+  const { default: run } = await import("../../intents/focus-filter");
+  await run();
+  expect(tab("Body")).toHaveAttribute("aria-selected", "true");
+  expect(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+  ).toHaveFocus();
+});
+
+test("the_filter_shortcut_without_json_says_so", async () => {
+  const { default: run } = await import("../../intents/focus-filter");
+  await open("html");
+  shell.activateTab(shell.findTab("requests.request") ?? "");
+  await run();
+  expect(shell.toasts).toEqual(["There is no JSON response to filter."]);
+  // A tab that has sent nothing has no response either.
+  const idle = openRequestTab("requests/shipments/other.yaml");
+  shell.activateTab(idle.id);
+  await run();
+  expect(shell.toasts).toEqual([
+    "There is no JSON response to filter.",
+    "There is no JSON response to filter.",
+  ]);
+});
+
+test("the_filter_shortcut_outside_a_request_tab_says_so", async () => {
+  const { default: run } = await import("../../intents/focus-filter");
+  const folder = shell.openTab("requests.folder", "Shipments", {
+    path: "requests/shipments",
+  });
+  shell.activateTab(folder);
+  await run();
+  expect(shell.toasts).toEqual(["Open a request to filter its response."]);
+});

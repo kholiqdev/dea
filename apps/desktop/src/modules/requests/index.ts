@@ -1,4 +1,5 @@
 import { methodColor, methodLabel } from "$lib/http/method";
+import { FILTER_CHORD } from "./components/response/filter-layout";
 import type { ModuleManifest } from "$app/contributions/types";
 
 export const manifest: ModuleManifest = {
@@ -60,6 +61,12 @@ export const manifest: ModuleManifest = {
       scope: "project",
     },
     {
+      id: "requests.focusFilter",
+      title: "Filter response with JSONPath",
+      action: { type: "intent", intent: "requests.focusFilter" },
+      scope: "project",
+    },
+    {
       id: "requests.toggleLayout",
       title: "Toggle response position",
       action: { type: "intent", intent: "requests.toggleLayout" },
@@ -74,6 +81,7 @@ export const manifest: ModuleManifest = {
   shortcuts: [
     { command: "requests.open", chord: "Mod+1" },
     { command: "requests.send", chord: "Mod+Enter" },
+    { command: "requests.focusFilter", chord: FILTER_CHORD },
   ],
   searchSources: [
     {
@@ -103,6 +111,10 @@ export const manifest: ModuleManifest = {
     {
       intent: "requests.send",
       handler: () => import("./intents/send"),
+    },
+    {
+      intent: "requests.focusFilter",
+      handler: () => import("./intents/focus-filter"),
     },
     {
       intent: "requests.toggleLayout",
