@@ -176,6 +176,40 @@ async function waitForQuiet(): Promise<void> {
   );
 }
 
+/** How many fresh bodies a timed 10 MB case opens; their median is checked. */
+const TIMED_TRIES = 3;
+
+/**
+ * Opens a fresh response of `request` `TIMED_TRIES` times (a new tab each
+ * time, so nothing is parsed yet), times `measure` on each and returns the
+ * median, logging every try. One frame stalled by a busy CI machine does not
+ * decide the case; a slower app moves the median.
+ */
+async function medianOverFreshBodies(
+  what: string,
+  request: string,
+  measure: () => Promise<number>,
+): Promise<number> {
+  const times: number[] = [];
+  for (let i = 0; i < TIMED_TRIES; i++) {
+    if (i > 0) {
+      await $(`button[aria-label="Close ${request}"]`).click();
+      await tab(request).waitForExist({ reverse: true });
+      await showRequest(request);
+    }
+    await sendAndShow();
+    // 10 MB is under 10 MiB, so the body stays in memory and opens Pretty.
+    await waitForBody("showed the JSON", (l) => l.length > 1, 60_000);
+    await waitForView("Pretty");
+    await waitForQuiet();
+    const longest = await measure();
+    logFrame(`${what}, try ${i + 1}`, longest);
+    times.push(longest);
+  }
+  times.sort((a, b) => a - b);
+  return times[Math.floor(TIMED_TRIES / 2)]!;
+}
+
 type ViewerRow = { n: number; loaded: boolean };
 
 /** The rows of the virtual viewer in view, by the number in their gutter. */
@@ -439,24 +473,24 @@ describe("reading responses", () => {
     });
     await openRequest(root, "staging", "Ten megabytes");
 
-    await sendAndShow();
-    // 10 MB is under 10 MiB, so the body stays in memory and opens Pretty.
-    await waitForBody("showed the JSON", (l) => l.length > 1, 60_000);
-    await waitForView("Pretty");
-    expect(await textOf(RESPONSE)).not.toContain("The response is");
-    await waitForQuiet();
-
-    // A page at a time, like Page Down.
-    const start = await scrollBody(BODY_EDITOR, null);
-    const longest = await longestFrameDuring(async () => {
-      for (let i = 1; i <= SCROLL_STEPS; i++) {
-        await scrollBody(BODY_EDITOR, start.top + i * start.client);
-        await browser.pause(SCROLL_PAUSE_MS);
-      }
-    });
-    const end = await scrollBody(BODY_EDITOR, null);
-    expect(end.top).toBeGreaterThan(start.top + 10 * start.client);
-    logFrame("scrolling 10 MB JSON", longest);
+    const longest = await medianOverFreshBodies(
+      "scrolling 10 MB JSON",
+      "Ten megabytes",
+      async () => {
+        expect(await textOf(RESPONSE)).not.toContain("The response is");
+        // A page at a time, like Page Down.
+        const start = await scrollBody(BODY_EDITOR, null);
+        const longest = await longestFrameDuring(async () => {
+          for (let i = 1; i <= SCROLL_STEPS; i++) {
+            await scrollBody(BODY_EDITOR, start.top + i * start.client);
+            await browser.pause(SCROLL_PAUSE_MS);
+          }
+        });
+        const end = await scrollBody(BODY_EDITOR, null);
+        expect(end.top).toBeGreaterThan(start.top + 10 * start.client);
+        return longest;
+      },
+    );
     expect(longest).toBeLessThanOrEqual(FRAME_BUDGET_MS); // F1-REQ-16 #3
   });
 
@@ -467,27 +501,28 @@ describe("reading responses", () => {
     });
     await openRequest(root, "staging", "Ten megabytes");
 
-    await sendAndShow();
-    await waitForBody("showed the JSON", (l) => l.length > 1, 60_000);
-    await waitForView("Pretty");
-    await waitForQuiet();
-
-    // Like dragging the scrollbar: far past what was parsed, then on a few
-    // pages from there.
-    let middle = 0;
-    const longest = await longestFrameDuring(async () => {
-      const start = await scrollBody(BODY_EDITOR, null);
-      middle = Math.round(start.height / 2);
-      await scrollBody(BODY_EDITOR, middle);
-      await browser.pause(SCROLL_PAUSE_MS);
-      for (let i = 1; i <= 5; i++) {
-        await scrollBody(BODY_EDITOR, middle + i * start.client);
-        await browser.pause(SCROLL_PAUSE_MS);
-      }
-    });
-    const end = await scrollBody(BODY_EDITOR, null);
-    expect(end.top).toBeGreaterThan(middle / 2);
-    logFrame("jumping in 10 MB JSON", longest);
+    const longest = await medianOverFreshBodies(
+      "jumping in 10 MB JSON",
+      "Ten megabytes",
+      async () => {
+        // Like dragging the scrollbar: far past what was parsed, then on a
+        // few pages from there.
+        let middle = 0;
+        const longest = await longestFrameDuring(async () => {
+          const start = await scrollBody(BODY_EDITOR, null);
+          middle = Math.round(start.height / 2);
+          await scrollBody(BODY_EDITOR, middle);
+          await browser.pause(SCROLL_PAUSE_MS);
+          for (let i = 1; i <= 5; i++) {
+            await scrollBody(BODY_EDITOR, middle + i * start.client);
+            await browser.pause(SCROLL_PAUSE_MS);
+          }
+        });
+        const end = await scrollBody(BODY_EDITOR, null);
+        expect(end.top).toBeGreaterThan(middle / 2);
+        return longest;
+      },
+    );
     expect(longest).toBeLessThanOrEqual(FRAME_BUDGET_MS); // F1-REQ-16 #3
   });
 
