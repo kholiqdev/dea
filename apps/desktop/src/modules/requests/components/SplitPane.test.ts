@@ -188,6 +188,25 @@ test("minimums_that_do_not_fit_leave_only_the_range", () => {
   expect(divider).toHaveAttribute("aria-valuemax", "80");
 });
 
+test("minimums_that_fit_but_round_across_keep_one_share", async () => {
+  // 360 + 400 px fit in 761 px, but 360 px rounds up to 48% and the 400 px
+  // left for the response round down to 47%.
+  const oncommit = vi.fn();
+  const { divider, editor } = renderSplit({
+    layout: "right",
+    width: 761,
+    oncommit,
+  });
+  expect(divider).toHaveAttribute("aria-valuemin", "47");
+  expect(divider).toHaveAttribute("aria-valuemax", "47");
+  expect(divider).toHaveAttribute("aria-valuenow", "47");
+  expect(editor.style.flexBasis).toBe("47%");
+  await drag(divider, { toX: 700 });
+  expect(oncommit).toHaveBeenLastCalledWith("right", 47);
+  await drag(divider, { toX: 100 });
+  expect(oncommit).toHaveBeenLastCalledWith("right", 47);
+});
+
 test("a_saved_share_outside_the_minimums_shows_within_them", () => {
   const { divider, editor } = renderSplit({ split: { right: 75, below: 40 } });
   expect(divider).toHaveAttribute("aria-valuenow", "60");

@@ -57,7 +57,9 @@
 
   /**
    * The range the request's share may take: 20–80%, narrowed so that each
-   * panel keeps its least size, unless both together do not fit.
+   * panel keeps its least size, unless both together do not fit. When they
+   * fit but no whole percent keeps both, the share is the one that keeps
+   * the response's.
    */
   function limits(
     at: ResponseLayout,
@@ -66,12 +68,13 @@
     const range = { min: SPLIT_MIN, max: SPLIT_MAX };
     if (total <= 0) return range;
     const least = LEAST[at];
+    if (least.editor + least.response > total) return range;
     const min = Math.max(SPLIT_MIN, Math.ceil((least.editor * 100) / total));
     const max = Math.min(
       SPLIT_MAX,
       Math.floor(((total - least.response) * 100) / total),
     );
-    return min <= max ? { min, max } : range;
+    return min <= max ? { min, max } : { min: max, max };
   }
 
   function clamp(value: number, range: { min: number; max: number }): number {
