@@ -67,6 +67,11 @@ export async function longestFrameDuring(
   return longest;
 }
 
+/** Writes a timed frame to the log, so a run that passes still shows its margin. */
+export function logFrame(what: string, ms: number): void {
+  console.log(`[frames] ${what}: longest ${Math.round(ms)} ms`);
+}
+
 /** Shell controls and status items that are not fully inside the window. */
 export function controlsOutsideTheWindow(): Promise<string[]> {
   return browser.execute(() => {
