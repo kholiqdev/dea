@@ -12,6 +12,7 @@ import { $, browser, expect } from "@wdio/globals";
 import { Key } from "webdriverio";
 import {
   MOD,
+  logFrame,
   longestFrameDuring,
   openPalette,
   paletteActive,
@@ -266,6 +267,7 @@ describe("sending requests", () => {
       await sendButton().click();
       await waitForText(TOOLBAR, "200 OK", 60_000);
     });
+    logFrame("a 50 MB upload", longest);
     expect(longest).toBeLessThanOrEqual(100); // F1-REQ-03 #5
     expect(server.received("/upload")[0]?.bodyBytes).toBe(FIFTY_MIB);
   });

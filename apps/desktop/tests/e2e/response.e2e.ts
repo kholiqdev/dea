@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { $, browser, expect } from "@wdio/globals";
 import {
   MOD,
+  logFrame,
   longestFrameDuring,
   saveNextTo,
   textOf,
@@ -455,6 +456,7 @@ describe("reading responses", () => {
     });
     const end = await scrollBody(BODY_EDITOR, null);
     expect(end.top).toBeGreaterThan(start.top + 10 * start.client);
+    logFrame("scrolling 10 MB JSON", longest);
     expect(longest).toBeLessThanOrEqual(FRAME_BUDGET_MS); // F1-REQ-16 #3
   });
 
@@ -485,6 +487,7 @@ describe("reading responses", () => {
     });
     const end = await scrollBody(BODY_EDITOR, null);
     expect(end.top).toBeGreaterThan(middle / 2);
+    logFrame("jumping in 10 MB JSON", longest);
     expect(longest).toBeLessThanOrEqual(FRAME_BUDGET_MS); // F1-REQ-16 #3
   });
 
@@ -522,6 +525,7 @@ describe("reading responses", () => {
       );
     });
     expect(Math.min(...shown.map((r) => r.n))).toBeGreaterThan(1_000);
+    logFrame("scrolling the 12 MiB viewer", longest);
     expect(longest).toBeLessThanOrEqual(FRAME_BUDGET_MS); // F1-REQ-16 #3
 
     const saved = join(work, "twelve-megabytes.json");
