@@ -460,7 +460,7 @@
 
   .views button {
     height: 24px;
-    padding: 0 var(--s-3);
+    padding: 0 var(--s-2);
     border: 0;
     border-radius: var(--r-small);
     background: none;
