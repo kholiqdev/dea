@@ -36,6 +36,8 @@ let tabs: OpenTab[];
 /** Every tab closeTab was asked to close. */
 let closing: string[];
 let modules: string[];
+// Each sidebar shown, and what was being named then.
+let sidebars: { id: string; renaming: string | null }[];
 /** The active tab, read the way the shell's reactive one is. */
 const active = new SvelteMap<"tab", { type: string; path: string }>();
 const toasts = {
@@ -102,6 +104,7 @@ beforeEach(() => {
   active.clear();
   closing = [];
   modules = [];
+  sidebars = [];
   toasts.items = [];
   setProjectApi(new FakeProject([{ name: "local", production: false }]));
   setShellApi({
@@ -144,6 +147,9 @@ beforeEach(() => {
     openModule: (id) => {
       modules.push(id);
       return Promise.resolve();
+    },
+    showSidebar: (id) => {
+      sidebars.push({ id, renaming: treeState.renaming });
     },
     toast: (text, opts) => {
       toasts.items.push({ text, ...opts });
@@ -885,12 +891,19 @@ test("the newRequest and newCollection commands show the sidebar", async () => {
   const ipc = fakeRequestsIpc({ tree: shipments() });
   await newRequest();
   expect(modules).toEqual(["requests"]);
+  // Shown before the naming starts, also in a window that hides it.
+  expect(sidebars).toEqual([{ id: "requests", renaming: null }]);
   expect(calls(ipc, "create_request")).toEqual([
     { folder: "requests/shipments", name: "New request" },
   ]);
   expect(treeState.renaming).toBe("requests/shipments/new-request.yaml");
+  treeState.renaming = null;
   await newCollection();
   expect(modules).toEqual(["requests", "requests"]);
+  expect(sidebars).toEqual([
+    { id: "requests", renaming: null },
+    { id: "requests", renaming: null },
+  ]);
   expect(calls(ipc, "create_folder")).toEqual([
     { parent: "requests", name: "New collection" },
   ]);

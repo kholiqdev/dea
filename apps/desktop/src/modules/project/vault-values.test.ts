@@ -70,6 +70,7 @@ beforeEach(() => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: () => Promise.resolve(),
     toast: () => 0,
     dismissToast: () => {},

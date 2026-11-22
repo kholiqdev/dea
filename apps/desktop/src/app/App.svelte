@@ -31,6 +31,7 @@
     isTabDirty: (id) => tabs.tabs.some((t) => t.id === id && t.dirty),
     setSaveHandler: (tabType, save) => tabs.setSaveHandler(tabType, save),
     openModule: (id) => shell.openModule(id),
+    showSidebar: (module) => shell.showSidebar(module),
     runCommand: async (id) => {
       const command = registry.commands.find((c) => c.id === id);
       if (command) await runAction(command.action, { registry, shell });

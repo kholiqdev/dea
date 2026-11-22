@@ -125,6 +125,28 @@ test("showing_the_sidebar_while_narrow_is_not_saved", () => {
   expect(shell.sidebarShown("requests")).toBe(false);
 });
 
+test("showing_a_sidebar_for_a_module_keeps_a_narrow_window_unsaved", () => {
+  const shell = new Shell(registryWith(railModule("requests", 1)));
+  shell.restore({
+    ...emptyUiState(),
+    sidebars: { requests: { visible: false, width: 300 } },
+  });
+  shell.narrow = true;
+  shell.showSidebar("requests");
+  expect(shell.sidebarShown("requests")).toBe(true);
+  expect(shell.snapshot().sidebars).toEqual({
+    requests: { visible: false, width: 300 },
+  });
+  // Wide, it is shown for good.
+  shell.narrow = false;
+  expect(shell.sidebarShown("requests")).toBe(false);
+  shell.showSidebar("requests");
+  expect(shell.sidebarShown("requests")).toBe(true);
+  expect(shell.snapshot().sidebars).toEqual({
+    requests: { visible: true, width: 300 },
+  });
+});
+
 test("a_sidebar_hidden_by_the_user_stays_hidden_when_wide", () => {
   const shell = new Shell(registryWith(railModule("requests", 1)));
   shell.restore({

@@ -102,6 +102,18 @@ export class Shell {
     this.#sidebars[module] = { ...s, visible: !s.visible };
   }
 
+  /**
+   * Shows the module's sidebar. In a narrow window it shows until the window
+   * widens, and what is saved stays as it was.
+   */
+  showSidebar(module: string): void {
+    if (this.#narrow) {
+      this.#shownNarrow[module] = true;
+      return;
+    }
+    this.#sidebars[module] = { ...this.sidebar(module), visible: true };
+  }
+
   toggleRail(): void {
     this.railExpanded = !this.railExpanded;
   }

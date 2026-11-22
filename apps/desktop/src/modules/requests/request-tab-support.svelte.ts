@@ -117,6 +117,8 @@ export class FakeShell implements ShellApi {
     return Promise.resolve();
   }
 
+  showSidebar(): void {}
+
   runCommand(id: string): Promise<void> {
     this.commands.push(id);
     return Promise.resolve();

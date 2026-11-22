@@ -58,6 +58,7 @@ beforeEach(() => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: (id) => {
       opened.push(id);
       return Promise.resolve();
@@ -146,6 +147,7 @@ test("a secret name removed after the palette opened says so", async () => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: (id) => {
       opened.push(id);
       return Promise.resolve();

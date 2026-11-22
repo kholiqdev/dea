@@ -42,6 +42,11 @@ export interface ShellApi {
    */
   setSaveHandler(tabType: string, save: (tabId: string) => Promise<void>): void;
   openModule(id: string): Promise<void>;
+  /**
+   * Shows a module's sidebar. In a window too narrow for sidebars it shows
+   * until the window widens, and the saved layout stays as it was.
+   */
+  showSidebar(module: string): void;
   /** Runs a registered command, as its shortcut would. */
   runCommand(id: string): Promise<void>;
   /**

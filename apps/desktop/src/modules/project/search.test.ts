@@ -34,6 +34,7 @@ beforeEach(() => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: () => Promise.resolve(),
     runCommand: () => Promise.resolve(),
     toast: (text) => toasts.push(text),
