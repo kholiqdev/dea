@@ -26,7 +26,7 @@
   } from "../../lib/format";
   import SentInPill from "./SentInPill.svelte";
   import TimingBar from "./TimingBar.svelte";
-  import { timingPhases } from "./timing";
+  import { sizeTier, timingPhases } from "./timing";
 
   let {
     tabId,
@@ -38,6 +38,7 @@
     stale = false,
     layout,
     stacked,
+    width = 0,
     ontogglelayout,
   }: {
     tabId: string;
@@ -55,11 +56,14 @@
     layout: "right" | "below";
     /** The panel is below whatever the setting says. */
     stacked: boolean;
+    /** The pane's width in px; 0 while not measured, which counts as wide. */
+    width?: number;
     ontogglelayout: () => void;
   } = $props();
 
   const shell = shellApi();
   const uid = $props.id();
+  const size = $derived(sizeTier(width));
 
   const copyOff = $derived.by(() => {
     if (!response) return null;
@@ -93,8 +97,9 @@
   }
 </script>
 
-<!-- Its width, the pane's, decides what the rows leave out. -->
-<div class="head">
+<!-- Its width, the pane's, decides what the rows leave out: `data-size`
+     holds the tier, and the rules below follow it. -->
+<div class="head" data-size={size}>
   <div
     class="toolbar"
     role="toolbar"
@@ -212,11 +217,9 @@
 </div>
 
 <style>
-  /* Both rows are as wide as the pane. Their container has no padding, so
-     the widths the rows are measured by below are the rows' own. */
+  /* Both rows are as wide as the pane, which sets their tier. */
   .head {
     flex: none;
-    container-type: inline-size;
   }
 
   /* One row whatever its width. A narrow row leaves out the version, then
@@ -348,26 +351,20 @@
   }
 
   /* Too narrow for the whole label next to the facts: a shorter one. */
-  @container (width < 680px) {
-    .stale .long {
-      display: none;
-    }
-
-    .stale .short {
-      display: inline;
-    }
+  .head:not([data-size="wide"]) .stale .long {
+    display: none;
   }
 
-  @container (width < 560px) {
-    .toolbar .version {
-      display: none;
-    }
+  .head:not([data-size="wide"]) .stale .short {
+    display: inline;
   }
 
-  @container (width < 480px) {
-    .toolbar .size {
-      display: none;
-    }
+  .head:is([data-size="small"], [data-size="tiny"]) .toolbar .version {
+    display: none;
+  }
+
+  .head[data-size="tiny"] .toolbar .size {
+    display: none;
   }
 
   .actions {
@@ -465,47 +462,41 @@
     color: var(--text-2);
   }
 
-  @container (width >= 560px) {
-    .legend .version {
-      display: none;
-    }
+  .head:is([data-size="wide"], [data-size="medium"]) .legend .version {
+    display: none;
   }
 
-  @container (width >= 480px) {
-    .legend .size {
-      display: none;
-    }
+  .head:not([data-size="tiny"]) .legend .size {
+    display: none;
   }
 
   /* Too narrow for the full names, which take about 610 px with a fresh
      connection and 650 px with a reused or slow one: closer, and a long
      name shows short, the full one kept for a screen reader and in its
      title. */
-  @container (width < 680px) {
-    .name.long {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      padding: 0;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-      border: 0;
-    }
+  .head:not([data-size="wide"]) .name.long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
 
-    .short {
-      display: inline;
-    }
+  .head:not([data-size="wide"]) .short {
+    display: inline;
+  }
 
-    .legend,
-    .phases {
-      column-gap: var(--s-2);
-    }
+  .head:not([data-size="wide"]) .legend,
+  .head:not([data-size="wide"]) .phases {
+    column-gap: var(--s-2);
+  }
 
-    .phases li {
-      gap: var(--s-1);
-    }
+  .head:not([data-size="wide"]) .phases li {
+    gap: var(--s-1);
   }
 
   /* The version, and below 480 px the size, follow the phases: a line
@@ -513,36 +504,34 @@
      its colour and name, its time kept for a screen reader, so the phases
      and the version keep to one line down to about 510 to 535 px,
      depending on the times. */
-  @container (width < 560px) {
-    .legend,
-    .legend .fact {
-      font-size: 11px;
-    }
+  .head:is([data-size="small"], [data-size="tiny"]) .legend,
+  .head:is([data-size="small"], [data-size="tiny"]) .legend .fact {
+    font-size: 11px;
+  }
 
-    .legend,
-    .phases {
-      column-gap: 6px;
-    }
+  .head:is([data-size="small"], [data-size="tiny"]) .legend,
+  .head:is([data-size="small"], [data-size="tiny"]) .phases {
+    column-gap: 6px;
+  }
 
-    .phases {
-      padding-right: 6px;
-      box-shadow: inset -1px 0 0 var(--line);
-    }
+  .head:is([data-size="small"], [data-size="tiny"]) .phases {
+    padding-right: 6px;
+    box-shadow: inset -1px 0 0 var(--line);
+  }
 
-    .phases li {
-      gap: 3px;
-    }
+  .head:is([data-size="small"], [data-size="tiny"]) .phases li {
+    gap: 3px;
+  }
 
-    .zero .ms {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      padding: 0;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-      border: 0;
-    }
+  .head:is([data-size="small"], [data-size="tiny"]) .zero .ms {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

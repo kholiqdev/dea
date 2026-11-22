@@ -275,6 +275,7 @@
       environment={sentIn}
       {layout}
       {stacked}
+      {width}
       {ontogglelayout}
     />
     {@render sections(null)}
@@ -289,6 +290,7 @@
       stale={exchange.warning !== null}
       {layout}
       {stacked}
+      {width}
       {ontogglelayout}
     />
     {@render sections({

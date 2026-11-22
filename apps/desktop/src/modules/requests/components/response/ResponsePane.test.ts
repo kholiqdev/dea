@@ -98,27 +98,17 @@ function toolbarRule(selector: string): string {
   );
 }
 
-/** The rules inside the toolbar's `@container` blocks, with their query. */
-function containerRules(): { query: string; selector: string; body: string }[] {
-  const rules: { query: string; selector: string; body: string }[] = [];
-  for (const block of toolbarSource.matchAll(/@container ([^{]+)\{/g)) {
-    const start = block.index + block[0].length;
-    let depth = 1;
-    let end = start;
-    while (depth > 0 && end < toolbarSource.length) {
-      if (toolbarSource[end] === "{") depth++;
-      else if (toolbarSource[end] === "}") depth--;
-      end++;
-    }
-    const inner = toolbarSource.slice(start, end - 1);
-    for (const rule of inner.matchAll(/([^{}]+)\{([^}]*)\}/g))
-      rules.push({
-        query: (block[1] ?? "").trim(),
-        selector: (rule[1] ?? "").trim(),
-        body: rule[2] ?? "",
-      });
-  }
-  return rules;
+/** The declarations of the rule whose selector is exactly `selector`. */
+function headRule(selector: string): string[] {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [
+    ...toolbarSource.matchAll(new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`, "g")),
+  ].map((m) => m[1] ?? "");
+}
+
+/** The response header, which carries the width tier. */
+function header(): HTMLElement {
+  return screen.getByRole("toolbar", { name: "Response" }).parentElement!;
 }
 
 /** Whether the response pane follows the editor in the page. */
@@ -255,10 +245,10 @@ test("a_narrow_legend_keeps_every_name_for_assistive_tech", async () => {
   // the long one stays in the page, and the short one is not read.
   const short = items[3]?.querySelector(".short");
   expect(short).toHaveAttribute("aria-hidden", "true");
-  const hidden = containerRules().filter((r) => r.selector === ".name.long");
+  const hidden = headRule('.head:not([data-size="wide"]) .name.long');
   expect(hidden).toHaveLength(1);
-  expect(hidden[0]?.body).toContain("clip-path: inset(50%)");
-  expect(hidden[0]?.body).not.toContain("display: none");
+  expect(hidden[0]).toContain("clip-path: inset(50%)");
+  expect(hidden[0]).not.toContain("display: none");
 });
 
 test("a_narrow_legend_still_shows_every_name", async () => {
@@ -287,24 +277,46 @@ test("a_narrow_legend_still_shows_every_name", async () => {
         item.querySelector(".name")?.textContent,
     ),
   ).toEqual(["DNS", "Connect", "TLS", "Wait", "Download"]);
-  const rules = containerRules();
   // No width takes a name off the screen without a short one in its place.
-  for (const rule of rules)
-    expect(rule.selector.split(/,\s*/)).not.toContain(".name");
-  const long = rules.find((r) => r.selector === ".name.long");
-  expect(
-    rules.some(
-      (r) =>
-        r.query === long?.query &&
-        r.selector === ".short" &&
-        r.body.includes("display: inline;"),
-    ),
-  ).toBe(true);
+  expect(headRule('.head:not([data-size="tiny"]) .name')).toEqual([]);
+  expect(headRule('.head:not([data-size="wide"]) .name')).toEqual([]);
+  expect(headRule('.head:not([data-size="wide"]) .short')).toEqual([
+    expect.stringContaining("display: inline;"),
+  ]);
   // Where even the short names do not fit, the phases wrap to a second
   // line rather than scroll out of sight.
   const phases = toolbarRule(".phases");
   expect(phases).toContain("flex-wrap: wrap;");
   expect(phases).not.toContain("overflow-x: auto;");
+});
+
+test.each([
+  [0, "wide"],
+  [800, "wide"],
+  [680, "wide"],
+  [679, "medium"],
+  [560, "medium"],
+  [559, "small"],
+  [480, "small"],
+  [479, "tiny"],
+])("a_pane_%i_px_wide_sizes_the_header_%s", async (width, tier) => {
+  const { resize, pane } = await renderDone(responseInfo());
+  if (width > 0) resize(pane, width, 600);
+  expect(header()).toHaveAttribute("data-size", tier);
+});
+
+test("the_header_follows_the_pane_as_it_resizes", async () => {
+  const { resize, pane } = await renderDone(responseInfo());
+  const head = header();
+  for (const [width, tier] of [
+    [900, "wide"],
+    [500, "small"],
+    [300, "tiny"],
+    [600, "medium"],
+  ] as const) {
+    resize(pane, width, 600);
+    expect(head).toHaveAttribute("data-size", tier);
+  }
 });
 
 test("the_legend_ends_with_size_and_version", async () => {

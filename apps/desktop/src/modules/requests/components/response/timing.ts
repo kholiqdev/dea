@@ -36,3 +36,14 @@ export function timingPhases(timing: TimingInfo): TimingPhase[] {
     },
   ];
 }
+
+/** How much of the response header fits: the pane's width, in tiers. */
+export type SizeTier = "wide" | "medium" | "small" | "tiny";
+
+/** The tier of a pane `width` px wide; 0, not measured yet, counts as wide. */
+export function sizeTier(width: number): SizeTier {
+  if (width === 0 || width >= 680) return "wide";
+  if (width >= 560) return "medium";
+  if (width >= 480) return "small";
+  return "tiny";
+}
