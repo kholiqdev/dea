@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
 import {
   openRequestTab,
   setUpRequestTabs,
+  type FakeShell,
 } from "../../request-tab-support.svelte";
 import {
   doneExchange,
@@ -17,6 +18,9 @@ import {
 } from "../../test-support";
 import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
 import type { BodyKind } from "$lib/ipc/bindings/BodyKind";
+import sendActiveTab from "../../intents/send";
+import filterSource from "./JsonFilter.svelte?raw";
+import paneSource from "./ResponsePane.svelte?raw";
 
 const PATH = "requests/shipments/list.yaml";
 const file: RequestFile = {
@@ -32,8 +36,9 @@ const tab = (name: string | RegExp) =>
     { name },
   );
 
+let shell: FakeShell;
 beforeEach(() => {
-  setUpRequestTabs();
+  ({ shell } = setUpRequestTabs());
   settings.apply(DEFAULT_SETTINGS);
 });
 
@@ -204,7 +209,6 @@ test("filter_shows_matches_and_errors", async () => {
   });
   await screen.findByRole("textbox", { name: "Response body" });
   const input = screen.getByRole("textbox", { name: "Filter with JSONPath" });
-  expect(input).toHaveAttribute("placeholder", "$.events[*].code");
 
   await userEvent.type(input, "$.a");
   expect(await screen.findByText("1 match")).toBeInTheDocument();
@@ -295,100 +299,6 @@ test("a_filter_that_cannot_run_is_not_called_invalid", async () => {
   expect(alert).not.toHaveTextContent("Not a valid JSONPath");
 });
 
-test("a_narrow_pane_folds_the_filter_into_a_button", async () => {
-  const { resize, pane } = await renderDone();
-  resize(pane, 620, 600);
-  expect(
-    screen.queryByRole("textbox", { name: "Filter with JSONPath" }),
-  ).toBeNull();
-  await userEvent.click(
-    screen.getByRole("button", { name: "Show the JSONPath filter" }),
-  );
-  expect(
-    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
-  ).toHaveFocus();
-  expect(
-    screen.getByRole("button", { name: "Hide the JSONPath filter" }),
-  ).toHaveAttribute("aria-expanded", "true");
-});
-
-test("a_wide_pane_shows_the_filter_inline", async () => {
-  const { resize, pane } = await renderDone();
-  resize(pane, 800, 600);
-  const row = screen.getByRole("tablist", {
-    name: "Response sections",
-  }).parentElement;
-  expect(row).toContainElement(
-    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
-  );
-  expect(row).not.toContainElement(
-    within(screen.getByRole("region", { name: "Response" })).getByRole(
-      "tabpanel",
-    ),
-  );
-  expect(
-    screen.queryByRole("button", { name: "Show the JSONPath filter" }),
-  ).toBeNull();
-});
-
-test("a_hidden_filter_keeps_its_path_but_stops_filtering", async () => {
-  const { resize, pane } = await renderDone({
-    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
-    filter: () => ({ text: "[\n  42\n]", count: 1 }),
-  });
-  resize(pane, 620, 600);
-  const body = () => screen.getByRole("textbox", { name: "Response body" });
-  await waitFor(() => expect(body()).toHaveTextContent('"a": 1'));
-  await userEvent.click(
-    screen.getByRole("button", { name: "Show the JSONPath filter" }),
-  );
-  await userEvent.type(
-    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
-    "$.a",
-  );
-  await waitFor(() => expect(body()).toHaveTextContent("42"));
-  await userEvent.click(
-    screen.getByRole("button", { name: "Hide the JSONPath filter" }),
-  );
-  await waitFor(() => expect(body()).toHaveTextContent('"a": 1'));
-  await userEvent.click(
-    screen.getByRole("button", { name: "Show the JSONPath filter" }),
-  );
-  expect(
-    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
-  ).toHaveValue("$.a");
-  await waitFor(() => expect(body()).toHaveTextContent("42"));
-});
-
-test("a_typed_filter_moves_to_its_own_row_when_the_pane_narrows", async () => {
-  const { resize, pane } = await renderDone({
-    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
-    filter: () => ({ text: "[\n  42\n]", count: 1 }),
-  });
-  resize(pane, 800, 600);
-  const body = () => screen.getByRole("textbox", { name: "Response body" });
-  await waitFor(() => expect(body()).toHaveTextContent('"a": 1'));
-  await userEvent.type(
-    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
-    "$.a",
-  );
-  await waitFor(() => expect(body()).toHaveTextContent("42"));
-  // Narrower than the filter needs in the row: it opens a row of its own,
-  // with the path, and goes on filtering.
-  resize(pane, 620, 600);
-  expect(
-    screen.getByRole("button", { name: "Hide the JSONPath filter" }),
-  ).toHaveAttribute("aria-expanded", "true");
-  const row = screen.getByRole("tablist", {
-    name: "Response sections",
-  }).parentElement;
-  const field = screen.getByRole("textbox", { name: "Filter with JSONPath" });
-  expect(row).not.toContainElement(field);
-  expect(field).toHaveValue("$.a");
-  await waitFor(() => expect(body()).toHaveTextContent("42"));
-  expect(screen.getByText("1 match")).toBeInTheDocument();
-});
-
 test("a_declined_send_keeps_the_view_and_the_filter", async () => {
   const ipc = await open("json", {
     text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
@@ -405,11 +315,146 @@ test("a_declined_send_keeps_the_view_and_the_filter", async () => {
   ipc.send = { ...ipc.send, outcome: { type: "notConfirmed" } };
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(ipc.sends).toHaveLength(2));
+  const field = () =>
+    screen.getByRole("textbox", { name: "Filter with JSONPath" });
+  await waitFor(() => expect(field()).toHaveValue("$.a"));
+  expect(await screen.findByText("1 match")).toBeInTheDocument();
+  // The path hides the views; cleared and left, they come back as chosen.
+  await userEvent.click(field());
+  await userEvent.keyboard("{Escape}");
+  await userEvent.tab();
+  expect(screen.getByRole("radio", { name: "Raw" })).toBeChecked();
+});
+
+test("a_field_removed_while_focused_gives_the_views_back", async () => {
+  const ipc = await open("json", { text: { pretty: "{}", raw: "{}" } });
+  await userEvent.click(
+    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+  );
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
+  // Sent from the keyboard and declined: the field goes, with the focus in
+  // it, and the same response comes back.
+  ipc.send = { ...ipc.send, outcome: { type: "notConfirmed" } };
+  shell.activateTab("tab-1");
+  await sendActiveTab();
+  await waitFor(() => expect(ipc.sends).toHaveLength(2));
+  expect(
+    await screen.findByRole("radiogroup", { name: "Body view" }),
+  ).toBeInTheDocument();
+});
+
+test("the_filter_shows_at_every_default_width", async () => {
+  const { resize, pane } = await renderDone({
+    text: { pretty: "{}", raw: "{}" },
+  });
+  for (const width of [620, 543, 530]) {
+    resize(pane, width, 600);
+    expect(
+      screen.getByRole("textbox", { name: "Filter with JSONPath" }),
+    ).toBeVisible();
+  }
+  expect(screen.queryByRole("button", { name: /JSONPath filter/ })).toBeNull();
+});
+
+test("a_path_keeps_the_views_hidden_after_focus_leaves", async () => {
+  await renderDone({
+    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
+    filter: () => ({ text: "[\n  42\n]", count: 1 }),
+  });
+  await userEvent.click(screen.getByRole("radio", { name: "Raw" }));
+  const field = screen.getByRole("textbox", { name: "Filter with JSONPath" });
+  await userEvent.click(field);
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
+  await userEvent.type(field, "$.a");
+  await userEvent.tab();
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
+  await userEvent.click(field);
+  await userEvent.keyboard("{Escape}");
+  await userEvent.tab();
+  expect(screen.getByRole("radio", { name: "Raw" })).toBeChecked();
+});
+
+test("the_filter_has_a_neutral_placeholder_and_keycaps", async () => {
+  await open("json");
+  const field = screen.getByRole("textbox", { name: "Filter with JSONPath" });
+  expect(field).toHaveAttribute("placeholder", "$.data[*].id");
+  // jsdom is not macOS.
+  expect(
+    [...field.parentElement!.querySelectorAll("kbd")].map((k) => k.textContent),
+  ).toEqual(["Ctrl", "Alt", "F"]);
+  expect(field).toHaveAttribute("aria-keyshortcuts", "Control+Alt+F");
+});
+
+test("the_count_takes_the_place_of_the_keycaps", async () => {
+  await open("json", {
+    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
+    filter: () => ({ text: "[\n  1\n]", count: 1 }),
+  });
+  const field = screen.getByRole("textbox", { name: "Filter with JSONPath" });
+  await userEvent.type(field, "$.a");
+  await userEvent.tab();
+  const count = await waitFor(() => {
+    const found = field.parentElement?.querySelector(".count");
+    expect(found).toHaveTextContent("1 match");
+    return found;
+  });
+  expect(count).toHaveAttribute("aria-live", "polite");
+  expect(field.parentElement?.querySelector("kbd")).toBeNull();
+});
+
+test("a_narrow_pane_shows_the_views_as_a_menu", async () => {
+  const { resize, pane } = await renderDone({
+    text: { pretty: '{\n  "id": 1\n}', raw: '{"id":1}' },
+  });
+  // jsdom measures nothing else: the sections count 0 px, and the views
+  // their fallback widths.
+  resize(pane, 300, 600);
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Body view: Pretty" }),
+  );
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "Raw" }));
   await waitFor(() =>
-    expect(screen.getByRole("radio", { name: "Raw" })).toBeChecked(),
+    expect(
+      screen.getByRole("textbox", { name: "Response body" }),
+    ).toHaveTextContent('{"id":1}'),
   );
   expect(
-    screen.getByRole("textbox", { name: "Filter with JSONPath" }),
-  ).toHaveValue("$.a");
-  expect(await screen.findByText("1 match")).toBeInTheDocument();
+    screen.getByRole("button", { name: "Body view: Raw" }),
+  ).toBeInTheDocument();
+});
+
+test("the_path_stays_when_the_section_changes", async () => {
+  await open("json", {
+    text: { pretty: '{\n  "a": 1\n}', raw: '{"a":1}' },
+    filter: () => ({ text: "[\n  42\n]", count: 1 }),
+  });
+  const body = () => screen.getByRole("textbox", { name: "Response body" });
+  const field = () =>
+    screen.getByRole("textbox", { name: "Filter with JSONPath" });
+  await waitFor(() => expect(body()).toHaveTextContent('"a": 1'));
+  await userEvent.type(field(), "$.a");
+  await waitFor(() => expect(body()).toHaveTextContent("42"));
+  await userEvent.click(tab(/^Headers/));
+  await userEvent.click(tab("Body"));
+  expect(field()).toHaveValue("$.a");
+  await waitFor(() => expect(body()).toHaveTextContent("42"));
+});
+
+/** The declarations of the top-level rule for `selector` in `source`. */
+function rule(source: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`).exec(source)?.[1] ?? "";
+}
+
+test("the_field_gives_way_before_the_sections", () => {
+  // jsdom lays nothing out, so the rules are read from the source. A
+  // shrink factor of 1000 takes the room from the field first, down to
+  // 120 px; only then do the sections give way, and scroll.
+  expect(rule(filterSource, ".field")).toContain("flex: 0 1000 168px;");
+  expect(rule(filterSource, ".field")).toContain("min-width: 120px;");
+  expect(rule(filterSource, ".field.active")).toContain("flex: 0 1000 280px;");
+  const sections = rule(paneSource, ".sections");
+  expect(sections).toContain("flex: 0 1 auto;");
+  expect(sections).toContain("min-width: 0;");
 });

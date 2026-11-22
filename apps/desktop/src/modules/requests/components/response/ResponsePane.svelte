@@ -5,17 +5,23 @@
   headers, cookies) and, on the body, its view and JSONPath filter.
 -->
 <script lang="ts">
-  import ListFilter from "@lucide/svelte/icons/list-filter";
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import Menu, { type MenuItem } from "@dea/ui/Menu.svelte";
   import { projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
   import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
   import { chordParts, currentPlatform, parseChord } from "$lib/keyboard/chord";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { watchWidth } from "../../lib/columns";
   import { formatSeconds } from "../../lib/format";
   import type { Exchange } from "../../state/exchange.svelte";
   import { BodyControls } from "./body-controls.svelte";
   import type { BodyView } from "./body-view";
+  import {
+    filterLayout,
+    VIEW_BUTTONS_FALLBACK,
+    VIEW_MENU_FALLBACK,
+  } from "./filter-layout";
   import FailureView from "./FailureView.svelte";
   import HeadersTable from "./HeadersTable.svelte";
   import JsonFilter from "./JsonFilter.svelte";
@@ -53,17 +59,17 @@
     raw: "Raw",
     preview: "Preview",
   };
-  /** The pane width from which the filter fits in the second row. */
-  const FILTER_INLINE_FROM = 700;
-
   const uid = $props.id();
   let section = $state<Section>("body");
   let tablist = $state<HTMLElement>();
   let radios = $state<HTMLElement>();
-  let filterRow = $state<HTMLElement>();
   // Not measured yet, as in tests, the pane counts as wide.
   let width = $state(0);
-  const wide = $derived(width === 0 || width >= FILTER_INLINE_FROM);
+  // What the second row of a JSON body needs: the sections at their natural
+  // width, and the view buttons and menu as first drawn. 0 is not measured.
+  let sectionsWidth = $state(0);
+  let buttonsWidth = $state(0);
+  let dropdownWidth = $state(0);
 
   async function onkeydown(e: KeyboardEvent): Promise<void> {
     const at = SECTIONS.findIndex((s) => s.id === section);
@@ -123,27 +129,54 @@
     radios?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
   }
 
-  async function togglefilter(of: BodyControls): Promise<void> {
-    of.filterOpen = !of.filterOpen;
-    if (!of.filterOpen) return;
-    await tick();
-    filterRow?.querySelector("input")?.focus();
+  function viewItems(body: BodyControls): MenuItem[] {
+    return body.views.map((view) => ({
+      id: view,
+      label: LABELS[view],
+      checked: body.view === view,
+      onselect: () => (body.view = view),
+    }));
   }
 
-  /**
-   * Follows the pane's width; a pane not laid out keeps the last one. A
-   * path typed in the row goes on filtering when the pane narrows: the
-   * filter opens in its own row.
-   */
+  /** The sections' natural width, which only a filterable body needs. */
+  function measureSections(): void {
+    if (controls?.filterable && tablist) sectionsWidth = tablist.scrollWidth;
+  }
+
+  /** Follows the pane's width; a pane not laid out keeps the last one. */
   function measure(pane: HTMLElement): () => void {
     return watchWidth(pane, (w) => {
       if (w <= 0) return;
-      const was = wide;
       width = w;
-      if (was && !wide && controls?.filterPath.trim())
-        controls.filterOpen = true;
+      untrack(measureSections);
     });
   }
+
+  // The counts on the sections change their width: a new response is
+  // measured once it is drawn.
+  $effect(measureSections);
+
+  function keepButtons(views: HTMLElement): void {
+    if (untrack(() => buttonsWidth) === 0) buttonsWidth = views.offsetWidth;
+  }
+
+  function keepDropdown(menu: HTMLElement): void {
+    if (untrack(() => dropdownWidth) === 0) dropdownWidth = menu.offsetWidth;
+  }
+
+  // Where the row of a JSON body puts the choice of view, and whether the
+  // field has room for its keycaps.
+  const fit = $derived(
+    filterLayout(
+      {
+        pane: width,
+        sections: sectionsWidth,
+        buttons: buttonsWidth || VIEW_BUTTONS_FALLBACK,
+        dropdown: dropdownWidth || VIEW_MENU_FALLBACK,
+      },
+      controls?.filterActive ?? false,
+    ),
+  );
 
   // Seconds go by on the clock `startedAt` was taken from.
   let now = $state(performance.now());
@@ -204,7 +237,8 @@
     </div>
     {#if controls && section === "body"}
       {@const body = controls}
-      {#if body.views.length > 1}
+      {@const choice = body.filterable ? fit.views : "buttons"}
+      {#if body.views.length > 1 && choice === "buttons"}
         <div
           class="views"
           role="radiogroup"
@@ -212,6 +246,7 @@
           tabindex="-1"
           bind:this={radios}
           onkeydown={(e) => void onviewkeys(e)}
+          {@attach body.filterable && keepButtons}
         >
           {#each body.views as option (option)}
             <button
@@ -225,32 +260,22 @@
             </button>
           {/each}
         </div>
+      {:else if body.views.length > 1 && choice === "dropdown"}
+        <div class="view-menu" {@attach keepDropdown}>
+          <Menu items={viewItems(body)} menuLabel="Body view">
+            {#snippet trigger()}
+              <span class="sr">Body view:</span>
+              {LABELS[body.view]}
+              <ChevronDown size={16} strokeWidth={1.5} color="var(--text-3)" />
+            {/snippet}
+          </Menu>
+        </div>
       {/if}
-      {#if body.filterable && wide}
-        <JsonFilter {tabId} controls={body} inline />
-      {:else if body.filterable}
-        {@const label = body.filterOpen
-          ? "Hide the JSONPath filter"
-          : "Show the JSONPath filter"}
-        <button
-          type="button"
-          class="icon"
-          aria-label={label}
-          title={label}
-          aria-expanded={body.filterOpen}
-          aria-controls="{uid}-filter"
-          onclick={() => void togglefilter(body)}
-        >
-          <ListFilter size={16} strokeWidth={1.5} />
-        </button>
+      {#if body.filterable}
+        <JsonFilter {tabId} controls={body} keys={fit.keys} />
       {/if}
     {/if}
   </div>
-  {#if controls?.filterable && controls.filterOpen && !wide && section === "body"}
-    <div class="filter-row" id="{uid}-filter" bind:this={filterRow}>
-      <JsonFilter {tabId} {controls} />
-    </div>
-  {/if}
 {/snippet}
 
 <section
@@ -405,10 +430,13 @@
     box-shadow: inset 0 -1px 0 var(--line);
   }
 
+  /* At their natural width, the sections push the rest to the end. They
+     give way only once the filter's field is down to its narrowest. */
   .sections {
     align-self: stretch;
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
+    margin-right: auto;
     display: flex;
     gap: var(--s-5);
     overflow-x: auto;
@@ -444,31 +472,18 @@
     color: var(--text-1);
   }
 
-  .icon {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: var(--r-small);
-    background: none;
-    color: var(--text-2);
-  }
-
-  .icon:hover,
-  .icon[aria-expanded="true"] {
-    background: var(--bg-hover);
-    color: var(--text-1);
-  }
-
-  /* The filter of a narrow pane, in a row of its own under the second. */
-  .filter-row {
+  .view-menu {
     flex: none;
     display: flex;
-    padding: var(--s-2) var(--s-4);
-    box-shadow: inset 0 -1px 0 var(--line);
+  }
+
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   [role="tab"] {

@@ -36,8 +36,8 @@ export class BodyControls {
   readonly filterable: boolean;
   /** The JSONPath typed in the filter, kept while the filter is not shown. */
   filterPath = $state("");
-  /** Whether a pane too narrow for the filter shows it in a row of its own. */
-  filterOpen = $state(false);
+  /** Whether the filter's field has the focus. */
+  filterFocused = $state(false);
   /** What the filter selects: null while it is empty, not valid or not shown. */
   filtered = $state.raw<Filtered | null>(null);
   /** Why the filter selects nothing, when it is not valid or could not run. */
@@ -48,6 +48,14 @@ export class BodyControls {
   constructor(response: ResponseInfo) {
     this.views = viewsOf(response);
     this.filterable = response.kind === "json" && !response.large;
+  }
+
+  /**
+   * Whether the filter is in use: focused, or with a path. Its result shows
+   * whatever the view, so the choice of view steps aside.
+   */
+  get filterActive(): boolean {
+    return this.filterFocused || this.filterPath.trim() !== "";
   }
 
   /** The view shown: the one chosen, or else the first the body offers. */

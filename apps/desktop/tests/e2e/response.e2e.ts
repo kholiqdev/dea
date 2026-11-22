@@ -461,7 +461,7 @@ describe("reading responses", () => {
           () =>
             document
               .querySelector('input[aria-label="Filter with JSONPath"]')
-              ?.parentElement?.querySelector("p")
+              ?.parentElement?.querySelector(".count")
               ?.textContent?.trim() ?? null,
         )) === "2 matches",
       { timeout: 30_000, timeoutMsg: 'the filter never showed "2 matches"' },

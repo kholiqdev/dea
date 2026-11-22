@@ -164,13 +164,11 @@ export function timingBar() {
 }
 
 /**
- * The JSONPath filter field. A response pane under 700 px wide keeps the
- * field behind a button, which opens it as a row of its own.
+ * The JSONPath filter field, once it shows. It is in the second row of a
+ * JSON response at every width of the pane.
  */
 export async function openFilter() {
   const field = $('input[aria-label="Filter with JSONPath"]');
-  if (!(await field.isExisting()))
-    await $('button[aria-label="Show the JSONPath filter"]').click();
   await field.waitForDisplayed();
   return field;
 }
