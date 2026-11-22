@@ -66,3 +66,13 @@ test("the_bar_opens_and_closes_the_legend_for_the_session", async () => {
   expect(sessionView.timingLegend).toBe(false);
   expect(bar).toHaveAttribute("aria-expanded", "false");
 });
+
+test("a_muted_bar_is_neutral", () => {
+  render(TimingBar, { timing, controls: "timing-legend", muted: true });
+  const segments = document.querySelectorAll<HTMLElement>("[data-segment]");
+  expect(segments).toHaveLength(5);
+  for (const segment of segments)
+    expect(segment.getAttribute("style")).toContain(
+      "background: var(--text-3)",
+    );
+});

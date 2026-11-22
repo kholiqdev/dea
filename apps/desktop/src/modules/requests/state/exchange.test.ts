@@ -365,6 +365,23 @@ test("a_response_keeps_the_environment_it_was_sent_in", async () => {
   });
 });
 
+test("a_response_remembers_when_it_came", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const draft = await openDraft("t1", PATH);
+  vi.setSystemTime(new Date(2026, 10, 22, 12, 3, 30));
+  const { sent } = await startSend(draft);
+  // The clock moves on while the response is on its way.
+  const arrived = new Date(2026, 10, 22, 12, 4, 10).getTime();
+  vi.setSystemTime(arrived);
+  ipc.finishSends(ok200);
+  await sent;
+  expect(exchangeFor("t1").state).toMatchObject({
+    phase: "done",
+    receivedAt: arrived,
+  });
+});
+
 test("a_failure_keeps_the_environment_too", async () => {
   fakeRequestsIpc({
     files,

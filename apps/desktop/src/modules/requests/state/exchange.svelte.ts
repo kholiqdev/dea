@@ -35,7 +35,8 @@ export type HeadInfo = { status: number; reason: string; headers: HeaderRow[] };
  * it. `startedAt` is the `performance.now()` at which it left (or the send
  * began, before that), `host` is known once it left, and `text` is the body
  * so far while Dea still forwards it; `received` counts every byte.
- * `environment` is the one the request was sent in.
+ * `environment` is the one the request was sent in, and `receivedAt` the
+ * `Date.now()` at which its response came.
  */
 export type ExchangeState =
   | { phase: "idle" }
@@ -57,6 +58,7 @@ export type ExchangeState =
       phase: "done";
       response: ResponseInfo;
       environment: string | null;
+      receivedAt: number;
       startedAt: number;
       events: SseRow[];
       droppedEvents: number;
@@ -238,6 +240,7 @@ export class Exchange {
           phase: "done",
           response,
           environment,
+          receivedAt: Date.now(),
           startedAt: sent.startedAt,
           events: sent.events,
           droppedEvents: sent.droppedEvents,

@@ -26,10 +26,13 @@ import {
   fakeRequestsIpc,
   fakeResizeObserver,
   responseInfo,
+  type FakeInspection,
   type RequestsIpc,
 } from "../../test-support";
 import { sessionView } from "../../state/session-view.svelte";
+import paneSource from "./ResponsePane.svelte?raw";
 import toolbarSource from "./ResponseToolbar.svelte?raw";
+import pillSource from "./SentInPill.svelte?raw";
 
 const PATH = "requests/shipments/list.yaml";
 const file: RequestFile = {
@@ -90,12 +93,15 @@ async function renderDone(response: ResponseInfo): Promise<{
   return { resize: observer.resize, pane, id, unmount };
 }
 
+/** The declarations of the top-level rule for `selector` in `source`. */
+function ruleIn(source: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`).exec(source)?.[1] ?? "";
+}
+
 /** The declarations of the toolbar's top-level rule for `selector`. */
 function toolbarRule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return (
-    new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`).exec(toolbarSource)?.[1] ?? ""
-  );
+  return ruleIn(toolbarSource, selector);
 }
 
 /** The declarations of the rule whose selector is exactly `selector`. */
@@ -805,34 +811,34 @@ test("a_finished_stream_keeps_its_event_list", async () => {
   expect(screen.getByText("tick")).toBeInTheDocument();
 });
 
-test("the_previous_response_is_labelled_while_a_warning_shows", async () => {
-  const ipc = fakeRequestsIpc({
-    files,
-    send: doneExchange("json"),
-    inspection: (_path, request) => ({
-      undefined: request.url.includes("{{traceId}}") ? ["traceId"] : [],
-    }),
-  });
-  openRequestTab(PATH);
-  await send();
-  const bar = await screen.findByRole("toolbar", { name: "Response" });
-  expect(within(bar).queryByText("Previous response")).toBeNull();
+/** Warns of `{{traceId}}`, which nothing defines. */
+const warnsOfTraceId: FakeInspection = (_path, request) => ({
+  undefined: request.url.includes("{{traceId}}") ? ["traceId"] : [],
+});
+
+/** Adds an undefined variable to the URL and sends: the warning stands. */
+async function warnInFront(): Promise<void> {
   await userEvent.type(
     screen.getByRole("textbox", { name: "URL" }),
     "/{{{{traceId}}",
   );
   await send();
-  await screen.findByRole("status");
-  expect(within(bar).getByText("Previous response")).toBeInTheDocument();
-  expect(calls(ipc, "send_request")).toHaveLength(1);
-  // Edited again, the warning and the label go.
-  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
-  await waitFor(() =>
-    expect(within(bar).queryByText("Previous response")).toBeNull(),
-  );
-});
+}
 
-test("previous_response_gives_way_before_the_actions", async () => {
+/** Matches the element whose whole text, across its parts, is `text`. */
+const wholeText = (text: string) => (_: string, element: Element | null) =>
+  element?.tagName === "P" && element.textContent === text;
+
+/** A section of the response, by its name. */
+const section = (name: RegExp) =>
+  within(screen.getByRole("tablist", { name: "Response sections" })).getByRole(
+    "tab",
+    { name },
+  );
+
+test("the_previous_response_is_dimmed_and_marked", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 22, 12, 4));
   fakeRequestsIpc({
     files,
     send: doneExchange("json"),
@@ -849,32 +855,115 @@ test("previous_response_gives_way_before_the_actions", async () => {
     "/{{{{traceId}}",
   );
   await send();
-  const stale = await within(bar).findByText("Previous response");
-  // The facts share a group that gives way; the actions sit outside it.
+  expect(
+    await screen.findByText(wholeText("Previous response · 12:04 · staging")),
+  ).toBeInTheDocument();
+  expect(within(bar).queryByText(/Previous/)).toBeNull();
+  expect(bar).toHaveAttribute("data-tone", "muted");
+  const pane = screen.getByRole("region", { name: "Response" });
+  expect(within(pane).getByRole("tabpanel")).toHaveAttribute("data-stale");
+  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
+  await waitFor(() =>
+    expect(screen.queryByText(/^Previous response/)).toBeNull(),
+  );
+  expect(bar).toHaveAttribute("data-tone", "positive");
+});
+
+test("the_previous_strip_shows_on_every_section", async () => {
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: warnsOfTraceId,
+  });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("toolbar", { name: "Response" });
+  await userEvent.click(section(/^Headers/));
+  await warnInFront();
+  const label = await screen.findByText("Previous response");
+  // Between the second row and what the section shows.
+  const pane = screen.getByRole("region", { name: "Response" });
+  expect(label.parentElement?.nextElementSibling).toBe(
+    within(pane).getByRole("tabpanel"),
+  );
+  await userEvent.click(section(/^Cookies/));
+  expect(section(/^Cookies/)).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByText("Previous response")).toBeInTheDocument();
+});
+
+test("the_strip_names_no_environment_without_one", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 22, 12, 4));
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: warnsOfTraceId,
+  });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("toolbar", { name: "Response" });
+  await warnInFront();
+  expect(
+    await screen.findByText(wholeText("Previous response · 12:04")),
+  ).toBeInTheDocument();
+});
+
+test("the_environment_pill_never_shrinks", async () => {
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: warnsOfTraceId,
+  });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  await warnInFront();
+  await screen.findByText("Previous response");
+  // The pill sits with the facts, which give way at narrower tiers; the
+  // actions stay outside them.
   const status = bar.querySelector(":scope > .status");
-  const actions = bar.querySelector(":scope > .actions");
-  expect(status).not.toBeNull();
-  expect(actions).not.toBeNull();
-  for (const fact of [
-    bar.querySelector(".code"),
-    bar.querySelector(".reason"),
-    within(bar).getByText("staging"),
-    stale,
-  ])
-    expect(status).toContainElement(fact as HTMLElement);
+  expect(within(bar).getByText("staging").parentElement).toBe(status);
   expect(status).not.toContainElement(
     within(bar).getByRole("button", { name: "Copy response" }),
   );
-  const group = toolbarRule(".status");
-  expect(group).toContain("min-width: 0;");
-  expect(group).toContain("overflow: hidden;");
   expect(toolbarRule(".actions")).toContain("flex: none;");
-  expect(toolbarRule(".code")).toContain("flex: none;");
-  // The label shrinks, cut with an ellipsis, rather than pushing on; the
-  // environment before it gives way first.
-  const label = toolbarRule(".stale");
-  expect(label).not.toContain("flex: none;");
-  expect(label).toContain("min-width: 0;");
-  expect(label).toContain("text-overflow: ellipsis;");
-  expect(toolbarRule(".tail > :global(.env)")).toContain("flex: 1 1 0;");
+  const pill = ruleIn(pillSource, ".env");
+  expect(pill).toContain("flex: none;");
+  expect(pill).not.toContain("text-overflow");
+});
+
+test("the_body_text_dims_without_opacity", () => {
+  expect(
+    ruleIn(paneSource, ".body[data-stale] :global(.cm-content *)"),
+  ).toContain("color: var(--text-3);");
+  expect(paneSource).not.toContain("opacity");
+});
+
+test("a_small_pane_moves_the_size_to_the_legend", async () => {
+  const { resize, pane } = await renderDone(responseInfo());
+  resize(pane, 530, 600);
+  expect(header()).toHaveAttribute("data-size", "small");
+  expect(
+    headRule(
+      '.head:is([data-size="small"], [data-size="tiny"]) .toolbar .size',
+    ),
+  ).toEqual([expect.stringContaining("display: none;")]);
+  expect(
+    headRule(
+      '.head:is([data-size="wide"], [data-size="medium"]) .legend .size',
+    ),
+  ).toEqual([expect.stringContaining("display: none;")]);
+  // The size no longer stays on the row down to 480 px.
+  expect(headRule('.head[data-size="tiny"] .toolbar .size')).toEqual([]);
+  expect(headRule('.head:not([data-size="tiny"]) .legend .size')).toEqual([]);
+});
+
+test("a_tiny_pane_drops_the_timing_bar", async () => {
+  const { resize, pane } = await renderDone(responseInfo());
+  resize(pane, 400, 600);
+  expect(header()).toHaveAttribute("data-size", "tiny");
+  expect(headRule('.head[data-size="tiny"] .toolbar :global(.timing)')).toEqual(
+    [expect.stringContaining("display: none;")],
+  );
 });

@@ -2,7 +2,9 @@
   What came back of a tab's send (F1-REQ-08): the two rows of a response's
   header, the progress of a request on its way, or why it ended without
   one. The first row is the toolbar; the second has the sections (body,
-  headers, cookies) and, on the body, its view and JSONPath filter.
+  headers, cookies) and, on the body, its view and JSONPath filter. While a
+  warning holds back the next send, the response shown is marked as the
+  previous one, and its body text is dimmed.
 -->
 <script lang="ts">
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -26,6 +28,7 @@
   import FailureView from "./FailureView.svelte";
   import HeadersTable from "./HeadersTable.svelte";
   import JsonFilter from "./JsonFilter.svelte";
+  import PreviousResponse from "./PreviousResponse.svelte";
   import ReceivedCookies from "./ReceivedCookies.svelte";
   import ResponseBody from "./ResponseBody.svelte";
   import ResponseToolbar from "./ResponseToolbar.svelte";
@@ -93,6 +96,8 @@
   const shell = shellApi();
   const sendKeys = chordParts(parseChord("Mod+Enter"), currentPlatform());
   const current = $derived(exchange.state);
+  // A warning holds back the next send: the response shown is the last one.
+  const stale = $derived(current.phase === "done" && exchange.warning !== null);
   // Dea asks whether to send to production: nothing has left, nothing runs.
   const waiting = $derived(
     current.phase === "sending" && !current.started && shell.confirmingSend,
@@ -329,7 +334,7 @@
       {name}
       {response}
       environment={sentIn}
-      stale={exchange.warning !== null}
+      {stale}
       {layout}
       {stacked}
       {width}
@@ -340,11 +345,18 @@
       headers: response.headers.length,
       cookies: response.cookies.length,
     })}
+    {#if stale}
+      <PreviousResponse
+        receivedAt={current.receivedAt}
+        environment={sentIn?.name ?? null}
+      />
+    {/if}
     <div
       class="body"
       role="tabpanel"
       id="{uid}-panel"
       aria-labelledby="{uid}-{section}"
+      data-stale={stale || undefined}
     >
       {#if section === "headers"}
         <HeadersTable
@@ -433,6 +445,13 @@
     display: flex;
     flex-direction: column;
     overflow: auto;
+  }
+
+  /* A previous response: its text in one grey that still reads, without
+     the syntax colours. */
+  .body[data-stale] :global(.cm-content),
+  .body[data-stale] :global(.cm-content *) {
+    color: var(--text-3);
   }
 
   /* The second row of the header: the sections, then the body's view and

@@ -1,11 +1,13 @@
 <!--
   The first row of the response header: its status, time, timing bar, size
-  and version, the environment it was sent in, "Previous response" while a
-  warning stands in front of it, and what it can do (copy, save, move the
-  panel). It never wraps: the reason gives way first, and a
-  narrow row drops the version, then the size, which the timing legend
-  under it still shows. While sending it shows the seconds that went by;
-  while Dea asks whether to send to production, that it waits.
+  and version, the environment it was sent in, and what it can do (copy,
+  save, move the panel). It never wraps: the reason gives way first, a
+  narrow row drops the size and the version, which the timing legend under
+  it still shows, and a narrower one the timing bar. While a warning stands
+  in front of the response, the strip under the second row marks it as the
+  previous one, and this row shows it muted. While sending it shows the
+  seconds that went by; while Dea asks whether to send to production, that
+  it waits.
 -->
 <script lang="ts">
   import Copy from "@lucide/svelte/icons/copy";
@@ -51,7 +53,7 @@
     waiting?: boolean;
     /** The environment the request was sent in. */
     environment?: { name: string; production: boolean; moved: boolean } | null;
-    /** A warning stands in front of this response: it is the previous one. */
+    /** A warning stands in front of this response: it shows muted. */
     stale?: boolean;
     layout: "right" | "below";
     /** The panel is below whatever the setting says. */
@@ -104,7 +106,7 @@
     class="toolbar"
     role="toolbar"
     aria-label="Response"
-    data-tone={response ? statusTone(response.status) : "muted"}
+    data-tone={response && !stale ? statusTone(response.status) : "muted"}
   >
     {#if response}
       <span class="status">
@@ -112,22 +114,15 @@
         <span class="code">{response.status}</span>
         <span class="reason">{response.reason}</span>
         <span class="fact">{formatMs(response.timing.totalMs)}</span>
-        <TimingBar timing={response.timing} controls="{uid}-legend" />
+        <TimingBar
+          timing={response.timing}
+          controls="{uid}-legend"
+          muted={stale}
+        />
         <span class="fact size">{formatBytes(response.size)}</span>
         <span class="fact version">{response.version}</span>
-        {#if environment || stale}
-          <!-- Drawn reversed: the environment shows before the label. -->
-          <span class="tail">
-            {#if stale}
-              <span class="stale" title="Previous response">
-                <span class="long">Previous response</span>
-                <span class="short">Previous</span>
-              </span>
-            {/if}
-            {#if environment}
-              <SentInPill {...environment} />
-            {/if}
-          </span>
+        {#if environment}
+          <SentInPill {...environment} />
         {/if}
       </span>
       <span class="actions">
@@ -222,9 +217,9 @@
     flex: none;
   }
 
-  /* One row whatever its width. A narrow row leaves out the version, then
-     the size; short of room, the status gives way and the actions stay
-     whole. */
+  /* One row whatever its width. A narrow row leaves out the size and the
+     version, a narrower one the timing bar; short of room, the status gives
+     way and the actions stay whole. */
   .toolbar {
     height: 40px;
     display: flex;
@@ -258,10 +253,9 @@
     --tone-text: var(--negative-text);
   }
 
-  /* Everything but the actions. Short of room, the reason gives way first,
-     then the environment, then "Previous response"; past that the end of
-     the group is cut, never the actions. As tall as the row, so a focus
-     ring inside it shows whole. */
+  /* Everything but the actions. Short of room, the reason gives way, and
+     nothing else shrinks; past that the end of the group is cut, never the
+     actions. As tall as the row, so a focus ring inside it shows whole. */
   .status {
     flex: 0 1 auto;
     min-width: 0;
@@ -270,30 +264,6 @@
     align-items: center;
     gap: var(--s-3);
     overflow: hidden;
-  }
-
-  /* The environment, then "Previous response". The label comes first in
-     the markup and the line is drawn reversed: the environment takes only
-     the room the label leaves it, and without room for a few letters it
-     wraps onto a second line that is cut away rather than show an empty
-     pill. */
-  .tail {
-    flex: 0 1 auto;
-    min-width: 0;
-    height: 18px;
-    display: flex;
-    flex-flow: row-reverse wrap;
-    justify-content: flex-end;
-    align-content: flex-start;
-    align-items: center;
-    gap: 0 var(--s-3);
-    overflow: hidden;
-  }
-
-  .tail > :global(.env) {
-    flex: 1 1 0;
-    min-width: 4ch;
-    max-width: max-content;
   }
 
   .dot {
@@ -336,34 +306,17 @@
     color: var(--text-3);
   }
 
-  .stale {
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 13px;
-    line-height: 18px;
-    color: var(--text-2);
-  }
-
-  .stale .short {
-    display: none;
-  }
-
-  /* Too narrow for the whole label next to the facts: a shorter one. */
-  .head:not([data-size="wide"]) .stale .long {
-    display: none;
-  }
-
-  .head:not([data-size="wide"]) .stale .short {
-    display: inline;
-  }
-
+  /* Below 560 px the size and the version move to the legend, and below
+     480 px the timing bar goes; the legend stays as it was. */
   .head:is([data-size="small"], [data-size="tiny"]) .toolbar .version {
     display: none;
   }
 
-  .head[data-size="tiny"] .toolbar .size {
+  .head:is([data-size="small"], [data-size="tiny"]) .toolbar .size {
+    display: none;
+  }
+
+  .head[data-size="tiny"] .toolbar :global(.timing) {
     display: none;
   }
 
@@ -466,7 +419,7 @@
     display: none;
   }
 
-  .head:not([data-size="tiny"]) .legend .size {
+  .head:is([data-size="wide"], [data-size="medium"]) .legend .size {
     display: none;
   }
 
@@ -499,11 +452,12 @@
     gap: var(--s-1);
   }
 
-  /* The version, and below 480 px the size, follow the phases: a line
-     parts them. Smaller and closer, and a phase that took no time shows
-     its colour and name, its time kept for a screen reader, so the phases
-     and the version keep to one line down to about 510 to 535 px,
-     depending on the times. */
+  /* Below 560 px the size and the version follow the phases: a line parts
+     them. Smaller and closer, and a phase that took no time shows its
+     colour and name, its time kept for a screen reader, so the phases, the
+     size and the version keep to one line down to about 490 px with a
+     reused connection and 540 px with a fresh one; slower times take a
+     second line. */
   .head:is([data-size="small"], [data-size="tiny"]) .legend,
   .head:is([data-size="small"], [data-size="tiny"]) .legend .fact {
     font-size: 11px;

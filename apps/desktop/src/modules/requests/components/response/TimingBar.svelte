@@ -2,7 +2,7 @@
   Where the time of a response went (F1-REQ-08): a small bar of five phases
   that opens or closes their legend, a row of the response header. Whether
   it is open is kept for the session. A reused connection shows no DNS,
-  connect or TLS.
+  connect or TLS. Muted, as for a previous response, every phase is grey.
 -->
 <script lang="ts">
   import type { TimingInfo } from "$lib/ipc/bindings/TimingInfo";
@@ -12,10 +12,13 @@
   let {
     timing,
     controls,
+    muted = false,
   }: {
     timing: TimingInfo;
     /** The id of the legend the bar opens. */
     controls: string;
+    /** Drawn without the phases' colours. */
+    muted?: boolean;
   } = $props();
 
   const phases = $derived(timingPhases(timing));
@@ -45,7 +48,7 @@
         class={["segment", { filled: phase.ms > 0 }]}
         data-segment={phase.id}
         style:width="{share(phase.ms)}%"
-        style:background={phase.color}
+        style:background={muted ? "var(--text-3)" : phase.color}
       ></span>
     {/each}
   </span>
