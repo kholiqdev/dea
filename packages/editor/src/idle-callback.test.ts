@@ -2,8 +2,13 @@ import { afterEach, expect, test, vi } from "vitest";
 import editorSource from "./CodeEditor.svelte?raw";
 import {
   IDLE_SLICE_MS,
-  hideInputPending,
+  PARSE_SLICE_MS,
+  SCROLL_SETTLE_MS,
+  SCROLLING_PARSE_SLICE_MS,
   installIdleCallback,
+  installInputPending,
+  noteScroll,
+  sliceSpent,
   type IdleHost,
 } from "./idle-callback";
 
@@ -129,16 +134,126 @@ test("the_editor_installs_it_before_codemirror_looks_for_it", () => {
   expect(shim).toBeLessThan(language);
 });
 
-test("hides isInputPending from CodeMirror, once, and copes without scheduling", () => {
-  const navigator = {
-    scheduling: { isInputPending: () => false } as {
-      isInputPending?: () => boolean;
-    },
+/**
+ * The clock `sliceSpent` reads, standing at `now` until moved. It starts
+ * past any scroll an earlier test noted.
+ */
+function clock() {
+  const c = { now: Date.now() + 1e9 };
+  vi.spyOn(Date, "now").mockImplementation(() => c.now);
+  return c;
+}
+
+/** Whether a callback is spent after `ms - 1` and after `ms`, in order. */
+function spentAround(c: { now: number }, ms: number): () => boolean[] {
+  const seen: boolean[] = [];
+  return () => {
+    seen.push(sliceSpent());
+    c.now += ms - 1;
+    seen.push(sliceSpent());
+    c.now += 1;
+    seen.push(sliceSpent());
+    return seen;
   };
-  hideInputPending(navigator);
-  expect(navigator.scheduling?.isInputPending).toBeFalsy();
-  hideInputPending(navigator);
-  expect(navigator.scheduling?.isInputPending).toBeFalsy();
-  expect(() => hideInputPending({})).not.toThrow();
-  expect(() => hideInputPending({ scheduling: undefined })).not.toThrow();
+}
+
+test("an_idle_callback_is_spent_after_25_ms_and_only_while_it_runs", async () => {
+  const c = clock();
+  const { host, run } = native();
+  installIdleCallback(host);
+  let seen: boolean[] = [];
+  const check = spentAround(c, PARSE_SLICE_MS);
+  host.requestIdleCallback?.(() => (seen = check()));
+  run();
+  expect(seen).toEqual([false, false, true]);
+  expect(sliceSpent()).toBe(false);
+  await new Promise<void>((resolve) =>
+    shimmed().requestIdleCallback(() => {
+      seen = spentAround(c, PARSE_SLICE_MS)();
+      resolve();
+    }),
+  );
+  expect(seen).toEqual([false, false, true]);
+});
+
+test("while_the_page_scrolls_a_callback_is_spent_after_5_ms", () => {
+  const c = clock();
+  const { host, run } = native();
+  installIdleCallback(host);
+  const runOne = (ms: number) => {
+    let seen: boolean[] = [];
+    host.requestIdleCallback?.(() => (seen = spentAround(c, ms)()));
+    run();
+    return seen;
+  };
+  // Scroll events do not bubble: the window hears them on capture.
+  const scroller = document.body.appendChild(document.createElement("div"));
+  scroller.dispatchEvent(new Event("scroll"));
+  scroller.remove();
+  expect(runOne(SCROLLING_PARSE_SLICE_MS)).toEqual([false, false, true]);
+  // Still scrolling 1 ms before it settles, and settled from then on.
+  noteScroll();
+  c.now += SCROLL_SETTLE_MS - 1;
+  expect(runOne(SCROLLING_PARSE_SLICE_MS)).toEqual([false, false, true]);
+  expect(runOne(PARSE_SLICE_MS)).toEqual([false, false, true]);
+});
+
+test("gives_codemirror_an_isInputPending_with_or_without_one_and_copes_when_frozen", () => {
+  const chromium = { scheduling: { isInputPending: () => false } };
+  installInputPending(chromium);
+  expect(chromium.scheduling.isInputPending).toBe(sliceSpent);
+  const webkit: { scheduling?: { isInputPending?: unknown } } = {};
+  installInputPending(webkit);
+  expect(webkit.scheduling?.isInputPending).toBe(sliceSpent);
+  expect(() => installInputPending(Object.freeze({}))).not.toThrow();
+  expect(() =>
+    installInputPending(
+      Object.freeze({ scheduling: Object.freeze({ isInputPending: 1 }) }),
+    ),
+  ).not.toThrow();
+});
+
+test("codemirror_ends_its_parse_slices_after_5_ms_while_scrolling_and_25_after", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const [{ EditorState }, { EditorView }, language, { json }] =
+      await Promise.all([
+        import("@codemirror/state"),
+        import("@codemirror/view"),
+        import("@codemirror/language"),
+        import("@codemirror/lang-json"),
+      ]);
+    const rows = Array.from({ length: 50_000 }, (_, i) => `{"i":${i}}`);
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: `[${rows.join(",\n")}]`,
+        extensions: [json()],
+      }),
+      parent: document.body,
+    });
+    // Every reading of the clock moves it 1 ms on, so a slice lasts as
+    // many milliseconds as it reads the clock.
+    const c = { now: Date.now() + 2e9 };
+    vi.spyOn(Date, "now").mockImplementation(() => c.now++);
+    const slice = async () => {
+      const start = c.now;
+      // CodeMirror waits 100 ms before it asks for an idle callback.
+      await vi.advanceTimersByTimeAsync(101);
+      return c.now - start;
+    };
+    const before = language.syntaxTree(view.state).length;
+    noteScroll();
+    const scrolling = await slice();
+    c.now += SCROLL_SETTLE_MS;
+    const settled = await slice();
+    // Run to its end, the first slice would have parsed 100 000 characters on.
+    expect(language.syntaxTree(view.state).length).toBe(before);
+    expect(language.syntaxParserRunning(view)).toBe(true);
+    expect(scrolling).toBeLessThan(2 * SCROLLING_PARSE_SLICE_MS);
+    expect(settled).toBeGreaterThanOrEqual(PARSE_SLICE_MS);
+    expect(settled).toBeLessThan(PARSE_SLICE_MS + 10);
+    view.destroy();
+  } finally {
+    vi.useRealTimers();
+  }
 });
