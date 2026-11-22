@@ -49,6 +49,12 @@
     // The second click of a double click on Send is not a Cancel.
     else if (e.detail < 2) oncancel();
   }
+
+  // A held Enter repeats its click with no sign of a repeat, and the OS
+  // repeats only after the warning's pause: it would send past the warning.
+  function onkeydown(e: KeyboardEvent): void {
+    if (e.repeat && (e.key === "Enter" || e.key === " ")) e.preventDefault();
+  }
 </script>
 
 <!--
@@ -99,6 +105,7 @@
       data-send=""
       variant={sending ? "secondary" : production ? "danger-solid" : "primary"}
       onclick={sendOrCancel}
+      {onkeydown}
     >
       <span class="faces">
         {@render face(

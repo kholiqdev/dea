@@ -383,6 +383,25 @@ test("a_second_send_sends_past_the_banner", async () => {
   await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 });
 
+test("a_held_enter_on_send_does_not_pass_the_warning", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["carrierCode"] },
+  });
+  openRequestTab(PATH);
+  const send = await sendButton();
+  send.focus();
+  // Pressed and held past the OS repeat delay and the warning's pause: the
+  // first press stops at the warning, the repeat after it is no new send.
+  const user = userEvent.setup({ delay: 600 });
+  await user.keyboard("{Enter>2/}");
+  expect(ipc.sends).toHaveLength(0);
+  expect(screen.getByRole("status")).toBeInTheDocument();
+  // Let go and pressed again, it sends.
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+});
+
 const traced: RequestFile = {
   ...file,
   headers: [
