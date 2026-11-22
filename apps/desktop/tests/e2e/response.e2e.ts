@@ -368,7 +368,7 @@ describe("reading responses", () => {
 
     await openRequest(root, "staging", "Label image");
     await sendAndShow();
-    await waitForView("Preview");
+    // An image or a PDF has one view, Preview, so there is no view choice.
     const image = () =>
       browser.execute(() => {
         const img = document.querySelector<HTMLImageElement>(
@@ -384,7 +384,6 @@ describe("reading responses", () => {
 
     await showRequest("Label PDF");
     await sendAndShow();
-    await waitForView("Preview");
     const pdf = () =>
       browser.execute((s) => {
         const pane = document.querySelector(s);
@@ -656,12 +655,29 @@ describe("reading responses", () => {
   it("response_moves_below_and_back", async () => {
     await openRequest(serverProject(), "staging", "Shipment by ID");
     // A work area under 760 px wide always stacks the response below, with
-    // no button to move it. At 1280 × 800 the area is about 950 px.
-    expect(
-      await browser.execute(
+    // no button to move it. At 1280 × 800 the area is about 950 px, but the
+    // Windows runner's screen keeps the window near 1028 px, where the
+    // sidebar leaves about 700: hide it for this case.
+    const splitWidth = () =>
+      browser.execute(
         () => document.querySelector(".split")!.getBoundingClientRect().width,
-      ),
-    ).toBeGreaterThanOrEqual(760);
+      );
+    /** Shows or hides the sidebar with the title bar button, if needed. */
+    const sidebar = async (shown: boolean) => {
+      const button = $(
+        `button[aria-label="${shown ? "Show" : "Hide"} sidebar"]`,
+      );
+      if (await button.isExisting()) await button.click();
+    };
+    const wide = async () => {
+      await sidebar(false);
+      await browser.waitUntil(async () => (await splitWidth()) >= 760, {
+        timeoutMsg: "the work area stayed under 760 px",
+      });
+    };
+    const hidSidebar = (await splitWidth()) < 760;
+    if (hidSidebar) await wide();
+    expect(await splitWidth()).toBeGreaterThanOrEqual(760);
     await sendAndShow();
     // The setting is the app's, so a failure must not leave it below.
     try {
@@ -676,18 +692,23 @@ describe("reading responses", () => {
         below.editor.bottom - 1,
       );
 
-      // Reopened, the tab keeps it.
+      // Reopened, the tab keeps it. The tree is in the sidebar.
       await $('button[aria-label="Close Shipment by ID"]').click();
       await tab("Shipment by ID").waitForExist({ reverse: true });
+      if (hidSidebar) await sidebar(true);
       await showRequest("Shipment by ID");
+      if (hidSidebar) await wide();
       await waitForLayout("below");
 
       await sendAndShow();
       await $('button[aria-label="Show response on the right"]').click();
       await waitForLayout("right");
     } finally {
+      // Without the sidebar the area is wide enough to offer the button.
+      if (hidSidebar) await sidebar(false);
       const back = $('button[aria-label="Show response on the right"]');
       if (await back.isExisting()) await back.click();
+      if (hidSidebar) await sidebar(true);
     }
   });
 });
