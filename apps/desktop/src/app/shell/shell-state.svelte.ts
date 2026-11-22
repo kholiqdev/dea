@@ -15,7 +15,7 @@ export const RAIL_WIDE_WIDTH = 216;
 export const SIDEBAR_WIDTH = 280;
 export const SIDEBAR_MIN = 200;
 export const WORK_MIN = 480;
-/** A window this wide or narrower hides the sidebar. */
+/** A window this wide or narrower hides the sidebar of a module that asks. */
 export const NARROW_WINDOW = 1024;
 
 /** The UI state key until projects can be opened. */
@@ -87,14 +87,22 @@ export class Shell {
     this.#narrow = value;
   }
 
+  /** Whether the narrow window rule applies: the module's manifest says `hide`. */
+  #hidesWhenNarrow(module: string): boolean {
+    return (
+      this.#narrow && this.registry.module(module)?.sidebarWhenNarrow === "hide"
+    );
+  }
+
   /** Whether the module's sidebar is drawn right now. */
   sidebarShown(module: string): boolean {
-    if (this.#narrow) return this.#shownNarrow[module] === true;
+    if (this.#hidesWhenNarrow(module))
+      return this.#shownNarrow[module] === true;
     return this.sidebar(module).visible;
   }
 
   toggleSidebar(module: string): void {
-    if (this.#narrow) {
+    if (this.#hidesWhenNarrow(module)) {
       this.#shownNarrow[module] = !this.sidebarShown(module);
       return;
     }
@@ -107,7 +115,7 @@ export class Shell {
    * widens, and what is saved stays as it was.
    */
   showSidebar(module: string): void {
-    if (this.#narrow) {
+    if (this.#hidesWhenNarrow(module)) {
       this.#shownNarrow[module] = true;
       return;
     }

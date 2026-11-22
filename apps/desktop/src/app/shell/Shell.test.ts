@@ -332,7 +332,10 @@ test("window environment tabs follow the active environment", async () => {
 
 test("the_title_bar_button_follows_what_is_shown", async () => {
   const { shell } = setup(
-    railModule("requests", 1, { sidebar: view("requests sidebar") }),
+    railModule("requests", 1, {
+      sidebar: view("requests sidebar"),
+      sidebarWhenNarrow: "hide",
+    }),
   );
   await shell.openModule("requests");
   shell.narrow = true;
@@ -342,6 +345,28 @@ test("the_title_bar_button_follows_what_is_shown", async () => {
     screen.getByRole("button", { name: "Hide sidebar" }),
   ).toBeInTheDocument();
   expect(await screen.findByText("requests sidebar")).toBeInTheDocument();
+});
+
+test("a_narrow_window_hides_only_the_sidebar_of_a_hide_module", async () => {
+  const { shell } = setup(
+    railModule("settings", 1, { sidebar: view("settings sidebar") }),
+    railModule("requests", 2, {
+      sidebar: view("requests sidebar"),
+      sidebarWhenNarrow: "hide",
+    }),
+  );
+  shell.narrow = true;
+  await shell.openModule("settings");
+  expect(await screen.findByText("settings sidebar")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Hide sidebar" }),
+  ).toBeInTheDocument();
+  await shell.openModule("requests");
+  await tick();
+  expect(screen.queryByText("requests sidebar")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Show sidebar" }),
+  ).toBeInTheDocument();
 });
 
 test("a_held_chord_runs_its_command_once", async () => {

@@ -114,7 +114,9 @@ test("sidebar width and visibility are saved after a pause", async () => {
 });
 
 test("showing_the_sidebar_while_narrow_is_not_saved", () => {
-  const shell = new Shell(registryWith(railModule("requests", 1)));
+  const shell = new Shell(
+    registryWith(railModule("requests", 1, { sidebarWhenNarrow: "hide" })),
+  );
   shell.narrow = true;
   expect(shell.sidebarShown("requests")).toBe(false);
   shell.toggleSidebar("requests");
@@ -126,7 +128,9 @@ test("showing_the_sidebar_while_narrow_is_not_saved", () => {
 });
 
 test("showing_a_sidebar_for_a_module_keeps_a_narrow_window_unsaved", () => {
-  const shell = new Shell(registryWith(railModule("requests", 1)));
+  const shell = new Shell(
+    registryWith(railModule("requests", 1, { sidebarWhenNarrow: "hide" })),
+  );
   shell.restore({
     ...emptyUiState(),
     sidebars: { requests: { visible: false, width: 300 } },
@@ -147,8 +151,30 @@ test("showing_a_sidebar_for_a_module_keeps_a_narrow_window_unsaved", () => {
   });
 });
 
+test("a_hide_module_hides_its_sidebar_when_narrow", () => {
+  const shell = new Shell(
+    registryWith(railModule("requests", 1, { sidebarWhenNarrow: "hide" })),
+  );
+  shell.narrow = true;
+  expect(shell.sidebarShown("requests")).toBe(false);
+});
+
+test("a_keep_module_keeps_its_sidebar_when_narrow", () => {
+  const shell = new Shell(registryWith(railModule("settings", 1)));
+  shell.narrow = true;
+  expect(shell.sidebarShown("settings")).toBe(true);
+  shell.toggleSidebar("settings");
+  expect(shell.sidebarShown("settings")).toBe(false);
+  expect(shell.snapshot().sidebars.settings?.visible).toBe(false);
+  shell.showSidebar("settings");
+  expect(shell.sidebarShown("settings")).toBe(true);
+  expect(shell.snapshot().sidebars.settings?.visible).toBe(true);
+});
+
 test("a_sidebar_hidden_by_the_user_stays_hidden_when_wide", () => {
-  const shell = new Shell(registryWith(railModule("requests", 1)));
+  const shell = new Shell(
+    registryWith(railModule("requests", 1, { sidebarWhenNarrow: "hide" })),
+  );
   shell.restore({
     ...emptyUiState(),
     sidebars: { requests: { visible: false, width: 280 } },

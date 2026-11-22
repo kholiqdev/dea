@@ -35,3 +35,17 @@ test("the manifest schema includes searchSources", () => {
     "group",
   );
 });
+
+test("sidebarWhenNarrow accepts hide and keep only", () => {
+  const published = JSON.parse(
+    readFileSync(join(here, "manifest.schema.json"), "utf8"),
+  ) as {
+    definitions: Record<
+      string,
+      { properties?: Record<string, { enum?: string[] }> }
+    >;
+  };
+  expect(
+    published.definitions.ManifestData?.properties?.sidebarWhenNarrow?.enum,
+  ).toEqual(["hide", "keep"]);
+});

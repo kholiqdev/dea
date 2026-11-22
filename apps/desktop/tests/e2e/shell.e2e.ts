@@ -61,18 +61,13 @@ describe("the shell", () => {
       // The widest shell: Settings with its sidebar, then with the rail open.
       await browser.keys([MOD, ","]);
       await expect(mainHeading("Appearance")).toBeDisplayed();
-      // At 1024 px the sidebar steps aside; the title bar brings it back.
-      const sidebar = $('aside[aria-label="Settings sidebar"]');
-      await expect(sidebar).not.toExist();
-      expect(await controlsOutsideTheWindow()).toEqual([]);
-      await $('button[aria-label="Show sidebar"]').click();
-      await expect(sidebar).toBeDisplayed();
+      // Settings keeps its sidebar at 1024 px; only Requests hides its own.
+      await expect($('aside[aria-label="Settings sidebar"]')).toBeDisplayed();
       expect(await controlsOutsideTheWindow()).toEqual([]);
       await $('button[aria-label="Show module names"]').click();
       expect(await controlsOutsideTheWindow()).toEqual([]);
       await $('button[aria-label="Collapse the rail"]').click();
     });
-    // Showing it in the narrow window saved nothing: wide again, it was there.
     await expect($('aside[aria-label="Settings sidebar"]')).toBeDisplayed();
   });
 

@@ -94,6 +94,12 @@ export interface ManifestData {
    * title. `module`: the module's sidebar draws its own head.
    */
   sidebarHeader?: "shell" | "module";
+  /**
+   * `keep` (the default): the sidebar stays in a narrow window (1024 px or
+   * less). `hide`: the sidebar steps aside, and the title bar brings it back
+   * until the window widens.
+   */
+  sidebarWhenNarrow?: "hide" | "keep";
   tabTypes?: TabTypeData[];
   panels?: PanelData[];
   commands?: CommandData[];

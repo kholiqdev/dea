@@ -141,6 +141,11 @@
           "enum": ["shell", "module"],
           "type": "string"
         },
+        "sidebarWhenNarrow": {
+          "description": "`keep` (the default): the sidebar stays in a narrow window (1024 px or less). `hide`: the sidebar steps aside, and the title bar brings it back until the window widens.",
+          "enum": ["hide", "keep"],
+          "type": "string"
+        },
         "statusItems": {
           "items": {
             "$ref": "#/definitions/StatusItemData"
