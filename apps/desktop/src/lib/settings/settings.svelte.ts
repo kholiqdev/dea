@@ -22,7 +22,11 @@ export const DEFAULT_SETTINGS: Settings = {
     autoLockMinutes: 15,
     productionMinutes: 10,
   },
-  requests: { autosave: false, responseLayout: "right" },
+  requests: {
+    autosave: false,
+    responseLayout: "right",
+    responseSplit: { right: 44, below: 40 },
+  },
 };
 
 export interface SettingsPatch {

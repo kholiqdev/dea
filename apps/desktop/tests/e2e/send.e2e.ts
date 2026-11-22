@@ -12,6 +12,7 @@ import { $, browser, expect } from "@wdio/globals";
 import { Key } from "webdriverio";
 import {
   MOD,
+  logFrame,
   longestFrameDuring,
   openPalette,
   paletteActive,
@@ -28,6 +29,8 @@ import {
   openRequest,
   productionDialog,
   sendButton,
+  sendFace,
+  timingBar,
   until,
   waitForSendToEnd,
 } from "./requests-support.js";
@@ -66,10 +69,34 @@ describe("sending requests", () => {
     expect(sent()).toBe(1);
     const toolbar = await textOf(TOOLBAR);
     expect(toolbar).toContain("ms");
-    expect(toolbar).toContain("HTTP/1.1");
-    expect(
-      await $(RESPONSE).$('[role="img"]').getAttribute("aria-label"),
-    ).toMatch(/^Timing,/);
+    expect(await timingBar().getAttribute("aria-label")).toMatch(/^Timing,/);
+    // The version is in the row only while the pane is 560 px wide or more.
+    // Narrower, the timing legend has it, and the timing bar opens that.
+    const opened = (await timingBar().getAttribute("aria-expanded")) === "true";
+    // The legend stays open for the session: leave it as it was found,
+    // whether or not the checks pass.
+    try {
+      if (!opened) await timingBar().click();
+      await browser.waitUntil(
+        async () =>
+          (await timingBar().getAttribute("aria-expanded")) === "true",
+        { timeoutMsg: "the timing bar did not open its legend" },
+      );
+      await $(RESPONSE).$('ul[aria-label="Timing"]').waitForDisplayed();
+      // innerText leaves out what a container query hides.
+      const shown = await browser.execute(
+        (s) =>
+          (document.querySelector(s)?.parentElement as HTMLElement).innerText,
+        TOOLBAR,
+      );
+      expect(shown).toContain("HTTP/1.1");
+    } finally {
+      if (
+        !opened &&
+        (await timingBar().getAttribute("aria-expanded")) === "true"
+      )
+        await timingBar().click();
+    }
     // The body opens in the editor, which loads on first use.
     await waitForText(
       '.cm-content[aria-label="Response body"]',
@@ -107,13 +134,24 @@ describe("sending requests", () => {
     await openRequest(root, "staging", "Slow shipment");
     const sent = arrivals(server, path);
     const abortedBefore = server.aborted(path);
+    const width = () =>
+      browser.execute(
+        () =>
+          document.querySelector("button[data-send]")!.getBoundingClientRect()
+            .width,
+      );
+    const sendWidth = await width();
 
     await sendButton().click();
     await until(() => sent() === 1, "the slow request to arrive");
     await browser.waitUntil(
-      async () => (await sendButton().getText()).includes("Cancel"),
-      { timeoutMsg: "Send did not turn into Cancel" },
+      async () => (await sendFace())?.includes("Cancel"),
+      {
+        timeoutMsg: "Send did not turn into Cancel",
+      },
     );
+    // Both faces share one cell, so Cancel is as wide as Send was.
+    expect(Math.abs((await width()) - sendWidth)).toBeLessThanOrEqual(1);
     // A second click within the double-click time would be ignored as the
     // end of a double click on Send.
     await browser.pause(1_000);
@@ -170,6 +208,9 @@ describe("sending requests", () => {
         },
       ],
     ];
+
+    // The bar says where the request leaves.
+    expect(await sendFace()).toContain("Send to production");
 
     for (const [from, send] of paths) {
       const sent = arrivals(server, "/json");
@@ -266,6 +307,7 @@ describe("sending requests", () => {
       await sendButton().click();
       await waitForText(TOOLBAR, "200 OK", 60_000);
     });
+    logFrame("a 50 MB upload", longest);
     expect(longest).toBeLessThanOrEqual(100); // F1-REQ-03 #5
     expect(server.received("/upload")[0]?.bodyBytes).toBe(FIFTY_MIB);
   });

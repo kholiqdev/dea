@@ -9,6 +9,8 @@
     onclick: () => void;
     /** Ghost is the quieter choice, such as discarding. */
     variant?: "secondary" | "ghost";
+    /** Keycaps after the label; shown, not read, so the name stays the label. */
+    keys?: string[];
   }
 </script>
 
@@ -42,6 +44,12 @@
           onclick={action.onclick}
         >
           {action.label}
+          {#if action.keys}
+            <span class="keys" aria-hidden="true">
+              {#each action.keys as key, i (i)}<kbd class="kc">{key}</kbd
+                >{/each}
+            </span>
+          {/if}
         </Button>
       {/each}
     </div>
@@ -91,5 +99,25 @@
     display: flex;
     flex: none;
     gap: var(--s-2);
+  }
+
+  .keys {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: var(--s-2);
+  }
+
+  .kc {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: var(--r-key);
+    background: var(--bg-3);
+    box-shadow: inset 0 0 0 1px var(--line);
+    font: 500 11px/1 var(--font-mono);
+    color: var(--text-2);
   }
 </style>

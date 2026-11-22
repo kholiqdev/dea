@@ -118,9 +118,11 @@ beforeEach(() => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: () => Promise.resolve(),
     toast: (text) => toasts.push(text),
     dismissToast: () => {},
+    confirmingSend: false,
     runCommand: () => Promise.resolve(),
   });
   clearMocks();

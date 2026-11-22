@@ -1,8 +1,13 @@
 <!--
-  The line above a response: its status, time, size and version, what it
-  can do (copy, save, move the panel), and the environment it was sent in
-  when that is no longer the window's. While sending it only shows the
-  seconds that went by.
+  The first row of the response header: its status, time, timing bar, size
+  and version, the environment it was sent in, and what it can do (copy,
+  save, move the panel). It never wraps: the reason gives way first, a
+  narrow row drops the size and the version, which the timing legend under
+  it still shows, and a narrower one the timing bar. While a warning stands
+  in front of the response, the strip under the second row marks it as the
+  previous one, and this row shows it muted. While sending it shows the
+  seconds that went by; while Dea asks whether to send to production, that
+  it waits.
 -->
 <script lang="ts">
   import Copy from "@lucide/svelte/icons/copy";
@@ -13,6 +18,7 @@
   import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
   import { errorMessage } from "$lib/ipc/errors";
   import { copyResponse, saveResponse } from "$lib/ipc/responses";
+  import { sessionView } from "../../state/session-view.svelte";
   import {
     formatBytes,
     formatMs,
@@ -21,15 +27,20 @@
     suggestedName,
   } from "../../lib/format";
   import SentInPill from "./SentInPill.svelte";
+  import TimingBar from "./TimingBar.svelte";
+  import { sizeTier, timingPhases } from "./timing";
 
   let {
     tabId,
     name,
     response = null,
     elapsed = null,
-    sentIn = null,
+    waiting = false,
+    environment = null,
+    stale = false,
     layout,
     stacked,
+    width = 0,
     ontogglelayout,
   }: {
     tabId: string;
@@ -38,14 +49,23 @@
     response?: ResponseInfo | null;
     /** Milliseconds since the send began; set while sending. */
     elapsed?: number | null;
-    sentIn?: { name: string; production: boolean } | null;
+    /** The send waits for its confirmation to go to production. */
+    waiting?: boolean;
+    /** The environment the request was sent in. */
+    environment?: { name: string; production: boolean; moved: boolean } | null;
+    /** A warning stands in front of this response: it shows muted. */
+    stale?: boolean;
     layout: "right" | "below";
     /** The panel is below whatever the setting says. */
     stacked: boolean;
+    /** The pane's width in px; 0 while not measured, which counts as wide. */
+    width?: number;
     ontogglelayout: () => void;
   } = $props();
 
   const shell = shellApi();
+  const uid = $props.id();
+  const size = $derived(sizeTier(width));
 
   const copyOff = $derived.by(() => {
     if (!response) return null;
@@ -79,117 +99,231 @@
   }
 </script>
 
-<div
-  class="toolbar"
-  role="toolbar"
-  aria-label="Response"
-  data-tone={response ? statusTone(response.status) : "muted"}
->
-  {#if response}
-    <span class="dot" aria-hidden="true"></span>
-    <span class="status">{response.status} {response.reason}</span>
-    <span class="fact">{formatMs(response.timing.totalMs)}</span>
-    <span class="fact">{formatBytes(response.size)}</span>
-    <span class="fact">{response.version}</span>
-    {#if sentIn}
-      <SentInPill {...sentIn} />
-    {/if}
-    <span class="spacer"></span>
-    <button
-      type="button"
-      class="icon"
-      aria-label="Copy response"
-      title={copyOff || "Copy response"}
-      disabled={copyOff !== null}
-      onclick={() => void copy()}
-    >
-      <Copy size={16} strokeWidth={1.5} />
-    </button>
-    <button
-      type="button"
-      class="icon"
-      aria-label="Save response to file"
-      title="Save response to file"
-      disabled={empty}
-      onclick={() => void save()}
-    >
-      <Download size={16} strokeWidth={1.5} />
-    </button>
-    {#if !stacked}
-      {@const label =
-        layout === "right"
-          ? "Show response below"
-          : "Show response on the right"}
-      <button
-        type="button"
-        class="icon"
-        aria-label={label}
-        title={label}
-        onclick={ontogglelayout}
-      >
-        {#if layout === "right"}
-          <PanelBottom size={16} strokeWidth={1.5} />
-        {:else}
-          <PanelRight size={16} strokeWidth={1.5} />
+<!-- Its width, the pane's, decides what the rows leave out: `data-size`
+     holds the tier, and the rules below follow it. -->
+<div class="head" data-size={size}>
+  <div
+    class="toolbar"
+    role="toolbar"
+    aria-label="Response"
+    data-tone={response && !stale ? statusTone(response.status) : "muted"}
+  >
+    {#if response}
+      <span class="status">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="code">{response.status}</span>
+        <span class="reason">{response.reason}</span>
+        <span class="fact">{formatMs(response.timing.totalMs)}</span>
+        <TimingBar
+          timing={response.timing}
+          controls="{uid}-legend"
+          muted={stale}
+        />
+        <span class="fact size">{formatBytes(response.size)}</span>
+        <span class="fact version">{response.version}</span>
+        {#if environment}
+          <SentInPill {...environment} />
         {/if}
-      </button>
+      </span>
+      <span class="actions">
+        <button
+          type="button"
+          class="icon"
+          aria-label="Copy response"
+          title={copyOff || "Copy response"}
+          disabled={copyOff !== null}
+          onclick={() => void copy()}
+        >
+          <Copy size={16} strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          class="icon"
+          aria-label="Save response to file"
+          title="Save response to file"
+          disabled={empty}
+          onclick={() => void save()}
+        >
+          <Download size={16} strokeWidth={1.5} />
+        </button>
+        {#if !stacked}
+          {@const label =
+            layout === "right"
+              ? "Show response below"
+              : "Show response on the right"}
+          <button
+            type="button"
+            class="icon"
+            aria-label={label}
+            title={label}
+            onclick={ontogglelayout}
+          >
+            {#if layout === "right"}
+              <PanelBottom size={16} strokeWidth={1.5} />
+            {:else}
+              <PanelRight size={16} strokeWidth={1.5} />
+            {/if}
+          </button>
+        {/if}
+      </span>
+    {:else}
+      <span class="sending">
+        {waiting ? "Waiting for confirmation" : "Sending"}
+      </span>
+      {#if elapsed !== null}<span class="fact">{formatSeconds(elapsed)}</span
+        >{/if}
+      {#if environment}
+        <SentInPill {...environment} />
+      {/if}
     {/if}
-  {:else}
-    <span class="status">Sending</span>
-    {#if elapsed !== null}<span class="fact">{formatSeconds(elapsed)}</span
-      >{/if}
+  </div>
+  {#if response && sessionView.timingLegend}
+    {@const timing = response.timing}
+    <div class="legend" id="{uid}-legend">
+      <ul class="phases" aria-label="Timing">
+        {#each timingPhases(timing) as phase (phase.id)}
+          {@const ms = formatMs(phase.ms)}
+          <li class={{ zero: phase.ms <= 0 }} title="{phase.label} {ms}">
+            <span
+              class="swatch"
+              style:background={phase.color}
+              aria-hidden="true"
+            ></span>
+            <span class={["name", { long: phase.short !== undefined }]}
+              >{phase.label}</span
+            >
+            {#if phase.short}
+              <!-- Drawn from its attribute: the text of the page keeps one
+                   name for each phase. -->
+              <span class="short" aria-hidden="true" data-short={phase.short}
+              ></span>
+            {/if}
+            <span class="ms">{ms}</span>
+            {#if timing.reused && phase.id === "tls"}
+              <span class="reused">reused</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+      <span class="fact size">{formatBytes(response.size)}</span>
+      <span class="fact version">{response.version}</span>
+    </div>
   {/if}
 </div>
 
 <style>
+  /* Both rows are as wide as the pane, which sets their tier. */
+  .head {
+    flex: none;
+  }
+
+  /* One row whatever its width. A narrow row leaves out the size and the
+     version, a narrower one the timing bar; short of room, the status gives
+     way and the actions stay whole. */
   .toolbar {
     height: 40px;
-    flex: none;
     display: flex;
     align-items: center;
     gap: var(--s-3);
     padding: 0 var(--s-4);
+    overflow: hidden;
+    white-space: nowrap;
     box-shadow: inset 0 -1px 0 var(--line);
     --tone: var(--text-3);
+    --tone-text: var(--text-2);
   }
 
   .toolbar[data-tone="positive"] {
     --tone: var(--positive);
+    --tone-text: var(--positive-text);
   }
 
   .toolbar[data-tone="accent"] {
     --tone: var(--accent);
+    --tone-text: var(--warning-text);
   }
 
   .toolbar[data-tone="warning"] {
     --tone: var(--warning);
+    --tone-text: var(--warning-text);
   }
 
   .toolbar[data-tone="negative"] {
     --tone: var(--negative);
+    --tone-text: var(--negative-text);
+  }
+
+  /* Everything but the actions. Short of room, the reason gives way, and
+     nothing else shrinks; past that the end of the group is cut, never the
+     actions. As tall as the row, so a focus ring inside it shows whole. */
+  .status {
+    flex: 0 1 auto;
+    min-width: 0;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    overflow: hidden;
   }
 
   .dot {
+    flex: none;
     width: 8px;
     height: 8px;
     border-radius: 4px;
     background: var(--tone);
   }
 
-  .status {
+  .code {
+    flex: none;
+    font: 600 15px/20px var(--font-mono);
+    color: var(--tone-text);
+  }
+
+  /* 6 px from its code; shrinks long before anything else does. */
+  .reason {
+    flex: 0 1000 auto;
+    min-width: 0;
+    margin-left: calc(6px - var(--s-3));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-2);
+  }
+
+  .sending {
+    flex: none;
     font-weight: 500;
     color: var(--text-1);
   }
 
   .fact {
+    flex: none;
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 16px;
     color: var(--text-3);
   }
 
-  .spacer {
-    flex: 1;
+  /* Below 560 px the size and the version move to the legend, and below
+     480 px the timing bar goes; the legend stays as it was. */
+  .head:is([data-size="small"], [data-size="tiny"]) .toolbar .version {
+    display: none;
+  }
+
+  .head:is([data-size="small"], [data-size="tiny"]) .toolbar .size {
+    display: none;
+  }
+
+  .head[data-size="tiny"] .toolbar :global(.timing) {
+    display: none;
+  }
+
+  .actions {
+    flex: none;
+    display: flex;
+    margin-left: auto;
   }
 
   .icon {
@@ -211,5 +345,147 @@
 
   .icon:disabled {
     color: var(--text-4);
+  }
+
+  /* The timing legend, under the row: its phases, then the size and the
+     version when the row above leaves them out. Every phase shows a name
+     at every width: a shorter one where the full ones do not fit, and
+     where even those do not, the phases go on to a second line. */
+  .legend {
+    min-height: 28px;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-4);
+    padding: 0 var(--s-4);
+    overflow: hidden;
+    white-space: nowrap;
+    box-shadow: inset 0 -1px 0 var(--line);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--text-3);
+  }
+
+  .legend > .fact {
+    line-height: 28px;
+  }
+
+  .phases {
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: var(--s-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .phases li {
+    position: relative;
+    flex: none;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+
+  .short {
+    display: none;
+  }
+
+  .short::before {
+    content: attr(data-short);
+  }
+
+  .ms {
+    font-family: var(--font-mono);
+    color: var(--text-2);
+  }
+
+  .reused {
+    padding: 0 6px;
+    border-radius: var(--r-key);
+    background: var(--bg-3);
+    color: var(--text-2);
+  }
+
+  .head:is([data-size="wide"], [data-size="medium"]) .legend .version {
+    display: none;
+  }
+
+  .head:is([data-size="wide"], [data-size="medium"]) .legend .size {
+    display: none;
+  }
+
+  /* Too narrow for the full names, which take about 610 px with a fresh
+     connection and 650 px with a reused or slow one: closer, and a long
+     name shows short, the full one kept for a screen reader and in its
+     title. */
+  .head:not([data-size="wide"]) .name.long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .head:not([data-size="wide"]) .short {
+    display: inline;
+  }
+
+  .head:not([data-size="wide"]) .legend,
+  .head:not([data-size="wide"]) .phases {
+    column-gap: var(--s-2);
+  }
+
+  .head:not([data-size="wide"]) .phases li {
+    gap: var(--s-1);
+  }
+
+  /* Below 560 px the size and the version follow the phases: a line parts
+     them. Smaller and closer, and a phase that took no time shows its
+     colour and name, its time kept for a screen reader, so the phases, the
+     size and the version keep to one line down to about 490 px with a
+     reused connection and 540 px with a fresh one; slower times take a
+     second line. */
+  .head:is([data-size="small"], [data-size="tiny"]) .legend,
+  .head:is([data-size="small"], [data-size="tiny"]) .legend .fact {
+    font-size: 11px;
+  }
+
+  .head:is([data-size="small"], [data-size="tiny"]) .legend,
+  .head:is([data-size="small"], [data-size="tiny"]) .phases {
+    column-gap: 6px;
+  }
+
+  .head:is([data-size="small"], [data-size="tiny"]) .phases {
+    padding-right: 6px;
+    box-shadow: inset -1px 0 0 var(--line);
+  }
+
+  .head:is([data-size="small"], [data-size="tiny"]) .phases li {
+    gap: 3px;
+  }
+
+  .head:is([data-size="small"], [data-size="tiny"]) .zero .ms {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

@@ -1,6 +1,7 @@
 <!--
   A request on its way: the phases of the connection as they end, what it
-  waits for now, and a skeleton where the body will be.
+  waits for now, and a skeleton where the body will be. Before it leaves,
+  while Dea asks whether to send it to production, only that nothing went.
 -->
 <script lang="ts">
   import { formatBytes, formatMs, formatSeconds } from "../../lib/format";
@@ -11,10 +12,13 @@
   let {
     sending,
     elapsed,
+    waiting,
   }: {
     sending: Extract<ExchangeState, { phase: "sending" }>;
     /** Milliseconds since the send began. */
     elapsed: number;
+    /** The send waits for its confirmation to go to production. */
+    waiting: boolean;
   } = $props();
 
   const LABELS = { dns: "DNS lookup", connect: "Connect", tls: "TLS" } as const;
@@ -29,6 +33,14 @@
 </script>
 
 <div class="sending">
+  {#if waiting}
+    <p class="hold">Nothing is sent until you confirm.</p>
+  {:else}
+    {@render progress()}
+  {/if}
+</div>
+
+{#snippet progress()}
   <div
     class="progress"
     role="progressbar"
@@ -74,7 +86,7 @@
       received={sending.received}
     />
   {/if}
-</div>
+{/snippet}
 
 <style>
   .sending {
@@ -84,6 +96,11 @@
     flex-direction: column;
     gap: var(--s-4);
     padding: var(--s-4);
+  }
+
+  .hold {
+    margin: 0;
+    color: var(--text-2);
   }
 
   .progress {

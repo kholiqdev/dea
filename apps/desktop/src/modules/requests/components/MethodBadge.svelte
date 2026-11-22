@@ -4,29 +4,14 @@
   with the full name in `title`.
 -->
 <script lang="ts">
+  import { methodColor, methodLabel } from "$lib/http/method";
   let {
     method,
     size = "default",
   }: { method: string; size?: "small" | "default" } = $props();
 
-  const STANDARD = new Set([
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "HEAD",
-    "OPTIONS",
-  ]);
-  const MAX = 7;
-
-  const standard = $derived(STANDARD.has(method.toUpperCase()));
-  const text = $derived(
-    method.length > MAX ? `${method.slice(0, MAX)}…` : method,
-  );
-  const color = $derived(
-    standard ? `var(--method-${method.toLowerCase()})` : "var(--text-2)",
-  );
+  const text = $derived(methodLabel(method));
+  const color = $derived(methodColor(method));
 </script>
 
 <span class="method" class:small={size === "small"} style:color title={method}

@@ -7,11 +7,11 @@
   import FileExclamationPoint from "@lucide/svelte/icons/file-exclamation-point";
   import FileX from "@lucide/svelte/icons/file-x";
   import { tick, untrack } from "svelte";
-  import { MediaQuery } from "svelte/reactivity";
   import FileBanner from "@dea/ui/FileBanner.svelte";
   import Placeholder from "@dea/ui/Placeholder.svelte";
   import { projectApi } from "$app/contributions/project-api";
   import { shellApi } from "$app/contributions/shell-api";
+  import type { ResponseLayout } from "$lib/ipc/bindings/ResponseLayout";
   import type { SendOptions } from "$lib/ipc/bindings/SendOptions";
   import { errorMessage } from "$lib/ipc/errors";
   import { settings } from "$lib/settings/settings.svelte";
@@ -22,6 +22,8 @@
   import ResponsePane from "./components/response/ResponsePane.svelte";
   import ParamsSection from "./components/ParamsSection.svelte";
   import RequestLine from "./components/RequestLine.svelte";
+  import ResolvedUrl from "./components/ResolvedUrl.svelte";
+  import SplitPane from "./components/SplitPane.svelte";
   import {
     draftFor,
     drafts,
@@ -30,9 +32,11 @@
   } from "./state/drafts.svelte";
   import TlsWarning from "./components/TlsWarning.svelte";
   import UndefinedWarning from "./components/UndefinedWarning.svelte";
+  import { sendKeepingFocus } from "./lib/send-focus";
+  import { whereUsed, type Usage } from "./lib/usage";
   import { exchangeFor } from "./state/exchange.svelte";
   import { DEFAULT_OPTIONS } from "./state/folders.svelte";
-  import { toggleResponseLayout } from "./state/layout";
+  import { setResponseSplit, toggleResponseLayout } from "./state/layout";
   import { saveTab } from "./state/synced-file.svelte";
   import { VariableLookup } from "./state/variables.svelte";
 
@@ -69,14 +73,15 @@
       ),
     ),
   });
-  // The response sits right of the editor unless the setting or a narrow
-  // window puts it below.
-  const narrow = new MediaQuery("(max-width: 959px)");
-  const layout = $derived(
-    narrow.current ? "below" : settings.requests.responseLayout,
-  );
+  // Where the first undefined variable of the warning is used.
+  const usage = $derived.by(() => {
+    const name = exchange.warning?.[0];
+    return name === undefined ? null : whereUsed(draft.draft, name);
+  });
+  // The split puts the response below when the work area is too narrow.
+  let stacked = $state(false);
   let tablist = $state<HTMLElement>();
-  let editor = $state<HTMLElement>();
+  let view = $state<HTMLElement>();
 
   shell.setSaveHandler("requests.request", (tabId) => saveTab(drafts, tabId));
 
@@ -99,6 +104,30 @@
     return () => draft.cancelInspection();
   });
 
+  // An edit takes the undefined-variable warning down: it was about the
+  // draft as it was. The fields are listed one by one, so `name` is never
+  // read: a rename from the sidebar rewrites it without an edit. The first
+  // run only notes the draft, as the view is made anew on each tab switch
+  // while the warning stays.
+  let seen: string | null = null;
+  $effect(() => {
+    const d = draft.draft;
+    const now = JSON.stringify([
+      d.method,
+      d.url,
+      d.pathVariables,
+      d.params,
+      d.headers,
+      d.body,
+      d.auth,
+      d.options,
+    ]);
+    const before = seen;
+    seen = now;
+    if (before !== null && before !== now)
+      untrack(() => exchange.clearWarning());
+  });
+
   $effect(() => shell.setTabDirty(id, draft.dirty));
 
   // Autosaves a second after the last edit, or after an outside change is
@@ -117,11 +146,70 @@
       shell.updateTab(id, { title: name });
   });
 
+  // The tab shows the method of the request. A tab restored from an older
+  // session has only a path, and learns it here once the draft is loaded.
+  $effect(() => {
+    if (!draft.saved) return;
+    const method = draft.draft.method;
+    untrack(() => {
+      const params = tab.params as { path: string; method?: string } | null;
+      if (params && params.method !== method)
+        shell.updateTab(id, { params: { ...params, method } });
+    });
+  });
+
   // A closed tab takes its edits with it; reopening it reads the file.
   $effect(() => () => pruneDrafts());
 
   function save(): void {
     draft.save().catch((e: unknown) => shell.toast(errorMessage(e)));
+  }
+
+  /** Sends; not confirmed, the focus goes back to where it was. */
+  function send(opts: { anyway?: boolean } = {}): void {
+    void sendKeepingFocus(exchange, draft, opts);
+  }
+
+  /** Calls `find` until it gives an element, which the editor's lazy load may delay. */
+  async function focusWhenFound(find: () => HTMLElement | null | undefined) {
+    for (let tries = 0; tries < 40; tries++) {
+      const found = find();
+      if (found) {
+        found.focus();
+        return;
+      }
+      await new Promise((done) => setTimeout(done, 50));
+    }
+  }
+
+  /** Opens where the warning's first variable is used and focuses it. */
+  async function showUsage(place: Usage): Promise<void> {
+    if (place.section !== "url") draft.section = place.section;
+    await tick();
+    if (place.section === "url")
+      await focusWhenFound(() =>
+        view?.querySelector<HTMLElement>('input[aria-label="URL"]'),
+      );
+    else if (place.section === "body")
+      await focusWhenFound(() =>
+        view?.querySelector<HTMLElement>('.cm-content[aria-label="Body"]'),
+      );
+    else {
+      const table = place.section === "params" ? "Query parameters" : "Headers";
+      await focusWhenFound(() => {
+        const rows = view
+          ?.querySelector(`table[aria-label="${table}"]`)
+          ?.querySelectorAll("tbody tr");
+        return rows?.[place.row]?.querySelector<HTMLElement>("td.value input");
+      });
+    }
+  }
+
+  /** Saves the request panel's share; a refused save is a toast. */
+  function resize(layout: ResponseLayout, percent: number): Promise<void> {
+    return setResponseSplit(layout, percent).catch((e: unknown) => {
+      shell.toast(errorMessage(e));
+    });
   }
 
   function close(): void {
@@ -138,7 +226,7 @@
     const target = e.target;
     if (
       target !== document.body &&
-      !(target instanceof Node && editor?.contains(target))
+      !(target instanceof Node && view?.contains(target))
     )
       return;
     exchange.cancel();
@@ -178,141 +266,145 @@
 {:else if !draft.saved}
   {#if draft.error}{@render problem(draft.error)}{/if}
 {:else}
-  <div class="split" data-layout={layout}>
-    <div class="editor" bind:this={editor}>
-      <OutsideChange {draft} onclose={close} />
-      {#if draft.error}{@render problem(draft.error)}{/if}
-      {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
+  <div class="view" bind:this={view}>
+    <div class="head">
       <RequestLine
         {draft}
         {variables}
         {readonly}
-        sending={exchange.state.phase === "sending"}
+        production={project.environment?.production ?? false}
+        sending={exchange.state.phase === "sending" && exchange.state.started}
         onsave={save}
-        onsend={() => void exchange.send(draft)}
+        onsend={() => send()}
         oncancel={() => exchange.cancel()}
       />
-      {#if exchange.warning}
-        <UndefinedWarning
-          names={exchange.warning}
-          environment={project.environment?.name ?? null}
-          ondefine={() => void shell.runCommand("project.editEnvironments")}
-          onsendanyway={() => void exchange.send(draft, { anyway: true })}
-        />
-      {/if}
-      <TlsWarning {effective} />
-      <div
-        class="sections"
-        role="tablist"
-        aria-label="Request sections"
-        tabindex="-1"
-        bind:this={tablist}
-        onkeydown={(e) => void onkeydown(e)}
-      >
-        {#each SECTIONS as section (section.id)}
-          {@const selected = draft.section === section.id}
-          <button
-            type="button"
-            role="tab"
-            id="{uid}-{section.id}"
-            aria-selected={selected}
-            aria-controls="{uid}-panel"
-            tabindex={selected ? 0 : -1}
-            onclick={() => (draft.section = section.id)}
-          >
-            {section.label}
-            {#if counts[section.id]}<span class="count"
-                >{counts[section.id]}</span
-              >{/if}
-          </button>
-        {/each}
-      </div>
-      <div
-        class="panel"
-        role="tabpanel"
-        id="{uid}-panel"
-        aria-labelledby="{uid}-{draft.section}"
-      >
-        {#if draft.section === "params"}
-          <ParamsSection {draft} {variables} {readonly} />
-        {:else if draft.section === "headers"}
-          <HeadersSection {draft} {variables} {readonly} />
-        {:else if draft.section === "body"}
-          <BodySection
-            {draft}
-            {variables}
-            {readonly}
-            onerror={(message: string) => shell.toast(message)}
-          />
-        {:else}
-          <NetworkOptions
-            options={draft.draft.options ?? {}}
-            effective={draft.inspection?.options ?? null}
-            scope="request"
-            disabled={readonly}
-            onchange={(options: SendOptions) => draft.setOptions(options)}
-          />
-        {/if}
-      </div>
-    </div>
-    <div class="response">
-      <ResponsePane
-        tabId={id}
-        name={tab.title}
-        {exchange}
-        layout={settings.requests.responseLayout}
-        stacked={narrow.current}
-        ontogglelayout={() => void toggleResponseLayout()}
+      <ResolvedUrl
+        url={draft.inspection?.url ?? null}
+        undefinedNames={draft.inspection?.undefined ?? []}
       />
     </div>
+    <OutsideChange {draft} onclose={close} />
+    {#if draft.error}{@render problem(draft.error)}{/if}
+    {#if draft.inspectionError}{@render problem(draft.inspectionError)}{/if}
+    {#if exchange.warning}
+      <UndefinedWarning
+        names={exchange.warning}
+        environment={project.environment?.name ?? null}
+        {usage}
+        ondefine={() => void shell.runCommand("project.editEnvironments")}
+        onshow={() => usage && void showUsage(usage)}
+        onsendanyway={() => send({ anyway: true })}
+      />
+    {/if}
+    <TlsWarning {effective} />
+    <SplitPane
+      layout={settings.requests.responseLayout}
+      split={settings.requests.responseSplit}
+      oncommit={resize}
+      bind:stacked
+    >
+      {#snippet editor()}
+        <div
+          class="sections"
+          role="tablist"
+          aria-label="Request sections"
+          tabindex="-1"
+          bind:this={tablist}
+          onkeydown={(e) => void onkeydown(e)}
+        >
+          {#each SECTIONS as section (section.id)}
+            {@const selected = draft.section === section.id}
+            <button
+              type="button"
+              role="tab"
+              id="{uid}-{section.id}"
+              aria-selected={selected}
+              aria-controls="{uid}-panel"
+              tabindex={selected ? 0 : -1}
+              onclick={() => (draft.section = section.id)}
+            >
+              {section.label}
+              {#if counts[section.id]}<span class="count"
+                  >{counts[section.id]}</span
+                >{/if}
+            </button>
+          {/each}
+        </div>
+        <div
+          class="panel"
+          role="tabpanel"
+          id="{uid}-panel"
+          aria-labelledby="{uid}-{draft.section}"
+        >
+          {#if draft.section === "params"}
+            <ParamsSection
+              {draft}
+              {variables}
+              {readonly}
+              highlight={usage?.section === "params" ? usage.row : null}
+            />
+          {:else if draft.section === "headers"}
+            <HeadersSection
+              {draft}
+              {variables}
+              {readonly}
+              highlight={usage?.section === "headers" ? usage.row : null}
+            />
+          {:else if draft.section === "body"}
+            <BodySection
+              {draft}
+              {variables}
+              {readonly}
+              onerror={(message: string) => shell.toast(message)}
+            />
+          {:else}
+            <NetworkOptions
+              options={draft.draft.options ?? {}}
+              effective={draft.inspection?.options ?? null}
+              scope="request"
+              disabled={readonly}
+              onchange={(options: SendOptions) => draft.setOptions(options)}
+            />
+          {/if}
+        </div>
+      {/snippet}
+      {#snippet response()}
+        <ResponsePane
+          tabId={id}
+          name={tab.title}
+          {exchange}
+          layout={settings.requests.responseLayout}
+          {stacked}
+          ontogglelayout={() => void toggleResponseLayout()}
+        />
+      {/snippet}
+    </SplitPane>
   </div>
 {/if}
 
 <style>
-  .split {
+  .view {
     flex: 1;
-    min-height: 0;
-    display: flex;
-  }
-
-  .split[data-layout="below"] {
-    flex-direction: column;
-  }
-
-  .editor {
-    flex: 1;
-    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
   }
 
-  .response {
-    min-width: 0;
-    min-height: 0;
+  /* The request bar and the URL under it span the tab. */
+  .head {
+    flex: none;
     display: flex;
     flex-direction: column;
-    box-shadow: inset 0 1px 0 var(--line);
-  }
-
-  .split[data-layout="right"] .response {
-    flex: 1.15;
-    box-shadow: inset 1px 0 0 var(--line);
-  }
-
-  .split[data-layout="below"] .response {
-    flex: 1;
+    box-shadow: inset 0 -1px 0 var(--line);
   }
 
   .sections {
-    height: 40px;
+    height: 36px;
     flex: none;
     display: flex;
     gap: var(--s-5);
     padding: 0 var(--s-4);
-    box-shadow:
-      inset 0 1px 0 var(--line),
-      inset 0 -1px 0 var(--line);
+    box-shadow: inset 0 -1px 0 var(--line);
     overflow-x: auto;
   }
 

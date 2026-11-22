@@ -12,8 +12,14 @@
     draft,
     variables,
     readonly,
-  }: { draft: RequestDraft; variables: VariableLookup; readonly: boolean } =
-    $props();
+    highlight = null,
+  }: {
+    draft: RequestDraft;
+    variables: VariableLookup;
+    readonly: boolean;
+    /** The row of the table a warning points at. */
+    highlight?: number | null;
+  } = $props();
 
   const automatic = $derived(draft.inspection?.automaticHeaders ?? []);
 </script>
@@ -24,6 +30,7 @@
   addLabel="Add header"
   checkboxLabel={sendLabel}
   {variables}
+  {highlight}
   disabled={readonly}
   onchange={(rows: KeyValue[]) => draft.setHeaders(rows)}
 />

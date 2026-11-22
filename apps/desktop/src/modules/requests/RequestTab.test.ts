@@ -1,8 +1,9 @@
 import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
 import type { RequestTreeInfo } from "$lib/ipc/bindings/RequestTreeInfo";
+import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
 import type { FakeProject } from "./fake-project.svelte";
 import RequestTab from "./RequestTab.svelte";
 import {
@@ -11,6 +12,7 @@ import {
   type FakeShell,
 } from "./request-tab-support.svelte";
 import { drafts } from "./state/drafts.svelte";
+import { sessionView } from "./state/session-view.svelte";
 import { resetTreeState, treeState } from "./state/tree.svelte";
 import {
   fakeRequestsIpc,
@@ -44,6 +46,11 @@ let project: FakeProject;
 beforeEach(() => {
   resetTreeState();
   ({ shell, project } = setUpRequestTabs());
+  settings.apply(DEFAULT_SETTINGS);
+});
+
+afterEach(() => {
+  sessionView.descriptions = false;
 });
 
 const calls = (ipc: RequestsIpc, cmd: string) =>
@@ -113,6 +120,9 @@ test("a row with only a description is not in the URL and not written", async ()
   const { id } = openRequestTab(BY_ID);
   const url = await urlField();
   await userEvent.click(screen.getByRole("button", { name: "Add parameter" }));
+  await userEvent.click(
+    screen.getAllByRole("button", { name: "Show descriptions" })[0]!,
+  );
   await userEvent.type(
     screen.getByRole("textbox", { name: "Description of row 1" }),
     "later",
@@ -692,4 +702,101 @@ test("a closed tab forgets its edits, even if it is reopened", async () => {
   render(RequestTab, { props: { tab: shell.tab(id) } });
   expect(await urlField()).toHaveValue(BASE);
   expect(shell.tab(id).dirty).toBe(false);
+});
+
+test("changing_the_method_updates_the_tab", async () => {
+  shipmentsIpc();
+  const { id } = openRequestTab({ path: BY_ID, method: "GET" });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Method: GET" }),
+  );
+  await userEvent.click(
+    within(screen.getByRole("menu")).getByRole("menuitemradio", {
+      name: "DELETE",
+    }),
+  );
+  await waitFor(() =>
+    expect(shell.tab(id).params).toEqual({ path: BY_ID, method: "DELETE" }),
+  );
+});
+
+test("the_final_url_shows_under_the_bar", async () => {
+  const shown = "https://api.harbor.test/v1/shipments/shp_4821";
+  const ipc = fakeRequestsIpc({
+    tree: shipments(),
+    files: { [BY_ID]: byId() },
+    inspection: { url: shown },
+  });
+  openRequestTab(BY_ID);
+  const url = await screen.findByRole("button", {
+    name: `Copy the final URL, ${shown}`,
+  });
+  expect(url).toHaveTextContent(shown);
+  await userEvent.click(url);
+  expect(ipc.copiedTexts).toEqual([shown]);
+  await waitFor(() => expect(shell.toasts).toContain("URL copied"));
+});
+
+test("the_request_bar_spans_the_tab", async () => {
+  shipmentsIpc();
+  openRequestTab(BY_ID);
+  const save = await screen.findByRole("button", { name: "Save request" });
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toHaveAttribute("data-send");
+  expect(document.querySelector(".split")).toBeInTheDocument();
+  expect(save.closest(".split")).toBeNull();
+  expect(send.closest(".split")).toBeNull();
+  // The final URL comes with the first inspection.
+  const url = await screen.findByRole("button", {
+    name: /^Copy the final URL/,
+  });
+  expect(url.closest(".split")).toBeNull();
+});
+
+const divider = () =>
+  screen.findByRole("separator", { name: "Resize the request and response" });
+
+test("a_resized_split_is_saved", async () => {
+  shipmentsIpc();
+  const update = vi.spyOn(settings, "update");
+  try {
+    openRequestTab(BY_ID);
+    const handle = await divider();
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(update).toHaveBeenCalledWith({
+      requests: { responseSplit: { right: 46, below: 40 } },
+    });
+    await waitFor(() =>
+      expect(settings.requests.responseSplit).toEqual({ right: 46, below: 40 }),
+    );
+    expect(handle).toHaveAttribute("aria-valuenow", "46");
+  } finally {
+    update.mockRestore();
+  }
+});
+
+test("a_refused_split_save_says_why_and_puts_the_divider_back", async () => {
+  const ipc = shipmentsIpc();
+  ipc.failures.set("save_settings", {
+    kind: "io",
+    message: "the settings file is read-only",
+  });
+  openRequestTab(BY_ID);
+  const handle = await divider();
+  handle.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  await waitFor(() =>
+    expect(shell.toasts).toContain("The settings file is read-only"),
+  );
+  expect(settings.requests.responseSplit).toEqual({ right: 44, below: 40 });
+  expect(handle).toHaveAttribute("aria-valuenow", "44");
+});
+
+test("an_older_tab_learns_its_method_when_the_draft_loads", async () => {
+  shipmentsIpc({ method: "PUT" });
+  const { id } = openRequestTab(BY_ID);
+  await waitFor(() =>
+    expect(shell.tab(id).params).toEqual({ path: BY_ID, method: "PUT" }),
+  );
 });

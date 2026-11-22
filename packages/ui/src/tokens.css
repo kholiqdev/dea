@@ -92,6 +92,7 @@
   --positive-text: #4cc38a;
   --warning-text: #e6b673;
   --negative-solid: #d13b40;
+  --negative-solid-text: #ffffff;
 
   /* Primary button is off-white on dark */
   --primary-bg: #ededed;
@@ -171,6 +172,7 @@
   --positive-text: #166534;
   --warning-text: #854d0e;
   --negative-solid: #c62f35;
+  --negative-solid-text: #ffffff;
 
   --primary-bg: #171717;
   --primary-text: #ffffff;

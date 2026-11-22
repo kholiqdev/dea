@@ -9,6 +9,9 @@
   import type { FormField } from "$lib/ipc/bindings/FormField";
   import type { VariableLookup } from "../state/variables.svelte";
   import FileChoice from "./FileChoice.svelte";
+  import { columnWidths, watchWidth } from "../lib/columns";
+  import { sessionView } from "../state/session-view.svelte";
+  import DescriptionToggle from "./DescriptionToggle.svelte";
   import VariableField from "./VariableField.svelte";
 
   let {
@@ -26,6 +29,17 @@
   } = $props();
 
   let body = $state<HTMLElement>();
+  let table = $state<HTMLElement>();
+  let tableWidth = $state(0);
+
+  $effect(() => {
+    if (!table) return;
+    return watchWidth(table, (width) => (tableWidth = width));
+  });
+
+  const showDescriptions = $derived(sessionView.descriptions);
+  const widths = $derived(columnWidths(tableWidth, 168, showDescriptions));
+  const hasDescriptions = $derived(fields.some((field) => field.description));
 
   const named = (field: FormField, i: number) => field.name || `row ${i + 1}`;
   const isFile = (field: FormField) => field.file !== undefined;
@@ -51,13 +65,15 @@
 </script>
 
 <div class="card">
-  <table aria-label="Form data">
+  <table aria-label="Form data" bind:this={table}>
     <colgroup>
       <col class="narrow" />
-      <col class="key-col" />
+      <col style:width={widths ? `${widths.key}px` : undefined} />
       <col class="type-col" />
-      <col class="value-col" />
-      <col class="key-col" />
+      <col />
+      {#if showDescriptions}<col
+          style:width={widths ? `${widths.description}px` : undefined}
+        />{/if}
       <col class="narrow" />
     </colgroup>
     <thead>
@@ -66,8 +82,8 @@
         <th scope="col">Key</th>
         <th scope="col">Type</th>
         <th scope="col">Value</th>
-        <th scope="col">Description</th>
-        <td></td>
+        {#if showDescriptions}<th scope="col">Description</th>{/if}
+        <td class="center"><DescriptionToggle {hasDescriptions} /></td>
       </tr>
     </thead>
     <tbody bind:this={body}>
@@ -128,19 +144,21 @@
               />
             {/if}
           </td>
-          <td>
-            <input
-              class="cell description"
-              aria-label="Description of {named(field, i)}"
-              value={field.description ?? ""}
-              {disabled}
-              oninput={(e) =>
-                update(i, (f) => ({
-                  ...f,
-                  description: e.currentTarget.value || undefined,
-                }))}
-            />
-          </td>
+          {#if showDescriptions}
+            <td>
+              <input
+                class="cell description"
+                aria-label="Description of {named(field, i)}"
+                value={field.description ?? ""}
+                {disabled}
+                oninput={(e) =>
+                  update(i, (f) => ({
+                    ...f,
+                    description: e.currentTarget.value || undefined,
+                  }))}
+              />
+            </td>
+          {/if}
           <td class="center">
             <button
               type="button"
@@ -178,10 +196,6 @@
 
   .narrow {
     width: 36px;
-  }
-
-  .key-col {
-    width: 24%;
   }
 
   .type-col {

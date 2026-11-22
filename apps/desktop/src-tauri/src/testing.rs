@@ -101,7 +101,9 @@ pub fn confirmation() -> SendConfirmation {
     SendConfirmation {
         method: "POST".into(),
         url: "https://api.test/v1/x".into(),
+        host: "api.test".into(),
         environment: "production".into(),
+        undefined: Vec::new(),
         can_skip: false,
         secrets: true,
     }

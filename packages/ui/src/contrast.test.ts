@@ -118,3 +118,16 @@ test.each(["dark", "light"] as const)(
     }
   },
 );
+
+test.each(["dark", "light"] as const)(
+  "text on the solid red is at least 4.5:1 in %s",
+  (theme) => {
+    const t = readTokens(tokensCss, theme);
+    expect(
+      contrastRatio(
+        token(t, "--negative-solid-text"),
+        token(t, "--negative-solid"),
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+  },
+);

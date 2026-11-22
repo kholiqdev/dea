@@ -3,6 +3,7 @@
 
 import type { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { flushSync } from "svelte";
 import type { BodyKind } from "$lib/ipc/bindings/BodyKind";
 import type { CookieInfo } from "$lib/ipc/bindings/CookieInfo";
 import type { Filtered } from "$lib/ipc/bindings/Filtered";
@@ -51,12 +52,16 @@ export interface RequestsIpc {
   send: FakeSend;
   /** Ends every held send, with `outcome` or else `send.outcome`. */
   finishSends(outcome?: SendOutcome): void;
+  /** Gives `event` to every held send, as Dea does while one runs. */
+  emitToSends(event: SendEvent): void;
   /** Every `response_rows` call, in order. */
   rowCalls: { id: string; from: number; count: number }[];
   /** Every `list_cookies` call: the environment it asked for. */
   cookieCalls: (string | null)[];
   /** Every `save_response`, in order. */
   savedResponses: { id: string; name: string }[];
+  /** Every `copy_text`, in order: the text put on the clipboard. */
+  copiedTexts: string[];
 }
 
 /** What the fake answers about the last response of a tab. */
@@ -194,6 +199,7 @@ export function bigTree(count: number): RequestTreeInfo {
 }
 
 const EMPTY_INSPECTION: Inspection = {
+  url: "",
   variables: [],
   undefined: [],
   automaticHeaders: [],
@@ -276,8 +282,12 @@ export function fakeRequestsIpc(
     cookies?: Record<string, CookieInfo[]>;
   } = {},
 ): RequestsIpc {
-  // The sends `hold` keeps running, with what ends each.
-  let held: { id: string; end: (outcome: SendOutcome) => void }[] = [];
+  // The sends `hold` keeps running, with what they hear and what ends each.
+  let held: {
+    id: string;
+    channel: Channel<SendEvent>;
+    end: (outcome: SendOutcome) => void;
+  }[] = [];
   const finish = (
     which: (send: { id: string }) => boolean,
     outcome: SendOutcome,
@@ -302,9 +312,13 @@ export function fakeRequestsIpc(
       ...opts.send,
     },
     finishSends: (outcome) => finish(() => true, outcome ?? ipc.send.outcome),
+    emitToSends: (event) => {
+      for (const send of held) send.channel.onmessage(structuredClone(event));
+    },
     rowCalls: [],
     cookieCalls: [],
     savedResponses: [],
+    copiedTexts: [],
   };
   if (opts.errors) ipc.tree.errors = opts.errors;
   const trash = new Map<
@@ -494,6 +508,9 @@ export function fakeRequestsIpc(
             : ipc.inspection;
         return Promise.resolve(answer).then((a) => ({
           ...EMPTY_INSPECTION,
+          // The URL as written, which is what it shows when nothing in it
+          // is a variable.
+          url: (args.request as RequestFile).url,
           ...a,
         }));
       }
@@ -522,7 +539,9 @@ export function fakeRequestsIpc(
         for (const event of ipc.send.events)
           channel.onmessage(structuredClone(event));
         if (!ipc.send.hold) return structuredClone(ipc.send.outcome);
-        return new Promise<SendOutcome>((end) => held.push({ id, end }));
+        return new Promise<SendOutcome>((end) =>
+          held.push({ id, channel, end }),
+        );
       }
       case "cancel_send":
         finish((h) => h.id === args.id, { type: "cancelled" });
@@ -558,6 +577,9 @@ export function fakeRequestsIpc(
       }
       case "copy_response":
         return null;
+      case "copy_text":
+        ipc.copiedTexts.push(args.text as string);
+        return null;
       case "save_response": {
         const name = args.name as string;
         ipc.savedResponses.push({ id: args.id as string, name });
@@ -583,6 +605,65 @@ export function fakeRequestsIpc(
     }
   });
   return ipc;
+}
+
+/**
+ * A `ResizeObserver` for jsdom, which has none, until `restore` is called.
+ * `resize` gives an element a size, its `clientWidth` and `clientHeight`
+ * included, tells every observer watching it, and lets Svelte update the
+ * page before it returns.
+ */
+export function fakeResizeObserver(): {
+  resize: (element: Element, width: number, height: number) => void;
+  restore: () => void;
+} {
+  const watching = new Set<FakeResizeObserver>();
+  class FakeResizeObserver implements ResizeObserver {
+    readonly targets = new Set<Element>();
+    constructor(readonly callback: ResizeObserverCallback) {}
+    observe(target: Element): void {
+      this.targets.add(target);
+      watching.add(this);
+    }
+    unobserve(target: Element): void {
+      this.targets.delete(target);
+    }
+    disconnect(): void {
+      this.targets.clear();
+      watching.delete(this);
+    }
+  }
+  const before = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    writable: true,
+    value: FakeResizeObserver,
+  });
+  return {
+    resize(element, width, height) {
+      for (const [name, value] of [
+        ["clientWidth", width],
+        ["clientHeight", height],
+      ] as const)
+        Object.defineProperty(element, name, { configurable: true, value });
+      const size = [{ inlineSize: width, blockSize: height }];
+      const entry = {
+        target: element,
+        contentRect: new DOMRectReadOnly(0, 0, width, height),
+        borderBoxSize: size,
+        contentBoxSize: size,
+        devicePixelContentBoxSize: size,
+      } as ResizeObserverEntry;
+      for (const observer of [...watching])
+        if (observer.targets.has(element)) observer.callback([entry], observer);
+      flushSync();
+    },
+    restore() {
+      watching.clear();
+      if (before) Object.defineProperty(globalThis, "ResizeObserver", before);
+      else delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+    },
+  };
 }
 
 /** A lookup over a made-up inspection, for the variable field tests. */

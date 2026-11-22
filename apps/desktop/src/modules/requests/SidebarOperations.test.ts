@@ -6,6 +6,7 @@ import {
   within,
 } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import { SvelteMap } from "svelte/reactivity";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { setProjectApi } from "$app/contributions/project-api";
 import { setShellApi } from "$app/contributions/shell-api";
@@ -35,6 +36,10 @@ let tabs: OpenTab[];
 /** Every tab closeTab was asked to close. */
 let closing: string[];
 let modules: string[];
+// Each sidebar shown, and what was being named then.
+let sidebars: { id: string; renaming: string | null }[];
+/** The active tab, read the way the shell's reactive one is. */
+const active = new SvelteMap<"tab", { type: string; path: string }>();
 const toasts = {
   items: [] as ShownToast[],
   get last(): ShownToast {
@@ -96,8 +101,10 @@ beforeEach(() => {
   treeState.expanded.add("requests/shipments");
   treeState.expanded.add("requests/tracking");
   tabs = [];
+  active.clear();
   closing = [];
   modules = [];
+  sidebars = [];
   toasts.items = [];
   setProjectApi(new FakeProject([{ name: "local", production: false }]));
   setShellApi({
@@ -125,18 +132,31 @@ beforeEach(() => {
       const tab = tabs.find((t) => t.id === id);
       if (tab) tab.dirty = dirty;
     },
-    activeTab: () => null,
+    activeTab: () => {
+      const tab = active.get("tab");
+      return tab
+        ? {
+            id: "active",
+            tabType: tab.type,
+            params: { path: tab.path, method: "GET" },
+          }
+        : null;
+    },
     isTabDirty: (id) => tabs.some((t) => t.id === id && t.dirty),
     setSaveHandler: () => {},
     openModule: (id) => {
       modules.push(id);
       return Promise.resolve();
     },
+    showSidebar: (id) => {
+      sidebars.push({ id, renaming: treeState.renaming });
+    },
     toast: (text, opts) => {
       toasts.items.push({ text, ...opts });
       return toasts.items.length;
     },
     dismissToast: () => {},
+    confirmingSend: false,
     runCommand: () => Promise.resolve(),
   });
 });
@@ -871,14 +891,120 @@ test("the newRequest and newCollection commands show the sidebar", async () => {
   const ipc = fakeRequestsIpc({ tree: shipments() });
   await newRequest();
   expect(modules).toEqual(["requests"]);
+  // Shown before the naming starts, also in a window that hides it.
+  expect(sidebars).toEqual([{ id: "requests", renaming: null }]);
   expect(calls(ipc, "create_request")).toEqual([
     { folder: "requests/shipments", name: "New request" },
   ]);
   expect(treeState.renaming).toBe("requests/shipments/new-request.yaml");
+  treeState.renaming = null;
   await newCollection();
   expect(modules).toEqual(["requests", "requests"]);
+  expect(sidebars).toEqual([
+    { id: "requests", renaming: null },
+    { id: "requests", renaming: null },
+  ]);
   expect(calls(ipc, "create_folder")).toEqual([
     { parent: "requests", name: "New collection" },
   ]);
   expect(treeState.renaming).toBe("requests/new-collection");
+});
+
+const activate = (path: string, type = "requests.request") =>
+  active.set("tab", { type, path });
+
+test("the_marker_follows_the_active_tab", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  activate("requests/shipments/list.yaml");
+  await waitFor(() =>
+    expect(row("List shipments")).toHaveAttribute("aria-current", "page"),
+  );
+  activate("requests/shipments/create.yaml");
+  await waitFor(() =>
+    expect(row("Create shipment")).toHaveAttribute("aria-current", "page"),
+  );
+  expect(row("List shipments")).not.toHaveAttribute("aria-current");
+  expect(treeState.selected).toBeNull();
+});
+
+test("the_marker_and_the_selection_can_share_a_row", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  activate("requests/shipments/list.yaml");
+  await userEvent.click(row("Create shipment"));
+  expect(row("Create shipment")).toHaveAttribute("aria-selected", "true");
+  expect(row("List shipments")).toHaveAttribute("aria-current", "page");
+  expect(row("List shipments")).toHaveAttribute("aria-selected", "false");
+});
+
+test("a_collapsed_folder_opens_for_the_current_request", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  expect(screen.queryByText("DHL")).not.toBeInTheDocument();
+  activate("requests/tracking/carriers/dhl.yaml");
+  expect(await screen.findByText("DHL")).toBeInTheDocument();
+  expect(row("DHL")).toHaveAttribute("aria-current", "page");
+  expect(treeState.filter).toBe("");
+  expect(treeState.selected).toBeNull();
+});
+
+test("the_current_request_scrolls_into_view", async () => {
+  const { bigTree } = await import("./test-support");
+  fakeRequestsIpc({ tree: bigTree(100) });
+  treeState.expanded.add("requests/shipments");
+  await showTree();
+  const scroller = screen.getByRole("tree").parentElement!.parentElement!;
+  expect(scroller.scrollTop).toBe(0);
+  activate("requests/shipments/shipment-80.yaml");
+  await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+  expect(treeState.selected).toBeNull();
+});
+
+test("no_marker_when_another_tab_type_is_active", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  activate("requests/shipments/list.yaml", "requests.cookies");
+  await Promise.resolve();
+  expect(
+    screen
+      .getAllByRole("treeitem")
+      .filter((r) => r.hasAttribute("aria-current")),
+  ).toEqual([]);
+});
+
+test("a_filter_without_matches_says_so", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  const filter = screen.getByRole("searchbox", { name: "Filter collections" });
+  await userEvent.type(filter, "zzz");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    'No requests match "zzz"',
+  );
+  expect(screen.queryByRole("tree")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(filter).toHaveValue("");
+  expect(treeState.filter).toBe("");
+  expect(filter).toHaveFocus();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(rowNames().length).toBeGreaterThan(0);
+});
+
+test("the_row_menu_groups_its_items", async () => {
+  fakeRequestsIpc({ tree: shipments() });
+  await showTree();
+  const request = await openMenu("Tracking events");
+  expect(within(request).getAllByRole("separator")).toHaveLength(1);
+  expect(
+    within(request).getByRole("menuitem", { name: "Delete…" }),
+  ).toHaveAttribute("data-tone", "danger");
+  await userEvent.keyboard("{Escape}");
+  const folderMenu = await openMenu("Carriers");
+  expect(within(folderMenu).getAllByRole("separator")).toHaveLength(3);
+  expect(
+    within(folderMenu).getByRole("menuitem", { name: "Delete…" }),
+  ).toHaveAttribute("data-tone", "danger");
+  expect(
+    within(folderMenu).getByRole("menuitem", { name: "Rename" }),
+  ).not.toHaveAttribute("data-tone");
 });

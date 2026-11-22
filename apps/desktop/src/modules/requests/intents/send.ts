@@ -2,6 +2,7 @@
 // shown, from wherever the focus is in it.
 
 import { shellApi } from "$app/contributions/shell-api";
+import { sendKeepingFocus } from "../lib/send-focus";
 import { drafts } from "../state/drafts.svelte";
 import { exchangeFor } from "../state/exchange.svelte";
 
@@ -15,5 +16,5 @@ export default async function send(): Promise<void> {
   // A request that could not be read has nothing to send.
   const draft = drafts.get(tab.id);
   if (!draft?.saved) return;
-  await exchangeFor(tab.id).send(draft);
+  await sendKeepingFocus(exchangeFor(tab.id), draft);
 }

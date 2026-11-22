@@ -26,6 +26,8 @@ export interface FakeIpcOptions {
   clearTakes?: number;
   /** What pick_folder returns. */
   picked?: string | null;
+  /** Answers the commands the shell does not use; undefined if not one. */
+  answer?: (cmd: string, args: Record<string, unknown>) => unknown;
 }
 
 export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
@@ -56,6 +58,8 @@ export function fakeIpc(opts: FakeIpcOptions = {}): IpcLog {
       return new Promise((resolve) =>
         setTimeout(() => resolve(null), opts.clearTakes ?? 0),
       );
+    const answered = opts.answer?.(cmd, a);
+    if (answered !== undefined) return answered;
     if (
       cmd === "save_settings" ||
       cmd === "set_active_environment" ||

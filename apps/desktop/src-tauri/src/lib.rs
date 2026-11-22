@@ -113,6 +113,7 @@ pub fn run() {
             commands::responses::find_in_response,
             commands::responses::filter_response,
             commands::responses::copy_response,
+            commands::clipboard::copy_text,
             commands::responses::save_response,
             commands::responses::release_response,
             commands::responses::list_cookies,

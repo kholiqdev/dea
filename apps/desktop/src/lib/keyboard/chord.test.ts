@@ -64,6 +64,30 @@ test("letters fall back to the physical key when the layout types another script
   expect(chordFromEvent(alt, "mac")).toEqual(parseChord("Mod+Alt+T"));
 });
 
+test("AltGr types a character instead of making a chord", () => {
+  // Czech layout on Windows: AltGr+F types "[" and arrives as Ctrl+Alt
+  const altGr = key({
+    key: "[",
+    code: "KeyF",
+    ctrlKey: true,
+    altKey: true,
+    modifierAltGraph: true,
+  });
+  expect(chordFromEvent(altGr, "other")).toBeNull();
+  // the same keys without AltGr are Ctrl+Alt+F
+  const plain = key({ key: "f", code: "KeyF", ctrlKey: true, altKey: true });
+  expect(chordFromEvent(plain, "other")).toEqual(parseChord("Mod+Alt+F"));
+  // on macOS Option is Alt, whatever AltGraph says
+  const option = key({
+    key: "ƒ",
+    code: "KeyF",
+    metaKey: true,
+    altKey: true,
+    modifierAltGraph: true,
+  });
+  expect(chordFromEvent(option, "mac")).toEqual(parseChord("Mod+Alt+F"));
+});
+
 test("formats per platform", () => {
   expect(formatChord(parseChord("Mod+Shift+T"), "mac")).toBe("⌘⇧T");
   expect(formatChord(parseChord("Mod+Shift+T"), "other")).toBe("Ctrl+Shift+T");

@@ -178,8 +178,14 @@ describe("the Requests sidebar and editor", () => {
     await rowMenu("Shipments", "New request");
     await nameIt("Cancel shipment");
     const cancel = `${SHIPMENTS}/cancel-shipment.yaml`;
-    await until(() => existsSync(join(root, cancel)), "the renamed file");
-    expect(read(root, cancel)).toContain("name: Cancel shipment");
+    // A rename moves the file, then writes the new name into it: wait for
+    // both, not for the first.
+    await until(
+      () =>
+        existsSync(join(root, cancel)) &&
+        read(root, cancel).includes("name: Cancel shipment"),
+      "the renamed file with its new name",
+    );
     expect(existsSync(join(root, `${SHIPMENTS}/new-request.yaml`))).toBe(false);
     const created = [
       "list-shipments",
@@ -196,8 +202,12 @@ describe("the Requests sidebar and editor", () => {
     // Duplicate one in the middle: the copy sits right after the original.
     await rowMenu("Create shipment", "Duplicate");
     const copy = `${SHIPMENTS}/create-shipment-copy.yaml`;
-    await until(() => existsSync(join(root, copy)), "the copy");
-    expect(read(root, copy)).toContain("name: Create shipment copy");
+    await until(
+      () =>
+        existsSync(join(root, copy)) &&
+        read(root, copy).includes("name: Create shipment copy"),
+      "the copy with its name",
+    );
     const duplicated = [
       "list-shipments",
       "create-shipment",

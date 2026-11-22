@@ -1,7 +1,11 @@
-<!-- The dialog of one confirmation to send to production. -->
+<!--
+  The dialog of one confirmation to send to production: what goes, where,
+  and which variables nothing defines, sent as written.
+-->
 <script lang="ts">
   import Button from "@dea/ui/Button.svelte";
   import Dialog from "@dea/ui/Dialog.svelte";
+  import { methodColor } from "$lib/http/method";
   import { chordParts, currentPlatform, parseChord } from "$lib/keyboard/chord";
   import type { SendConfirmEvent } from "$lib/ipc/send";
   import type { SendConfirmations } from "./send-confirm.svelte";
@@ -28,11 +32,28 @@
   </p>
   <dl class="rows">
     <dt>Method</dt>
-    <dd class="mono">{confirmation.method}</dd>
+    <dd>
+      <span class="method" style:color={methodColor(confirmation.method)}
+        >{confirmation.method}</span
+      >
+    </dd>
+    {#if confirmation.host}
+      <dt>Host</dt>
+      <dd class="mono url">{confirmation.host}</dd>
+    {/if}
     <dt>URL</dt>
     <dd class="mono url">{confirmation.url}</dd>
     <dt>Environment</dt>
     <dd><span class="tab-env env-prod">{confirmation.environment}</span></dd>
+    {#if confirmation.undefined.length > 0}
+      <dt>Undefined</dt>
+      <dd>
+        {#each confirmation.undefined as name, i (i)}{i > 0 ? ", " : ""}<code
+            >{name}</code
+          >{/each}
+        <span class="as-written">sent as written</span>
+      </dd>
+    {/if}
   </dl>
   {#if confirmation.canSkip}
     <label class="skip">
@@ -82,6 +103,20 @@
 
   .mono {
     font-family: var(--font-mono);
+  }
+
+  .method {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  code {
+    overflow-wrap: anywhere;
+  }
+
+  .as-written {
+    color: var(--warning-text);
   }
 
   .url {

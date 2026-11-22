@@ -106,6 +106,8 @@ export function createHotkeyHandler(
     if (!command) return;
     e.preventDefault();
     e.stopPropagation();
+    // A held key repeats: the first press ran the command.
+    if (e.repeat) return;
     void runAction(command.action, ctx);
   };
 }

@@ -146,7 +146,57 @@ export async function focusUrl(): Promise<void> {
 
 /** Send, which reads Cancel while the request is on its way. */
 export function sendButton() {
-  return $('//button[@aria-label="Save request"]/preceding-sibling::button[1]');
+  return $("button[data-send]");
+}
+
+/**
+ * What the send button reads now: `Send`, `Send to production` or
+ * `Cancel`. Both faces stay in the button, the one not in use hidden, so
+ * this reads the one in use.
+ */
+export function sendFace(): Promise<string | null> {
+  return textOf("button[data-send] .face:not(.off)");
+}
+
+/** The timing bar of the response header, which opens the timing legend. */
+export function timingBar() {
+  return $(RESPONSE).$('button[aria-label^="Timing,"]');
+}
+
+/**
+ * The JSONPath filter field, once it shows. It is in the second row of a
+ * JSON response at every width of the pane.
+ */
+export async function openFilter() {
+  const field = $('input[aria-label="Filter with JSONPath"]');
+  await field.waitForDisplayed();
+  return field;
+}
+
+/**
+ * Runs `run` with the window at `width` × `height`, and puts it back to
+ * 1280 × 800 afterwards, also when `run` fails: the size belongs to the
+ * session, not to the case.
+ */
+export async function withWindowSize(
+  width: number,
+  height: number,
+  run: () => Promise<void>,
+): Promise<void> {
+  const inner = () => browser.execute(() => window.innerWidth);
+  try {
+    await browser.setWindowSize(width, height);
+    await browser.waitUntil(async () => (await inner()) <= width, {
+      timeoutMsg: `the window did not shrink to ${width}`,
+    });
+    await run();
+  } finally {
+    await browser.setWindowSize(1280, 800);
+    // Wider than the 1024 px under which the shell hides its sidebar.
+    await browser.waitUntil(async () => (await inner()) > 1024, {
+      timeoutMsg: "the window did not return to 1280 × 800",
+    });
+  }
 }
 
 export function productionDialog() {
@@ -155,7 +205,10 @@ export function productionDialog() {
   );
 }
 
-/** Whether the tab is sending, a confirmation still to answer included. */
+/**
+ * Whether the tab is sending. A confirmation to answer is not sending yet:
+ * the pane reads `Waiting for confirmation` and is not busy.
+ */
 export function sending(): Promise<boolean> {
   return browser.execute(
     (s) => document.querySelector(s)?.getAttribute("aria-busy") === "true",

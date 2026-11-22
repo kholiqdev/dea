@@ -27,6 +27,10 @@
     return railIcon(name);
   }
 
+  function badgeOf(tab: TabRecord) {
+    return ctx.registry.tabType(tab.tabType)?.badge?.(tab.params) ?? null;
+  }
+
   function close(tab: TabRecord): void {
     ctx.tabs.close(tab.id).catch((e: unknown) => toasts.show(errorMessage(e)));
   }
@@ -120,12 +124,17 @@
     {#each tabs as tab, index (tab.id)}
       {@const Icon = iconOf(tab)}
       {@const active = tab.id === activeId}
+      {@const badge = badgeOf(tab)}
       {@const env = ctx.tabs.environmentOf(tab, ctx.project.environment)}
+      {@const follows =
+        ctx.registry.tabType(tab.tabType)?.environment === "window"}
+      {@const production = follows && !tab.environment && !!env?.production}
       <div
         class="tab"
         data-tab={tab.id}
         data-active={active}
         data-dragging={dragging === tab.id}
+        data-production={production ? "" : undefined}
         role="presentation"
         {@attach active && keepInView}
         onpointerdown={(e) => onpointerdown(e, tab)}
@@ -141,9 +150,13 @@
           onclick={() => ctx.tabs.activate(tab.id)}
           onkeydown={(e) => onkeydown(e, index)}
         >
-          {#if Icon}<Icon size={16} strokeWidth={1.5} />{/if}
-          <span class="title">{tab.title}</span>
-          {#if env}
+          {#if badge}
+            <span class="badge" style:color={badge.color}>{badge.text}</span>
+          {:else if Icon}<Icon size={16} strokeWidth={1.5} />{/if}
+          <span class="title">{tab.title}</span>{#if production}<span
+              class="visually-hidden">, production</span
+            >{/if}
+          {#if env && !follows}
             <span
               class={["tab-env", { "env-prod": env.production }]}
               data-env={env.name}>{env.name}</span
@@ -195,6 +208,10 @@
     touch-action: none;
   }
 
+  .tab[data-production] {
+    box-shadow: inset 0 2px 0 var(--negative);
+  }
+
   .tab[data-active="true"] {
     background: var(--bg-1);
     color: var(--text-1);
@@ -215,6 +232,11 @@
     background: none;
     color: inherit;
     white-space: nowrap;
+  }
+
+  .badge {
+    flex: none;
+    font: 500 11px/1 var(--font-mono);
   }
 
   .title {

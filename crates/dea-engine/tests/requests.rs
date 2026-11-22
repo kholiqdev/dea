@@ -1566,3 +1566,110 @@ async fn cookie_changes_are_saved_at_once() {
     );
     assert!(f.saved_cookies().is_empty());
 }
+
+const HIDDEN: &str = "••••••••";
+
+#[tokio::test]
+async fn the_inspected_url_hides_secrets_and_keeps_undefined_names() {
+    let f = Fixture::new().await;
+    let draft = request(
+        "GET",
+        "{{baseUrl}}/v1/x/{{vault:access_token}}?c={{missing}}",
+    );
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    let base = f.server.url("");
+    assert_eq!(
+        inspection.url,
+        format!("{base}/v1/x/{HIDDEN}?c={{{{missing}}}}")
+    );
+}
+
+#[tokio::test]
+async fn a_secret_variable_is_hidden_in_the_inspected_url() {
+    let mut f = Fixture::new().await;
+    f.project.environments[0].variables.push(Variable {
+        name: "token".into(),
+        value: "{{vault:access_token}}".into(),
+        description: None,
+    });
+    let draft = request("GET", "{{baseUrl}}/echo?t={{token}}");
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert_eq!(
+        inspection.url,
+        format!("{}/echo?t={HIDDEN}", f.server.url(""))
+    );
+    assert!(!inspection.url.contains("[secret:"));
+}
+
+#[tokio::test]
+async fn the_inspected_url_gains_the_scheme() {
+    let f = Fixture::new().await;
+    let draft = request("GET", "api.test/x");
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert_eq!(inspection.url, "http://api.test/x");
+}
+
+#[tokio::test]
+async fn an_empty_url_inspects_as_an_empty_string() {
+    let f = Fixture::new().await;
+    let draft = request("GET", "");
+
+    let inspection = inspect(&f, Path::new(LIST), &draft, Some("staging")).unwrap();
+
+    assert_eq!(inspection.url, "");
+}
+
+/// The confirmation `prepare` asks for a `GET` to production at `url`.
+fn asked_for(f: &mut Fixture, url: &str) -> SendConfirmation {
+    let path = f.add("probe", request("GET", url));
+    let _ = f.prepare(&path, Some("production"));
+    f.prompter.asked().pop().expect("a confirmation")
+}
+
+#[tokio::test]
+async fn the_confirmation_names_the_host() {
+    let mut f = Fixture::new().await;
+
+    let full = asked_for(&mut f, "https://api.harbor.test:8443/v1/x?a=1");
+    assert_eq!(full.host, "api.harbor.test:8443");
+
+    let userinfo = asked_for(&mut f, "https://user:{{vault:access_token}}@api.test/x");
+    assert_eq!(userinfo.host, "api.test");
+
+    let bare = asked_for(&mut f, "https://api.test#top");
+    assert_eq!(bare.host, "api.test");
+}
+
+#[tokio::test]
+async fn the_confirmation_lists_undefined_names_once() {
+    let mut f = Fixture::new().await;
+
+    let asked = asked_for(&mut f, "{{baseUrl}}/x?a={{one}}&b={{two}}&c={{one}}");
+
+    assert_eq!(asked.undefined, ["one", "two"]);
+}
+
+#[tokio::test]
+async fn undefined_names_ask_even_after_dont_ask_again() {
+    let mut f = Fixture::new().await;
+    let broken = f.add("broken", request("GET", "{{baseUrl}}/echo?a={{missing}}"));
+
+    f.prompter.answer(SendAnswer::SendAndStopAsking);
+    f.prepare(Path::new(LIST), Some("production")).unwrap();
+    assert_eq!(f.prompter.asked().len(), 1);
+    assert!(f.prompter.asked()[0].undefined.is_empty());
+
+    f.prompter.answer(SendAnswer::Send);
+    f.prepare(&broken, Some("production")).unwrap();
+
+    let asked = f.prompter.asked();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[1].undefined, ["missing"]);
+    assert!(!asked[1].can_skip);
+}

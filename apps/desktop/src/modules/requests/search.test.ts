@@ -60,12 +60,14 @@ beforeEach(() => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: () => Promise.resolve(),
     toast: (text) => {
       toasts.push(text);
       return 0;
     },
     dismissToast: () => {},
+    confirmingSend: false,
     runCommand: () => Promise.resolve(),
   } satisfies ShellApi);
 });
@@ -94,7 +96,7 @@ test("active target reuses the open tab and new target opens another", async () 
     [
       "requests.request",
       "Shipment by ID",
-      { path: "requests/harbor/ships/shipment.yaml" },
+      { path: "requests/harbor/ships/shipment.yaml", method: "GET" },
     ],
   ]);
   expect(activated).toEqual(["tab-1"]);
@@ -105,7 +107,11 @@ test("active target opens a tab when none shows the request", async () => {
   const items = await requestItems();
   await items[1]?.open("active");
   expect(opened).toEqual([
-    ["requests.request", "Health", { path: "requests/harbor/health.yaml" }],
+    [
+      "requests.request",
+      "Health",
+      { path: "requests/harbor/health.yaml", method: "GET" },
+    ],
   ]);
 });
 

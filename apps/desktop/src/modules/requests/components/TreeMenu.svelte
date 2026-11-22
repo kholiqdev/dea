@@ -37,6 +37,8 @@
     label: string;
     disabled?: boolean;
     shortcut?: string;
+    separatorBefore?: boolean;
+    tone?: "danger";
     onselect: () => void;
   };
 
@@ -47,15 +49,23 @@
     if (!row) return [item("new-collection", "New collection", newCollection)];
     const target = row;
     const common = [
-      item("rename", "Rename", () => {
-        treeState.renaming = target.path;
-      }),
+      {
+        ...item("rename", "Rename", () => {
+          treeState.renaming = target.path;
+        }),
+        // A request's menu starts here; a folder's has its own items first.
+        separatorBefore: target.kind === "folder",
+      },
       item("duplicate", "Duplicate", () => treeState.duplicate(target.path)),
       item("move", "Move to…", () => onmove(target)),
       shift("move-up", "Move up", target, -1, "Alt+ArrowUp"),
       shift("move-down", "Move down", target, 1, "Alt+ArrowDown"),
     ];
-    const remove = item("delete", "Delete…", () => ondelete(target));
+    const remove: Entry = {
+      ...item("delete", "Delete…", () => ondelete(target)),
+      separatorBefore: true,
+      tone: "danger",
+    };
     if (target.kind === "request") return [...common, remove];
     return [
       item("new-request", "New request", () =>
@@ -63,11 +73,14 @@
       ),
       item("new-folder", "New folder", () => treeState.newFolder(target.path)),
       ...common,
-      item(
-        "settings",
-        target.depth === 0 ? "Collection settings" : "Folder settings",
-        () => openSettings(target),
-      ),
+      {
+        ...item(
+          "settings",
+          target.depth === 0 ? "Collection settings" : "Folder settings",
+          () => openSettings(target),
+        ),
+        separatorBefore: true,
+      },
       remove,
     ];
   });

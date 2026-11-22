@@ -8,6 +8,7 @@
   import {
     ROOT,
     ROW_HEIGHT as ROW,
+    parentOf,
     treeState,
     type TreeRowData,
   } from "../state/tree.svelte";
@@ -47,6 +48,16 @@
       : -1,
   );
 
+  // The request whose tab is in front; not the keyboard selection.
+  const current = $derived.by((): string | null => {
+    const tab = shellApi().activeTab();
+    if (tab?.tabType !== "requests.request") return null;
+    const path = (tab.params as { path?: unknown } | null)?.path;
+    return typeof path === "string" ? path : null;
+  });
+  // The request that was last brought into view.
+  let revealed: string | null = null;
+
   const drag = new TreeDrag(treeState);
   // The click that ends a drag on the row it started on opens nothing.
   let dragEnded = false;
@@ -84,6 +95,28 @@
     if (index >= 0) untrack(() => select(index));
   });
 
+  // The current request is shown: its folders open and its row scrolls into
+  // view. Once per request, so a reload does not undo a folder closed since.
+  $effect(() => {
+    const path = current;
+    if (path === null) {
+      revealed = null;
+      return;
+    }
+    if (path === revealed || !treeState.info || !treeState.find(path)) return;
+    revealed = path;
+    untrack(() => {
+      for (let dir = parentOf(path); dir !== ROOT && dir !== "";) {
+        treeState.expanded.add(dir);
+        dir = parentOf(dir);
+      }
+      void tick().then(() => {
+        const index = treeState.rows.findIndex((r) => r.path === path);
+        if (index >= 0) scrollTo(index);
+      });
+    });
+  });
+
   // The timings of one search stay until it ends: the filter is emptied or
   // the sidebar goes away.
   function clearTimings(): void {
@@ -98,6 +131,12 @@
     void tick().then(() => {
       performance.measure("requests-filter", "requests-filter-start");
     });
+  }
+
+  function clearFilter(): void {
+    clearTimings();
+    treeState.filter = "";
+    filterInput?.focus();
   }
 
   function isEditable(target: EventTarget | null): boolean {
@@ -134,13 +173,22 @@
       (params) => (params as { path?: string } | null)?.path === row.path,
     );
     if (id !== undefined) shell.activateTab(id);
-    else shell.openTab("requests.request", row.name, { path: row.path });
+    else
+      shell.openTab("requests.request", row.name, {
+        path: row.path,
+        method: row.method,
+      });
   }
 
   function select(index: number): void {
     const row = rows[index];
     if (!row) return;
     treeState.selected = row.path;
+    scrollTo(index);
+  }
+
+  /** Scrolls the list just far enough to show the row. */
+  function scrollTo(index: number): void {
     if (!scroller) return;
     const top = index * ROW;
     if (top < scrollTop) scrollTop = scroller.scrollTop = top;
@@ -379,6 +427,11 @@
         onclick={() => void treeState.newFolder(ROOT)}>New collection</button
       >
     </div>
+  {:else if treeState.info && rows.length === 0 && treeState.filter.trim()}
+    <div class="empty" role="status">
+      <p>No requests match "{treeState.filter.trim()}"</p>
+      <button type="button" class="action" onclick={clearFilter}>Clear</button>
+    </div>
   {:else if treeState.info}
     <div
       class="scroller"
@@ -407,6 +460,7 @@
               {row}
               id="request-row-{start + i}"
               selected={row.path === treeState.selected}
+              current={row.path === current}
               dragging={row.path === drag.source?.path}
               onclick={() => onRowClick(start + i)}
               onpointerdown={(e: PointerEvent) => onRowPointerDown(e, row)}

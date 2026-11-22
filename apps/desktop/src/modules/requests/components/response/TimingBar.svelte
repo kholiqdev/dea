@@ -1,76 +1,82 @@
 <!--
-  Where the time of a response went (F1-REQ-08): a bar of five phases and a
-  legend. A reused connection shows no DNS, connect or TLS.
+  Where the time of a response went (F1-REQ-08): a small bar of five phases
+  that opens or closes their legend, a row of the response header. Whether
+  it is open is kept for the session. A reused connection shows no DNS,
+  connect or TLS. Muted, as for a previous response, every phase is grey.
 -->
 <script lang="ts">
   import type { TimingInfo } from "$lib/ipc/bindings/TimingInfo";
-  import { formatMs } from "../../lib/format";
+  import { sessionView } from "../../state/session-view.svelte";
+  import { timingPhases } from "./timing";
 
-  let { timing }: { timing: TimingInfo } = $props();
+  let {
+    timing,
+    controls,
+    muted = false,
+  }: {
+    timing: TimingInfo;
+    /** The id of the legend the bar opens. */
+    controls: string;
+    /** Drawn without the phases' colours. */
+    muted?: boolean;
+  } = $props();
 
-  const phases = $derived([
-    { id: "dns", label: "DNS", short: "DNS", ms: timing.dnsMs },
-    { id: "connect", label: "Connect", short: "Connect", ms: timing.connectMs },
-    { id: "tls", label: "TLS", short: "TLS", ms: timing.tlsMs },
-    {
-      id: "waiting",
-      label: "Waiting for server",
-      short: "Waiting for server",
-      ms: timing.waitingMs,
-    },
-    {
-      id: "download",
-      label: "Download",
-      short: "Download",
-      ms: timing.downloadMs,
-    },
-  ]);
+  const phases = $derived(timingPhases(timing));
   const share = (ms: number) =>
     timing.totalMs > 0 ? (ms / timing.totalMs) * 100 : 0;
 
   const description = $derived(
     `Timing, ${Math.round(timing.totalMs)} ms total, ` +
-      phases.map((p) => `${p.short} ${Math.round(p.ms)}`).join(", ") +
+      phases.map((p) => `${p.label} ${Math.round(p.ms)}`).join(", ") +
       (timing.reused ? ", connection reused" : ""),
   );
+  const open = $derived(sessionView.timingLegend);
 </script>
 
-<div class="timing">
-  <div class="bar" role="img" aria-label={description}>
+<button
+  type="button"
+  class="timing"
+  aria-label={description}
+  aria-expanded={open}
+  aria-controls={controls}
+  title={open ? "Hide timing" : "Show timing"}
+  onclick={() => (sessionView.timingLegend = !open)}
+>
+  <span class="bar">
     {#each phases as phase (phase.id)}
       <span
-        class={["segment", phase.id, { filled: phase.ms > 0 }]}
+        class={["segment", { filled: phase.ms > 0 }]}
         data-segment={phase.id}
         style:width="{share(phase.ms)}%"
+        style:background={muted ? "var(--text-3)" : phase.color}
       ></span>
     {/each}
-  </div>
-  <ul class="legend">
-    {#each phases as phase (phase.id)}
-      <li>
-        <span class={["swatch", phase.id]} aria-hidden="true"></span>
-        <span class="name">{phase.label}</span>
-        <span class="ms">{formatMs(phase.ms)}</span>
-        {#if timing.reused && phase.id === "tls"}
-          <span class="reused">reused</span>
-        {/if}
-      </li>
-    {/each}
-  </ul>
-</div>
+  </span>
+</button>
 
 <style>
   .timing {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
+    flex: none;
+    height: 24px;
+    padding: 0 var(--s-1);
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    border-radius: var(--r-small);
+    background: none;
+  }
+
+  .timing:hover,
+  .timing[aria-expanded="true"] {
+    background: var(--bg-hover);
   }
 
   .bar {
+    width: 120px;
+    height: 4px;
     display: flex;
     gap: 1px;
-    height: 6px;
-    border-radius: 3px;
+    border-radius: 2px;
     overflow: hidden;
     background: var(--bg-3);
   }
@@ -82,61 +88,5 @@
 
   .segment.filled {
     min-width: 2px;
-  }
-
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-1) var(--s-4);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    font-size: 12px;
-    line-height: 16px;
-    color: var(--text-3);
-  }
-
-  .legend li {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .swatch {
-    width: 8px;
-    height: 8px;
-    border-radius: 2px;
-  }
-
-  .dns {
-    background: var(--series-1);
-  }
-
-  .connect {
-    background: var(--series-2);
-  }
-
-  .tls {
-    background: var(--series-3);
-  }
-
-  .waiting {
-    background: var(--accent);
-  }
-
-  .download {
-    background: var(--series-4);
-  }
-
-  .ms {
-    font-family: var(--font-mono);
-    color: var(--text-2);
-  }
-
-  .reused {
-    padding: 0 6px;
-    border-radius: var(--r-key);
-    background: var(--bg-3);
-    color: var(--text-2);
   }
 </style>

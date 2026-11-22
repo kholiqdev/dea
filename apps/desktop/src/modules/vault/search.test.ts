@@ -58,6 +58,7 @@ beforeEach(() => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: (id) => {
       opened.push(id);
       return Promise.resolve();
@@ -65,6 +66,7 @@ beforeEach(() => {
     runCommand: () => Promise.resolve(),
     toast: () => 0,
     dismissToast: () => {},
+    confirmingSend: false,
   });
   clearMocks();
   mockIPC((cmd) => {
@@ -145,6 +147,7 @@ test("a secret name removed after the palette opened says so", async () => {
     activeTab: () => null,
     isTabDirty: () => false,
     setSaveHandler: () => {},
+    showSidebar: () => {},
     openModule: (id) => {
       opened.push(id);
       return Promise.resolve();
@@ -152,6 +155,7 @@ test("a secret name removed after the palette opened says so", async () => {
     runCommand: () => Promise.resolve(),
     toast: (text) => toasts.push(text),
     dismissToast: () => {},
+    confirmingSend: false,
   });
   const items = secretNames();
   project.info = { ...project.info!, secretNames: ["access_token"] };

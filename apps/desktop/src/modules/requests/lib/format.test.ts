@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   formatBytes,
+  formatClock,
   formatCookieDate,
   formatMs,
   formatSeconds,
@@ -46,4 +47,9 @@ test("suggested_names_follow_the_request_and_the_body", () => {
 test("cookie_dates_are_short_or_session", () => {
   expect(formatCookieDate(null)).toBe("Session");
   expect(formatCookieDate("2026-11-04T12:00:00Z")).toBe("4 Nov 2026");
+});
+
+test("clock_is_24_hour_and_padded", () => {
+  expect(formatClock(new Date(2026, 10, 22, 9, 5).getTime())).toBe("09:05");
+  expect(formatClock(new Date(2026, 10, 22, 23, 59).getTime())).toBe("23:59");
 });

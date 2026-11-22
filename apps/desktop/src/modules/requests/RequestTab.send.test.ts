@@ -2,6 +2,10 @@ import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
+import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
+import RequestTab from "./RequestTab.svelte";
+import { draftFor } from "./state/drafts.svelte";
+import requestLineSource from "./components/RequestLine.svelte?raw";
 import UndefinedWarning from "./components/UndefinedWarning.svelte";
 import type { FakeProject } from "./fake-project.svelte";
 import { manifest } from "./index";
@@ -9,9 +13,14 @@ import sendActiveTab from "./intents/send";
 import {
   openRequestTab,
   setUpRequestTabs,
+  useProduction,
   type FakeShell,
 } from "./request-tab-support.svelte";
-import { fakeRequestsIpc, type RequestsIpc } from "./test-support";
+import {
+  fakeRequestsIpc,
+  responseInfo,
+  type RequestsIpc,
+} from "./test-support";
 
 const PATH = "requests/shipments/list.yaml";
 const file: RequestFile = {
@@ -20,6 +29,12 @@ const file: RequestFile = {
   url: "{{baseUrl}}/v1/shipments",
 };
 const files = { [PATH]: file };
+/** What Dea tells just before the request leaves. */
+const started: SendEvent = {
+  type: "started",
+  method: "GET",
+  url: "https://api.harbor.test/v1/shipments",
+};
 
 let shell: FakeShell;
 let project: FakeProject;
@@ -33,6 +48,10 @@ const calls = (ipc: RequestsIpc, cmd: string) =>
 
 const sendButton = () => screen.findByRole("button", { name: "Send" });
 
+/** The request bar: the method, the URL, Send and Save. */
+const requestBar = () =>
+  screen.getByRole("button", { name: "Save request" }).parentElement!;
+
 /** The keycaps shown in `button`, and whether its name leaves them out. */
 const keycaps = (button: HTMLElement) =>
   [...button.querySelectorAll("kbd")].map((k) => [
@@ -41,7 +60,10 @@ const keycaps = (button: HTMLElement) =>
   ]);
 
 test("the_send_button_turns_into_cancel_while_sending", async () => {
-  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const ipc = fakeRequestsIpc({
+    files,
+    send: { hold: true, events: [started] },
+  });
   const { id } = openRequestTab(PATH);
   const send = await sendButton();
   expect(keycaps(send)).toEqual([
@@ -58,8 +80,30 @@ test("the_send_button_turns_into_cancel_while_sending", async () => {
   expect(await sendButton()).toBeInTheDocument();
 });
 
+test("the_send_button_keeps_room_for_its_other_label", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    send: { hold: true, events: [started] },
+  });
+  openRequestTab(PATH);
+  const button = await sendButton();
+  // The label not in use stays laid out, hidden, so the width holds.
+  const hidden = () =>
+    button
+      .querySelector('.face[aria-hidden="true"]')
+      ?.firstChild?.textContent?.trim();
+  expect(hidden()).toBe("Cancel");
+  await userEvent.click(button);
+  await screen.findByRole("button", { name: "Cancel" });
+  expect(hidden()).toBe("Send");
+  ipc.finishSends();
+});
+
 test("escape_cancels_a_running_send", async () => {
-  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const ipc = fakeRequestsIpc({
+    files,
+    send: { hold: true, events: [started] },
+  });
   const { id } = openRequestTab(PATH);
   await userEvent.click(await sendButton());
   await screen.findByRole("button", { name: "Cancel" });
@@ -70,7 +114,10 @@ test("escape_cancels_a_running_send", async () => {
 });
 
 test("escape_with_nothing_focused_cancels_too", async () => {
-  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const ipc = fakeRequestsIpc({
+    files,
+    send: { hold: true, events: [started] },
+  });
   const { id } = openRequestTab(PATH);
   await userEvent.click(await sendButton());
   await screen.findByRole("button", { name: "Cancel" });
@@ -80,7 +127,10 @@ test("escape_with_nothing_focused_cancels_too", async () => {
 });
 
 test("an_escape_taken_by_the_field_or_with_nothing_running_cancels_nothing", async () => {
-  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const ipc = fakeRequestsIpc({
+    files,
+    send: { hold: true, events: [started] },
+  });
   openRequestTab(PATH);
   const url = await screen.findByRole("textbox", { name: "URL" });
   await userEvent.click(url);
@@ -92,6 +142,132 @@ test("an_escape_taken_by_the_field_or_with_nothing_running_cancels_nothing", asy
   await userEvent.keyboard("{Escape}");
   expect(calls(ipc, "cancel_send")).toEqual([]);
   ipc.finishSends();
+});
+
+test("send_follows_the_window_environment", async () => {
+  fakeRequestsIpc({ files });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  expect(await screen.findByRole("button", { name: /^Send/ })).not.toHaveClass(
+    "danger-solid",
+  );
+  await useProduction(project);
+  const send = await screen.findByRole("button", {
+    name: /^Send to production/,
+  });
+  expect(send).toHaveClass("danger-solid");
+  expect(within(requestBar()).getByText("production")).toHaveClass("env-prod");
+  await project.setEnvironment("staging");
+  await waitFor(() =>
+    expect(within(requestBar()).queryByText("production")).toBeNull(),
+  );
+  expect(screen.getByRole("button", { name: /^Send/ })).not.toHaveClass(
+    "danger-solid",
+  );
+});
+
+test("the_red_buttons_keycaps_are_outlined_not_filled", async () => {
+  fakeRequestsIpc({ files });
+  await useProduction(project);
+  openRequestTab(PATH);
+  const send = await screen.findByRole("button", {
+    name: "Send to production",
+  });
+  const shown = [...send.querySelectorAll("kbd")];
+  expect(shown.length).toBeGreaterThan(0);
+  for (const key of shown) expect(key).toHaveClass("danger");
+  // White on the solid red itself: a fill would take it under 4.5:1.
+  const rule = (
+    /\.kc\.danger \{([^}]*)\}/.exec(requestLineSource)?.[1] ?? ""
+  ).replace(/\s+/g, " ");
+  expect(rule).toContain("background: none;");
+  expect(rule).toContain("color: var(--negative-solid-text);");
+  expect(rule).toContain(
+    "box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--negative-solid-text) 45%, transparent);",
+  );
+});
+
+test("the_bar_reads_cancel_only_after_the_request_started", async () => {
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  await useProduction(project);
+  openRequestTab(PATH);
+  const send = await screen.findByRole("button", {
+    name: "Send to production",
+  });
+  await userEvent.click(send);
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+  shell.confirmingSend = true;
+  // Asked, not sent: the button still reads as before, and a second press
+  // sends nothing more.
+  await userEvent.click(send);
+  expect(send).toHaveAccessibleName("Send to production");
+  expect(send).toHaveClass("danger-solid");
+  expect(ipc.sends).toHaveLength(1);
+  shell.confirmingSend = false;
+  ipc.emitToSends(started);
+  await waitFor(() => expect(send).toHaveAccessibleName("Cancel"));
+  expect(send).not.toHaveClass("danger-solid");
+  ipc.finishSends();
+});
+
+test("escape_cancels_a_send_waiting_to_leave", async () => {
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  const { id } = openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+  await userEvent.click(screen.getByRole("textbox", { name: "URL" }));
+  await userEvent.keyboard("{Escape}");
+  expect(calls(ipc, "cancel_send")).toEqual([{ id }]);
+});
+
+/**
+ * Sends the active tab with `Mod+Enter` while `ipc` holds the send, as Dea
+ * does while it asks: the dialog takes the focus, and is answered Cancel.
+ */
+async function declineFromKeyboard(ipc: RequestsIpc, id: string) {
+  ipc.send = { ...ipc.send, hold: true };
+  shell.activateTab(id);
+  const sent = sendActiveTab();
+  await waitFor(() => expect(ipc.sends).toHaveLength(2));
+  shell.confirmingSend = true;
+  const dialog = document.body.appendChild(document.createElement("button"));
+  dialog.focus();
+  dialog.remove();
+  shell.confirmingSend = false;
+  ipc.finishSends({ type: "notConfirmed" });
+  await sent;
+}
+
+test("cancelling_the_dialog_returns_focus", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    send: {
+      outcome: { type: "response", response: responseInfo({ status: 201 }) },
+    },
+  });
+  const { id } = openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await screen.findByText("201");
+  const url = screen.getByRole("textbox", { name: "URL" });
+  await userEvent.click(url);
+  await declineFromKeyboard(ipc, id);
+  await waitFor(() => expect(url).toHaveFocus());
+  const bar = screen.getByRole("toolbar", { name: "Response" });
+  expect(within(bar).getByText("201")).toBeInTheDocument();
+});
+
+test("a_declined_send_from_a_control_that_went_focuses_send", async () => {
+  const ipc = fakeRequestsIpc({ files });
+  const { id } = openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  // The response's own control goes while the send waits.
+  const copy = await screen.findByRole("button", { name: "Copy response" });
+  copy.focus();
+  await declineFromKeyboard(ipc, id);
+  expect(copy.isConnected).toBe(false);
+  await waitFor(() =>
+    expect(document.querySelector("button[data-send]")).toHaveFocus(),
+  );
 });
 
 test("mod_enter_sends_the_active_request_tab", async () => {
@@ -156,6 +332,218 @@ test("undefined_variables_show_a_warning_with_define_and_send_anyway", async () 
   await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 });
 
+test("editing_clears_the_warning", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["carrierCode"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  expect(await screen.findByRole("status")).toBeInTheDocument();
+  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  // The next send warns again, whatever the time since the first.
+  await new Promise((done) => setTimeout(done, 450));
+  await userEvent.click(await sendButton());
+  expect(await screen.findByRole("status")).toBeInTheDocument();
+  expect(ipc.sends).toEqual([]);
+});
+
+test("the_warning_survives_a_tab_switch", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["carrierCode"] } });
+  const { id, unmount } = openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await screen.findByRole("status");
+  unmount();
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  expect(await screen.findByRole("status")).toHaveTextContent("carrierCode");
+});
+
+test("a_rename_does_not_clear_the_warning", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["carrierCode"] } });
+  const { id } = openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await screen.findByRole("status");
+  draftFor(id, PATH).draft.name = "Renamed";
+  await new Promise((done) => setTimeout(done, 50));
+  expect(screen.getByRole("status")).toBeInTheDocument();
+});
+
+test("a_second_send_sends_past_the_banner", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["carrierCode"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await screen.findByRole("status");
+  await new Promise((done) => setTimeout(done, 450));
+  await userEvent.click(await sendButton());
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+});
+
+test("a_held_enter_on_send_does_not_pass_the_warning", async () => {
+  const ipc = fakeRequestsIpc({
+    files,
+    inspection: { undefined: ["carrierCode"] },
+  });
+  openRequestTab(PATH);
+  const send = await sendButton();
+  send.focus();
+  // Pressed and held past the OS repeat delay and the warning's pause: the
+  // first press stops at the warning, the repeat after it is no new send.
+  const user = userEvent.setup({ delay: 600 });
+  await user.keyboard("{Enter>2/}");
+  expect(ipc.sends).toHaveLength(0);
+  expect(screen.getByRole("status")).toBeInTheDocument();
+  // Let go and pressed again, it sends.
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+});
+
+const traced: RequestFile = {
+  ...file,
+  headers: [
+    { name: "Accept", value: "application/json" },
+    { name: "X-Trace", value: "{{traceId}}" },
+  ],
+};
+
+test("send_anyway_shows_the_shortcut", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["carrierCode"] } });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  const anyway = within(await screen.findByRole("status")).getByRole("button", {
+    name: "Send anyway",
+  });
+  expect(keycaps(anyway)).toEqual([
+    ["Ctrl", true],
+    ["Enter", true],
+  ]);
+});
+
+test("show_in_headers_opens_the_row", async () => {
+  fakeRequestsIpc({
+    files: { [PATH]: traced },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  const banner = await screen.findByRole("status");
+  await userEvent.click(
+    within(banner).getByRole("button", { name: "Show in Headers" }),
+  );
+  expect(screen.getByRole("tab", { name: /^Headers/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const value = await screen.findByRole("textbox", {
+    name: "Value of X-Trace",
+  });
+  await waitFor(() => expect(value).toHaveFocus());
+  const rows = screen
+    .getByRole("table", { name: "Headers" })
+    .querySelectorAll("tbody tr");
+  expect(rows[0]).not.toHaveAttribute("data-highlight");
+  expect(rows[1]).toHaveAttribute("data-highlight");
+});
+
+test("show_in_url_focuses_the_url", async () => {
+  fakeRequestsIpc({
+    files: { [PATH]: { ...file, url: "{{baseUrl}}/{{traceId}}" } },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await userEvent.click(
+    within(await screen.findByRole("status")).getByRole("button", {
+      name: "Show in URL",
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "URL" })).toHaveFocus(),
+  );
+});
+
+test("show_in_body_opens_the_editor", async () => {
+  fakeRequestsIpc({
+    files: {
+      [PATH]: { ...file, body: { mode: "json", text: '{"t": "{{traceId}}"}' } },
+    },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await userEvent.click(
+    within(await screen.findByRole("status")).getByRole("button", {
+      name: "Show in Body",
+    }),
+  );
+  expect(screen.getByRole("tab", { name: /^Body/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const editor = await screen.findByRole("textbox", { name: "Body" });
+  await waitFor(() => expect(editor).toHaveFocus());
+});
+
+test("the_highlight_goes_with_the_warning", async () => {
+  fakeRequestsIpc({
+    files: { [PATH]: traced },
+    inspection: { undefined: ["traceId"] },
+  });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  await userEvent.click(
+    within(await screen.findByRole("status")).getByRole("button", {
+      name: "Show in Headers",
+    }),
+  );
+  await screen.findByRole("textbox", { name: "Value of X-Trace" });
+  expect(document.querySelectorAll("[data-highlight]")).toHaveLength(1);
+  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
+  await waitFor(() =>
+    expect(document.querySelectorAll("[data-highlight]")).toHaveLength(0),
+  );
+});
+
+test("no_show_action_when_the_place_is_unknown", async () => {
+  fakeRequestsIpc({ files, inspection: { undefined: ["elsewhere"] } });
+  openRequestTab(PATH);
+  await userEvent.click(await sendButton());
+  const banner = await screen.findByRole("status");
+  expect(within(banner).queryByRole("button", { name: /^Show in/ })).toBeNull();
+  expect(
+    within(banner).getByRole("button", { name: "Send anyway" }),
+  ).toBeInTheDocument();
+});
+
+test.each([
+  [{ section: "url" }, "Show in URL"],
+  [{ section: "params", row: 0 }, "Show in Params"],
+  [{ section: "headers", row: 0 }, "Show in Headers"],
+  [{ section: "body" }, "Show in Body"],
+] as const)("show_action_label: %j", async (usage, label) => {
+  const onshow = vi.fn();
+  render(UndefinedWarning, {
+    names: ["a"],
+    environment: null,
+    usage,
+    ondefine: () => {},
+    onshow,
+    onsendanyway: () => {},
+  });
+  const buttons = screen.getAllByRole("button").map((b) => b.textContent);
+  expect(buttons.map((t) => t?.trim().replace(/\s+/g, " "))).toEqual([
+    "Define it",
+    label,
+    "Send anyway CtrlEnter",
+  ]);
+  await userEvent.click(screen.getByRole("button", { name: label }));
+  expect(onshow).toHaveBeenCalledOnce();
+});
+
 test("the_warning_names_the_environment_in_use", async () => {
   fakeRequestsIpc({
     files,
@@ -193,7 +581,14 @@ test.each([
 ])("warning_text: $text", ({ names, environment, text }) => {
   const ondefine = vi.fn();
   const onsendanyway = vi.fn();
-  render(UndefinedWarning, { names, environment, ondefine, onsendanyway });
+  render(UndefinedWarning, {
+    names,
+    environment,
+    usage: null,
+    ondefine,
+    onshow: () => {},
+    onsendanyway,
+  });
   const banner = screen.getByRole("status");
   expect(banner).toHaveTextContent(text);
   expect(

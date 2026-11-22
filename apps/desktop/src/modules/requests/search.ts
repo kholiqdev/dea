@@ -51,7 +51,7 @@ function requestItem(
         );
         if (id !== undefined && shell.activateTab(id)) return;
       }
-      shell.openTab(REQUEST_TAB, now.name, { path });
+      shell.openTab(REQUEST_TAB, now.name, { path, method: now.method });
     },
   };
 }

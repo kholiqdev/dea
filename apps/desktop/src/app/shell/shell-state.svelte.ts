@@ -15,6 +15,8 @@ export const RAIL_WIDE_WIDTH = 216;
 export const SIDEBAR_WIDTH = 280;
 export const SIDEBAR_MIN = 200;
 export const WORK_MIN = 480;
+/** A window this wide or narrower hides the sidebar of a module that asks. */
+export const NARROW_WINDOW = 1024;
 
 /** The UI state key until projects can be opened. */
 export const NO_PROJECT = "no-project";
@@ -51,6 +53,9 @@ export class Shell {
   activeModule = $state<string | null>(null);
   railExpanded = $state(false);
   #sidebars = $state<Record<string, SidebarState>>({});
+  #narrow = $state(false);
+  // Sidebars the user showed since the window became narrow; never saved.
+  #shownNarrow = $state<Record<string, boolean>>({});
   #loaded = $state.raw<{ module: string; view: AnyComponent } | null>(null);
   // Views already loaded, by module: switching back is instant.
   #views: Record<string, AnyComponent> = {};
@@ -72,9 +77,49 @@ export class Shell {
     this.#sidebars[module] = { ...this.sidebar(module), width: Math.round(px) };
   }
 
+  /** Whether the window is narrow enough to hide sidebars. */
+  get narrow(): boolean {
+    return this.#narrow;
+  }
+
+  set narrow(value: boolean) {
+    if (!value) this.#shownNarrow = {};
+    this.#narrow = value;
+  }
+
+  /** Whether the narrow window rule applies: the module's manifest says `hide`. */
+  #hidesWhenNarrow(module: string): boolean {
+    return (
+      this.#narrow && this.registry.module(module)?.sidebarWhenNarrow === "hide"
+    );
+  }
+
+  /** Whether the module's sidebar is drawn right now. */
+  sidebarShown(module: string): boolean {
+    if (this.#hidesWhenNarrow(module))
+      return this.#shownNarrow[module] === true;
+    return this.sidebar(module).visible;
+  }
+
   toggleSidebar(module: string): void {
+    if (this.#hidesWhenNarrow(module)) {
+      this.#shownNarrow[module] = !this.sidebarShown(module);
+      return;
+    }
     const s = this.sidebar(module);
     this.#sidebars[module] = { ...s, visible: !s.visible };
+  }
+
+  /**
+   * Shows the module's sidebar. In a narrow window it shows until the window
+   * widens, and what is saved stays as it was.
+   */
+  showSidebar(module: string): void {
+    if (this.#hidesWhenNarrow(module)) {
+      this.#shownNarrow[module] = true;
+      return;
+    }
+    this.#sidebars[module] = { ...this.sidebar(module), visible: true };
   }
 
   toggleRail(): void {

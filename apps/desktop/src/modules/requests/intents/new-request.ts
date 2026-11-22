@@ -5,6 +5,8 @@ import { shellApi } from "$app/contributions/shell-api";
 import { treeState } from "../state/tree.svelte";
 
 export default async function newRequest(): Promise<void> {
-  await shellApi().openModule("requests");
+  const shell = shellApi();
+  await shell.openModule("requests");
+  shell.showSidebar("requests");
   await treeState.newRequest();
 }

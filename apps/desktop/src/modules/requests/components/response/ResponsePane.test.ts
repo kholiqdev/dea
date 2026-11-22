@@ -1,22 +1,38 @@
-import { screen, waitFor, within } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  onTestFinished,
+  test,
+  vi,
+} from "vitest";
 import type { SendEvent } from "$lib/ipc/bindings/SendEvent";
 import type { RequestFile } from "$lib/ipc/bindings/RequestFile";
+import type { ResponseInfo } from "$lib/ipc/bindings/ResponseInfo";
 import { DEFAULT_SETTINGS, settings } from "$lib/settings/settings.svelte";
 import type { FakeProject } from "../../fake-project.svelte";
 import { manifest } from "../../index";
+import RequestTab from "../../RequestTab.svelte";
 import {
   openRequestTab,
   setUpRequestTabs,
+  useProduction,
   type FakeShell,
 } from "../../request-tab-support.svelte";
 import {
   doneExchange,
   fakeRequestsIpc,
+  fakeResizeObserver,
   responseInfo,
+  type FakeInspection,
   type RequestsIpc,
 } from "../../test-support";
+import { sessionView } from "../../state/session-view.svelte";
+import paneSource from "./ResponsePane.svelte?raw";
+import toolbarSource from "./ResponseToolbar.svelte?raw";
+import pillSource from "./SentInPill.svelte?raw";
 
 const PATH = "requests/shipments/list.yaml";
 const file: RequestFile = {
@@ -36,7 +52,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
+  sessionView.timingLegend = false;
 });
 
 const send = async () =>
@@ -45,13 +61,60 @@ const send = async () =>
 const calls = (ipc: RequestsIpc, cmd: string) =>
   ipc.calls.filter(([c]) => c === cmd).map(([, args]) => args);
 
-function narrow(matches: boolean): void {
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query === "(max-width: 959px)" ? matches : false,
-    media: query,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
+/** Opens the request in a work area `width` px wide. */
+async function openAtWidth(width: number): Promise<void> {
+  const observer = fakeResizeObserver();
+  onTestFinished(observer.restore);
+  openRequestTab(PATH);
+  await screen.findByRole("region", { name: "Response" });
+  observer.resize(document.querySelector(".split")!, width, 700);
+}
+
+/**
+ * Sends the request and waits for `response`. `resize` gives an element a
+ * size, as for `pane`, the response pane.
+ */
+async function renderDone(response: ResponseInfo): Promise<{
+  resize: (element: Element, width: number, height: number) => void;
+  pane: HTMLElement;
+  id: string;
+  unmount: () => void;
+}> {
+  const observer = fakeResizeObserver();
+  onTestFinished(observer.restore);
+  fakeRequestsIpc({
+    files,
+    send: { outcome: { type: "response", response } },
+  });
+  const { id, unmount } = openRequestTab(PATH);
+  await send();
+  await screen.findByRole("button", { name: /^Timing,/ });
+  const pane = screen.getByRole("region", { name: "Response" });
+  return { resize: observer.resize, pane, id, unmount };
+}
+
+/** The declarations of the top-level rule for `selector` in `source`. */
+function ruleIn(source: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`).exec(source)?.[1] ?? "";
+}
+
+/** The declarations of the toolbar's top-level rule for `selector`. */
+function toolbarRule(selector: string): string {
+  return ruleIn(toolbarSource, selector);
+}
+
+/** The declarations of the rule whose selector is exactly `selector`. */
+function headRule(selector: string): string[] {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [
+    ...toolbarSource.matchAll(new RegExp(`\\n  ${escaped} \\{([^}]*)\\}`, "g")),
+  ].map((m) => m[1] ?? "");
+}
+
+/** The response header, which carries the width tier. */
+function header(): HTMLElement {
+  return screen.getByRole("toolbar", { name: "Response" }).parentElement!;
 }
 
 /** Whether the response pane follows the editor in the page. */
@@ -88,13 +151,280 @@ test("done_toolbar_shows_status_timing_size_and_version", async () => {
   await send();
   const bar = await screen.findByRole("toolbar", { name: "Response" });
   expect(bar).toHaveAttribute("data-tone", "warning");
-  expect(within(bar).getByText("404 Not Found")).toBeInTheDocument();
+  expect(within(bar).getByText("404")).toBeInTheDocument();
+  expect(within(bar).getByText("Not Found")).toBeInTheDocument();
   expect(within(bar).getByText("148 ms")).toBeInTheDocument();
   expect(within(bar).getByText("1.5 KB")).toBeInTheDocument();
   expect(within(bar).getByText("HTTP/1.1")).toBeInTheDocument();
   expect(
-    screen.getByRole("img", { name: /^Timing, 148 ms total/ }),
+    within(bar).getByRole("button", { name: /^Timing, 148 ms total/ }),
   ).toBeInTheDocument();
+});
+
+test("the_status_code_and_reason_are_separate", async () => {
+  await renderDone(responseInfo());
+  const bar = screen.getByRole("toolbar", { name: "Response" });
+  expect(bar.querySelector(".code")?.textContent).toBe("200");
+  expect(bar.querySelector(".reason")?.textContent).toBe("OK");
+});
+
+test("the_timing_bar_opens_its_legend", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 4,
+        connectMs: 12,
+        tlsMs: 18,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 148,
+        reused: false,
+      },
+    }),
+  );
+  const bar = screen.getByRole("button", { name: /^Timing, 148 ms total/ });
+  expect(bar).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("Waiting for server")).toBeNull();
+  await userEvent.click(bar);
+  expect(bar).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("Waiting for server")).toBeInTheDocument();
+});
+
+test("the_legend_lists_every_phase_and_a_reused_connection", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 0,
+        connectMs: 0,
+        tlsMs: 0,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 114,
+        reused: true,
+      },
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  const legend = within(screen.getByRole("list", { name: "Timing" }));
+  expect(
+    legend
+      .getAllByRole("listitem")
+      .map((item) => item.textContent?.replace(/\s+/g, " ").trim()),
+  ).toEqual([
+    "DNS 0 ms",
+    "Connect 0 ms",
+    "TLS 0 ms reused",
+    "Waiting for server 96 ms",
+    "Download 18 ms",
+  ]);
+});
+
+test("a_narrow_legend_keeps_every_name_for_assistive_tech", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 0,
+        connectMs: 0,
+        tlsMs: 0,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 114,
+        reused: true,
+      },
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  const items = within(
+    screen.getByRole("list", { name: "Timing" }),
+  ).getAllByRole("listitem");
+  expect(items.map((item) => item.getAttribute("title"))).toEqual([
+    "DNS 0 ms",
+    "Connect 0 ms",
+    "TLS 0 ms",
+    "Waiting for server 96 ms",
+    "Download 18 ms",
+  ]);
+  expect(items.map((item) => item.querySelector(".name")?.textContent)).toEqual(
+    ["DNS", "Connect", "TLS", "Waiting for server", "Download"],
+  );
+  // Short of room, a long name gives its place on screen to a short one:
+  // the long one stays in the page, and the short one is not read.
+  const short = items[3]?.querySelector(".short");
+  expect(short).toHaveAttribute("aria-hidden", "true");
+  const hidden = headRule('.head:not([data-size="wide"]) .name.long');
+  expect(hidden).toHaveLength(1);
+  expect(hidden[0]).toContain("clip-path: inset(50%)");
+  expect(hidden[0]).not.toContain("display: none");
+});
+
+test("a_narrow_legend_still_shows_every_name", async () => {
+  await renderDone(
+    responseInfo({
+      timing: {
+        dnsMs: 4,
+        connectMs: 12,
+        tlsMs: 18,
+        waitingMs: 96,
+        downloadMs: 18,
+        totalMs: 148,
+        reused: false,
+      },
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  const items = within(
+    screen.getByRole("list", { name: "Timing" }),
+  ).getAllByRole("listitem");
+  // What each phase shows where the full names do not fit.
+  expect(
+    items.map(
+      (item) =>
+        item.querySelector(".short")?.getAttribute("data-short") ??
+        item.querySelector(".name")?.textContent,
+    ),
+  ).toEqual(["DNS", "Connect", "TLS", "Wait", "Download"]);
+  // No width takes a name off the screen without a short one in its place.
+  expect(headRule('.head:not([data-size="tiny"]) .name')).toEqual([]);
+  expect(headRule('.head:not([data-size="wide"]) .name')).toEqual([]);
+  expect(headRule('.head:not([data-size="wide"]) .short')).toEqual([
+    expect.stringContaining("display: inline;"),
+  ]);
+  // Where even the short names do not fit, the phases wrap to a second
+  // line rather than scroll out of sight.
+  const phases = toolbarRule(".phases");
+  expect(phases).toContain("flex-wrap: wrap;");
+  expect(phases).not.toContain("overflow-x: auto;");
+});
+
+test.each([
+  [0, "wide"],
+  [800, "wide"],
+  [680, "wide"],
+  [679, "medium"],
+  [560, "medium"],
+  [559, "small"],
+  [480, "small"],
+  [479, "tiny"],
+])("a_pane_%i_px_wide_sizes_the_header_%s", async (width, tier) => {
+  const { resize, pane } = await renderDone(responseInfo());
+  if (width > 0) resize(pane, width, 600);
+  expect(header()).toHaveAttribute("data-size", tier);
+});
+
+test("the_header_follows_the_pane_as_it_resizes", async () => {
+  const { resize, pane } = await renderDone(responseInfo());
+  const head = header();
+  for (const [width, tier] of [
+    [900, "wide"],
+    [500, "small"],
+    [300, "tiny"],
+    [600, "medium"],
+  ] as const) {
+    resize(pane, width, 600);
+    expect(head).toHaveAttribute("data-size", tier);
+  }
+});
+
+test("the_legend_ends_with_size_and_version", async () => {
+  await renderDone(responseInfo({ size: 612, version: "HTTP/2" }));
+  const bar = screen.getByRole("button", { name: /^Timing,/ });
+  await userEvent.click(bar);
+  const legend = document.getElementById(bar.getAttribute("aria-controls")!);
+  expect(
+    [...legend!.children].slice(-2).map((child) => child.textContent),
+  ).toEqual(["612 B", "HTTP/2"]);
+});
+
+test("the_legend_choice_is_kept_for_the_session", async () => {
+  const { id, unmount } = await renderDone(responseInfo());
+  await userEvent.click(screen.getByRole("button", { name: /^Timing,/ }));
+  unmount();
+  expect(screen.queryByText("Waiting for server")).toBeNull();
+  render(RequestTab, { props: { tab: shell.tab(id) } });
+  expect(await screen.findByText("Waiting for server")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Timing,/ })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+});
+
+test("the_environment_pill_always_shows", async () => {
+  fakeRequestsIpc({ files });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("button", { name: /^Timing,/ });
+  const bar = screen.getByRole("toolbar", { name: "Response" });
+  expect(within(bar).getByText("staging")).toBeInTheDocument();
+  expect(within(bar).queryByText(/^Sent in/)).toBeNull();
+});
+
+test("sending_names_its_environment", async () => {
+  fakeRequestsIpc({ files, send: { hold: true } });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  expect(within(bar).getByText("Sending")).toBeInTheDocument();
+  expect(within(bar).getByText("staging")).toBeInTheDocument();
+});
+
+test("a_production_send_waits_for_confirmation", async () => {
+  const ipc = fakeRequestsIpc({ files, send: { hold: true } });
+  await useProduction(project);
+  openRequestTab(PATH);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Send to production" }),
+  );
+  await waitFor(() => expect(ipc.sends).toHaveLength(1));
+  shell.confirmingSend = true;
+  const pane = screen.getByRole("region", { name: "Response" });
+  const bar = await within(pane).findByRole("toolbar", { name: "Response" });
+  await waitFor(() =>
+    expect(bar).toHaveTextContent(/^Waiting for confirmation/),
+  );
+  expect(within(bar).queryByText("Sending")).toBeNull();
+  expect(within(bar).queryByText(/ s$/)).toBeNull();
+  expect(pane).not.toHaveAttribute("aria-busy");
+  expect(
+    within(pane).getByText("Nothing is sent until you confirm."),
+  ).toBeInTheDocument();
+  expect(within(pane).queryByRole("progressbar")).toBeNull();
+  expect(within(pane).queryByText(/^Waiting for the server/)).toBeNull();
+  // Confirmed: the request leaves.
+  ipc.emitToSends(started);
+  expect(await within(bar).findByText("Sending")).toBeInTheDocument();
+  expect(within(bar).getByText(/ s$/)).toBeInTheDocument();
+  expect(pane).toHaveAttribute("aria-busy", "true");
+  expect(within(pane).getByRole("progressbar")).toBeInTheDocument();
+  expect(
+    within(pane).queryByText("Nothing is sent until you confirm."),
+  ).toBeNull();
+  ipc.finishSends();
+});
+
+/**
+ * Whether `element` is in an inert part of the page. jsdom knows nothing of
+ * `inert`: the property Svelte sets on the element is all there is to see.
+ */
+function isInert(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement)) return false;
+  return element.inert || isInert(element.parentElement);
+}
+
+test("the_second_row_stays_while_sending", async () => {
+  const ipc = fakeRequestsIpc({ files });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("button", { name: /^Timing,/ });
+  const sections = () =>
+    screen.getByRole("tablist", { name: "Response sections" });
+  expect(isInert(sections())).toBe(false);
+  ipc.send = { ...ipc.send, hold: true };
+  await send();
+  const pane = screen.getByRole("region", { name: "Response" });
+  await waitFor(() => expect(pane).toHaveAttribute("aria-busy", "true"));
+  expect(isInert(sections())).toBe(true);
 });
 
 test("sent_in_shows_only_when_the_environment_changed", async () => {
@@ -246,7 +576,7 @@ test("cancelled_after_head_says_the_body_is_incomplete", async () => {
 });
 
 test("cancelled_before_the_head_only_says_how_long", async () => {
-  fakeRequestsIpc({ files, send: { hold: true } });
+  fakeRequestsIpc({ files, send: { hold: true, events: [started] } });
   openRequestTab(PATH);
   await send();
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
@@ -259,8 +589,7 @@ test("cancelled_before_the_head_only_says_how_long", async () => {
 
 test("layout_setting_moves_the_response_below", async () => {
   fakeRequestsIpc({ files });
-  openRequestTab(PATH);
-  await screen.findByRole("region", { name: "Response" });
+  await openAtWidth(1200);
   expect(responseIsBelow()).toBe(false);
   settings.apply({
     ...DEFAULT_SETTINGS,
@@ -270,12 +599,17 @@ test("layout_setting_moves_the_response_below", async () => {
 });
 
 test("a_narrow_window_always_stacks", async () => {
-  narrow(true);
   fakeRequestsIpc({ files });
-  openRequestTab(PATH);
-  await screen.findByRole("region", { name: "Response" });
+  // Under 760 px of work area, whatever the window.
+  await openAtWidth(759);
   expect(settings.requests.responseLayout).toBe("right");
   expect(responseIsBelow()).toBe(true);
+  // Stacked, the response cannot move, so the toolbar does not offer it.
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  expect(
+    within(bar).queryByRole("button", { name: /^Show response/ }),
+  ).toBeNull();
 });
 
 test("the_toolbar_button_moves_the_response", async () => {
@@ -303,6 +637,22 @@ test("toggle_layout_is_a_command", () => {
   });
   expect(manifest.intents?.map((i) => i.intent)).toContain(
     "requests.toggleLayout",
+  );
+});
+
+test("focus_filter_is_a_command_with_a_shortcut", () => {
+  expect(manifest.commands).toContainEqual({
+    id: "requests.focusFilter",
+    title: "Filter response with JSONPath",
+    action: { type: "intent", intent: "requests.focusFilter" },
+    scope: "project",
+  });
+  expect(manifest.shortcuts).toContainEqual({
+    command: "requests.focusFilter",
+    chord: "Mod+Alt+F",
+  });
+  expect(manifest.intents?.map((i) => i.intent)).toContain(
+    "requests.focusFilter",
   );
 });
 
@@ -375,7 +725,9 @@ test("production_environment_pill_keeps_its_mark", async () => {
   };
   await project.setEnvironment("live");
   openRequestTab(PATH);
-  await send();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Send to production" }),
+  );
   await screen.findByRole("toolbar", { name: "Response" });
   await project.setEnvironment("staging");
   expect(await screen.findByText("Sent in live")).toHaveClass("env-prod");
@@ -457,4 +809,181 @@ test("a_finished_stream_keeps_its_event_list", async () => {
   const list = await screen.findByRole("list", { name: "Server-sent events" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
   expect(screen.getByText("tick")).toBeInTheDocument();
+});
+
+/** Warns of `{{traceId}}`, which nothing defines. */
+const warnsOfTraceId: FakeInspection = (_path, request) => ({
+  undefined: request.url.includes("{{traceId}}") ? ["traceId"] : [],
+});
+
+/** Adds an undefined variable to the URL and sends: the warning stands. */
+async function warnInFront(): Promise<void> {
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "URL" }),
+    "/{{{{traceId}}",
+  );
+  await send();
+}
+
+/** Matches the element whose whole text, across its parts, is `text`. */
+const wholeText = (text: string) => (_: string, element: Element | null) =>
+  element?.tagName === "P" && element.textContent === text;
+
+/** A section of the response, by its name. */
+const section = (name: RegExp) =>
+  within(screen.getByRole("tablist", { name: "Response sections" })).getByRole(
+    "tab",
+    { name },
+  );
+
+test("the_previous_response_is_dimmed_and_marked", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 22, 12, 4));
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: (_path, request) => ({
+      undefined: request.url.includes("{{traceId}}") ? ["traceId"] : [],
+    }),
+  });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "URL" }),
+    "/{{{{traceId}}",
+  );
+  await send();
+  expect(
+    await screen.findByText(wholeText("Previous response · 12:04 · staging")),
+  ).toBeInTheDocument();
+  expect(within(bar).queryByText(/Previous/)).toBeNull();
+  expect(bar).toHaveAttribute("data-tone", "muted");
+  const segments = [...bar.querySelectorAll<HTMLElement>("[data-segment]")];
+  expect(segments.length).toBeGreaterThan(0);
+  for (const segment of segments)
+    expect(segment.style.background).toBe("var(--text-3)");
+  const pane = screen.getByRole("region", { name: "Response" });
+  expect(within(pane).getByRole("tabpanel")).toHaveAttribute("data-stale");
+  await userEvent.type(screen.getByRole("textbox", { name: "URL" }), "x");
+  await waitFor(() =>
+    expect(screen.queryByText(/^Previous response/)).toBeNull(),
+  );
+  expect(bar).toHaveAttribute("data-tone", "positive");
+  expect(
+    segments.some((segment) => segment.style.background !== "var(--text-3)"),
+  ).toBe(true);
+});
+
+test("the_previous_strip_marks_an_html_response", async () => {
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("html"),
+    inspection: warnsOfTraceId,
+  });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("toolbar", { name: "Response" });
+  await warnInFront();
+  expect(await screen.findByText("Previous response")).toBeInTheDocument();
+});
+
+test("the_previous_strip_shows_on_every_section", async () => {
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: warnsOfTraceId,
+  });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("toolbar", { name: "Response" });
+  await userEvent.click(section(/^Headers/));
+  await warnInFront();
+  const label = await screen.findByText("Previous response");
+  // Between the second row and what the section shows.
+  const pane = screen.getByRole("region", { name: "Response" });
+  expect(label.parentElement?.nextElementSibling).toBe(
+    within(pane).getByRole("tabpanel"),
+  );
+  await userEvent.click(section(/^Cookies/));
+  expect(section(/^Cookies/)).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByText("Previous response")).toBeInTheDocument();
+});
+
+test("the_strip_names_no_environment_without_one", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 22, 12, 4));
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: warnsOfTraceId,
+  });
+  openRequestTab(PATH);
+  await send();
+  await screen.findByRole("toolbar", { name: "Response" });
+  await warnInFront();
+  expect(
+    await screen.findByText(wholeText("Previous response · 12:04")),
+  ).toBeInTheDocument();
+});
+
+test("the_environment_pill_never_shrinks", async () => {
+  fakeRequestsIpc({
+    files,
+    send: doneExchange("json"),
+    inspection: warnsOfTraceId,
+  });
+  await project.setEnvironment("staging");
+  openRequestTab(PATH);
+  await send();
+  const bar = await screen.findByRole("toolbar", { name: "Response" });
+  await warnInFront();
+  await screen.findByText("Previous response");
+  // The pill sits with the facts, which give way at narrower tiers; the
+  // actions stay outside them.
+  const status = bar.querySelector(":scope > .status");
+  expect(within(bar).getByText("staging").parentElement).toBe(status);
+  expect(status).not.toContainElement(
+    within(bar).getByRole("button", { name: "Copy response" }),
+  );
+  expect(toolbarRule(".actions")).toContain("flex: none;");
+  const pill = ruleIn(pillSource, ".env");
+  expect(pill).toContain("flex: none;");
+  expect(pill).not.toContain("text-overflow");
+});
+
+test("the_body_text_dims_without_opacity", () => {
+  expect(
+    ruleIn(paneSource, ".body[data-stale] :global(.cm-content *)"),
+  ).toContain("color: var(--text-3);");
+  expect(paneSource).not.toContain("opacity");
+});
+
+test("a_small_pane_moves_the_size_to_the_legend", async () => {
+  const { resize, pane } = await renderDone(responseInfo());
+  resize(pane, 530, 600);
+  expect(header()).toHaveAttribute("data-size", "small");
+  expect(
+    headRule(
+      '.head:is([data-size="small"], [data-size="tiny"]) .toolbar .size',
+    ),
+  ).toEqual([expect.stringContaining("display: none;")]);
+  expect(
+    headRule(
+      '.head:is([data-size="wide"], [data-size="medium"]) .legend .size',
+    ),
+  ).toEqual([expect.stringContaining("display: none;")]);
+  // The size no longer stays on the row down to 480 px.
+  expect(headRule('.head[data-size="tiny"] .toolbar .size')).toEqual([]);
+  expect(headRule('.head:not([data-size="tiny"]) .legend .size')).toEqual([]);
+});
+
+test("a_tiny_pane_drops_the_timing_bar", async () => {
+  const { resize, pane } = await renderDone(responseInfo());
+  resize(pane, 400, 600);
+  expect(header()).toHaveAttribute("data-size", "tiny");
+  expect(headRule('.head[data-size="tiny"] .toolbar :global(.timing)')).toEqual(
+    [expect.stringContaining("display: none;")],
+  );
 });

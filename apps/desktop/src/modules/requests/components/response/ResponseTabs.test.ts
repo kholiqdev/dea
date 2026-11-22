@@ -181,3 +181,34 @@ test("cookies_tab_is_empty_and_manages", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Manage cookies" }));
   expect(shell.commands).toContain("requests.manageCookies");
 });
+
+test("body_views_sit_on_the_second_row", async () => {
+  await open();
+  const row = screen.getByRole("tablist", {
+    name: "Response sections",
+  }).parentElement;
+  expect(row).toContainElement(
+    screen.getByRole("radiogroup", { name: "Body view" }),
+  );
+  expect(row).not.toContainElement(
+    within(screen.getByRole("region", { name: "Response" })).getByRole(
+      "tabpanel",
+    ),
+  );
+});
+
+test("the_view_buttons_hide_outside_the_body_tab", async () => {
+  await open();
+  expect(
+    screen.getByRole("radiogroup", { name: "Body view" }),
+  ).toBeInTheDocument();
+  await userEvent.click(tab(/^Headers/));
+  expect(screen.queryByRole("radiogroup", { name: "Body view" })).toBeNull();
+  expect(
+    screen.queryByRole("textbox", { name: "Filter with JSONPath" }),
+  ).toBeNull();
+  await userEvent.click(tab("Body"));
+  expect(
+    screen.getByRole("radiogroup", { name: "Body view" }),
+  ).toBeInTheDocument();
+});

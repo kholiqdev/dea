@@ -29,6 +29,13 @@ export function formatSeconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
+/** `09:05`, `23:59`: the local time of `epochMs`, on a 24-hour clock. */
+export function formatClock(epochMs: number): string {
+  const at = new Date(epochMs);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
 export type StatusTone =
   "muted" | "positive" | "accent" | "warning" | "negative";
 

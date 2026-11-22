@@ -2,7 +2,8 @@
   Rows of name, value and description, as params, headers and form fields
   are kept. Values show {{variables}}. With `checkboxLabel` each row has a
   checkbox that says whether it is sent; with `lockedNames` the names are
-  given, so rows are neither typed nor added nor removed.
+  given, so rows are neither typed nor added nor removed. The `highlight`
+  row is the one a warning points at.
 -->
 <script module lang="ts">
   import type { KeyValue } from "$lib/ipc/bindings/KeyValue";
@@ -18,6 +19,9 @@
   import X from "@lucide/svelte/icons/x";
   import { tick } from "svelte";
   import type { VariableLookup } from "../state/variables.svelte";
+  import { columnWidths, watchWidth } from "../lib/columns";
+  import { sessionView } from "../state/session-view.svelte";
+  import DescriptionToggle from "./DescriptionToggle.svelte";
   import VariableField from "./VariableField.svelte";
 
   let {
@@ -30,6 +34,7 @@
     onchange,
     lockedNames = false,
     disabled = false,
+    highlight = null,
   }: {
     rows: KeyValue[];
     /** The table's accessible name. */
@@ -41,9 +46,23 @@
     onchange: (rows: KeyValue[]) => void;
     lockedNames?: boolean;
     disabled?: boolean;
+    highlight?: number | null;
   } = $props();
 
   let body = $state<HTMLElement>();
+  let table = $state<HTMLElement>();
+  let tableWidth = $state(0);
+
+  $effect(() => {
+    if (!table) return;
+    return watchWidth(table, (width) => (tableWidth = width));
+  });
+
+  const showDescriptions = $derived(sessionView.descriptions);
+  const widths = $derived(
+    columnWidths(tableWidth, checkboxLabel ? 72 : 36, showDescriptions),
+  );
+  const hasDescriptions = $derived(rows.some((row) => row.description));
 
   const named = (row: KeyValue, i: number) => row.name || `row ${i + 1}`;
 
@@ -59,26 +78,31 @@
 </script>
 
 <div class="card">
-  <table aria-label={label}>
+  <table aria-label={label} bind:this={table}>
     <colgroup>
       {#if checkboxLabel}<col class="narrow" />{/if}
-      <col class="key-col" />
-      <col class="value-col" />
-      <col class="key-col" />
-      {#if !lockedNames}<col class="narrow" />{/if}
+      <col style:width={widths ? `${widths.key}px` : undefined} />
+      <col />
+      {#if showDescriptions}<col
+          style:width={widths ? `${widths.description}px` : undefined}
+        />{/if}
+      <col class="narrow" />
     </colgroup>
     <thead>
       <tr>
         {#if checkboxLabel}<td></td>{/if}
         <th scope="col">{keyLabel}</th>
         <th scope="col">Value</th>
-        <th scope="col">Description</th>
-        {#if !lockedNames}<td></td>{/if}
+        {#if showDescriptions}<th scope="col">Description</th>{/if}
+        <td class="center"><DescriptionToggle {hasDescriptions} /></td>
       </tr>
     </thead>
     <tbody bind:this={body}>
       {#each rows as row, i (i)}
-        <tr class:off={row.enabled === false}>
+        <tr
+          class:off={row.enabled === false}
+          data-highlight={highlight === i ? "" : undefined}
+        >
           {#if checkboxLabel}
             <td class="center">
               <input
@@ -117,18 +141,22 @@
               oninput={(value: string) => update(i, { value })}
             />
           </td>
-          <td>
-            <input
-              class="cell description"
-              aria-label="Description of {named(row, i)}"
-              value={row.description ?? ""}
-              {disabled}
-              oninput={(e) =>
-                update(i, { description: e.currentTarget.value || undefined })}
-            />
-          </td>
-          {#if !lockedNames}
-            <td class="center">
+          {#if showDescriptions}
+            <td>
+              <input
+                class="cell description"
+                aria-label="Description of {named(row, i)}"
+                value={row.description ?? ""}
+                {disabled}
+                oninput={(e) =>
+                  update(i, {
+                    description: e.currentTarget.value || undefined,
+                  })}
+              />
+            </td>
+          {/if}
+          <td class="center">
+            {#if !lockedNames}
               <button
                 type="button"
                 class="remove"
@@ -139,8 +167,8 @@
               >
                 <X size={14} strokeWidth={1.5} />
               </button>
-            </td>
-          {/if}
+            {/if}
+          </td>
         </tr>
       {/each}
     </tbody>
@@ -170,14 +198,6 @@
     width: 36px;
   }
 
-  .key-col {
-    width: 30%;
-  }
-
-  .value-col {
-    width: 40%;
-  }
-
   th,
   thead td {
     height: 32px;
@@ -193,6 +213,10 @@
     height: 36px;
     padding: 0 var(--s-1);
     border-top: 1px solid var(--line);
+  }
+
+  tr[data-highlight] {
+    background: var(--bg-3);
   }
 
   .center {
