@@ -19,7 +19,12 @@ const URL = "https://api.harbor.test/v1/shipments/shp_4821";
 test("the_final_url_is_a_button_that_copies_it", async () => {
   const ipc = fakeRequestsIpc();
   render(ResolvedUrl, { props: { url: URL, undefinedNames: [] } });
-  const button = screen.getByRole("button", { name: "Copy the final URL" });
+  // Its name says what it does and reads the URL, without the arrow.
+  const button = screen.getByRole("button", {
+    name: `Copy the final URL, ${URL}`,
+  });
+  expect(button).not.toHaveAttribute("aria-label");
+  expect(button).toHaveAttribute("data-final-url");
   expect(button).toHaveTextContent(`→ ${URL}`);
   expect(button).toHaveAttribute("title", URL);
   expect(button.querySelector('[aria-hidden="true"]')).toHaveTextContent("→");
@@ -36,7 +41,7 @@ test("a_failed_copy_says_why", async () => {
   });
   render(ResolvedUrl, { props: { url: URL, undefinedNames: [] } });
   await userEvent.click(
-    screen.getByRole("button", { name: "Copy the final URL" }),
+    screen.getByRole("button", { name: /^Copy the final URL/ }),
   );
   await waitFor(() =>
     expect(shell.toasts).toEqual(["The clipboard is not available"]),

@@ -83,7 +83,7 @@ describe("the Requests layout", () => {
           browser.execute(
             () =>
               document
-                .querySelector('button[aria-label="Copy the final URL"]')
+                .querySelector("button[data-final-url]")
                 ?.getAttribute("title")
                 ?.endsWith("segment-") ?? false,
           ),
@@ -95,7 +95,7 @@ describe("the Requests layout", () => {
         return {
           send: box("button[data-send]"),
           bar: box(".line"),
-          final: box('button[aria-label="Copy the final URL"]'),
+          final: box("button[data-final-url]"),
           width: window.innerWidth,
         };
       });

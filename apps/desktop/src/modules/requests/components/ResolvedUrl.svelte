@@ -69,13 +69,15 @@
 <div class="resolved">
   {#if url}
     {@const text = url}
+    <!-- Its name is what it does and the URL it copies. -->
     <button
       type="button"
       class="copy"
-      aria-label="Copy the final URL"
       title={text}
+      data-final-url=""
       onclick={() => void copy(text)}
     >
+      <span class="visually-hidden">Copy the final URL,</span>
       <span class="arrow" aria-hidden="true">→</span>
       <span class="url"
         >{#each pieces as piece, i (i)}{#if piece.host || piece.undefined}<span

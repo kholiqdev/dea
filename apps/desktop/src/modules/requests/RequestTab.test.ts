@@ -729,7 +729,7 @@ test("the_final_url_shows_under_the_bar", async () => {
   });
   openRequestTab(BY_ID);
   const url = await screen.findByRole("button", {
-    name: "Copy the final URL",
+    name: `Copy the final URL, ${shown}`,
   });
   expect(url).toHaveTextContent(shown);
   await userEvent.click(url);
@@ -747,7 +747,9 @@ test("the_request_bar_spans_the_tab", async () => {
   expect(save.closest(".split")).toBeNull();
   expect(send.closest(".split")).toBeNull();
   // The final URL comes with the first inspection.
-  const url = await screen.findByRole("button", { name: "Copy the final URL" });
+  const url = await screen.findByRole("button", {
+    name: /^Copy the final URL/,
+  });
   expect(url.closest(".split")).toBeNull();
 });
 
