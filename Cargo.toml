@@ -112,7 +112,7 @@ windows-future = "0.3.2"
 windows-registry = "0.100.0"
 windows-native-keyring-store = "1.1.0"
 windows-sys = "0.61.2"
-zbus = "5.19.0"
+zbus = "6.4.0"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-io-crypto-rust"] }
 zeroize = "1.9.2"
 
